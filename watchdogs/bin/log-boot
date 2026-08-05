@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Append one line per boot. Lets us see reboot frequency at a glance over time.
+set -euo pipefail
+
+ST="$HOME/.local/state"
+LOG="$ST/boot-log.txt"
+mkdir -p "$ST"
+
+echo "$(date -u '+%F %T UTC')  BOOT  kernel=$(uname -r)  up_since=$(uptime -s 2>/dev/null || echo unknown)" >> "$LOG"
+
+exit 0

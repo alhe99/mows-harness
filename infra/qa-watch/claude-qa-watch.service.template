@@ -1,0 +1,36 @@
+# claude-qa-watch.service.template — on-demand QA watch-stack (Xvfb + fluxbox + x11vnc +
+# websockify + Chrome), started/stopped by the `qa` skill's watched mode (claude/skills/
+# qa/SKILL.md), never boot-enabled. See infra/qa-watch/SETUP.md for the apt dependencies
+# (none of which ship by default on a fresh box — verified on the reference box, see that
+# file) and infra/os/sudoers.d/claude-harness.template for the exact sudo grant this unit
+# depends on.
+#
+# SHIPS DISABLED, ON PURPOSE: do NOT `systemctl enable` this unit after installing it —
+# `systemctl daemon-reload` is enough to make it startable. infra/os/sudoers.d/
+# claude-harness.template's grant for this unit is deliberately start/stop ONLY (no
+# enable/disable verbs, unlike the claude-remote(-control)@* families) — a heavyweight,
+# screen-sharing debug tool has no business auto-starting at boot. The harness's own use
+# of it (claude/skills/qa/SKILL.md's watched mode) is exactly
+# `sudo systemctl start claude-qa-watch` / `sudo systemctl stop claude-qa-watch`, matching
+# that grant's EXACT-MATCH argv requirement: no `.service` suffix, no extra arguments, or
+# sudo falls through to an interactive password prompt instead of running it (fails
+# closed, not open — see the sudoers template's own header for why it's exact-match
+# rather than a glob).
+[Unit]
+Description=QA watch browser (Xvfb + x11vnc + websockify + Chrome) — dashboard take-over target
+After=network.target
+
+[Service]
+# Backgrounds a handful of daemons and exits; RemainAfterExit keeps the unit active
+# and its cgroup alive. Its OWN cgroup, so a dashboard restart can't take it down.
+Type=oneshot
+RemainAfterExit=yes
+User={{ADMIN_USER}}
+Environment=HOME=/home/{{ADMIN_USER}}
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/bash /home/{{ADMIN_USER}}/watch-browser.sh
+# default KillMode=control-group SIGTERMs Xvfb/Chrome/websockify/x11vnc on stop
+TimeoutStartSec=40
+
+[Install]
+WantedBy=multi-user.target

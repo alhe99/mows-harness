@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Builder → Lead handoff",
+  "description": "Schema for the JSON Builder writes to .agent-team/<run-id>/builder-<stack>.json when reporting done.",
+  "type": "object",
+  "required": ["stack", "branch", "tasks_done", "tasks_open", "files_changed", "tests", "ready_for_qa"],
+  "additionalProperties": false,
+  "properties": {
+    "stack": {
+      "type": "string",
+      "description": "Stack name. Conventional values: fe, be, data, mobile, infra. Lead substitutes into the filename.",
+      "minLength": 1
+    },
+    "branch": {
+      "type": "string",
+      "description": "Feature branch name (e.g., feat/example-feature). Must match what Lead instructed.",
+      "pattern": "^[a-z][a-z0-9/_-]*$"
+    },
+    "tasks_done": {
+      "type": "array",
+      "description": "Spec task numbers completed by this Builder.",
+      "items": {"type": ["integer", "string"]},
+      "minItems": 1
+    },
+    "tasks_open": {
+      "type": "array",
+      "description": "Spec task numbers explicitly deferred or blocked. Empty array if all done.",
+      "items": {"type": ["integer", "string"]}
+    },
+    "files_changed": {
+      "type": "array",
+      "description": "Relative paths from repo root for every file added/modified/deleted by this Builder.",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "tests": {
+      "type": "object",
+      "description": "Test gate results. Keys are gate names; values are command + exit + duration. typecheck/lint/test are conventional; add others (build, e2e) as relevant.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["command", "exit"],
+        "properties": {
+          "command": {"type": "string", "description": "Exact command Builder ran."},
+          "exit": {"type": "integer", "description": "Exit code."},
+          "duration_s": {"type": "number", "description": "Wall time in seconds."},
+          "tests_run": {"type": "integer", "description": "For 'test' gate only — total tests executed."},
+          "tests_passed": {"type": "integer"},
+          "tests_failed": {"type": "integer"},
+          "output_tail": {"type": "string", "description": "Optional. Last 20 lines of stdout/stderr — useful for QA to verify on re-run."}
+        }
+      },
+      "minProperties": 1
+    },
+    "notes": {
+      "type": "string",
+      "description": "One-line summary of any non-obvious decisions, deferred items, or contract changes. Lead surfaces this in the PR body and to QA.",
+      "maxLength": 500
+    },
+    "contract": {
+      "type": "object",
+      "description": "Optional. For upstream Builders (data/backend) whose interface downstream Builders consume. Examples: API endpoints, function signatures, event shapes.",
+      "additionalProperties": true
+    },
+    "ready_for_qa": {
+      "type": "boolean",
+      "description": "Must be true for Lead to advance to QA phase. False signals 'I'm done with my scope but explicitly blocked on tasks_open.'"
+    }
+  }
+}

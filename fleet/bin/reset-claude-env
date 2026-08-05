@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# reset-claude-env — recover a stuck/flapping claude-remote@<profile> remote-control
+# unit: clear its cached env pointer, then restart the unit (restarting mints a fresh
+# env). This script OWNS the full recovery cycle end to end (stop -> clear -> start);
+# callers such as watchdogs/bin/claude-health invoke ONLY this script for recovery and
+# never restart the unit themselves.
+#
+# Usage: reset-claude-env <profile>        e.g. reset-claude-env default
+#
+# DRY_RUN=1 prints the sudo/systemctl/rm actions this would take instead of running
+# them (no sudo side effects) — use it to test this script, or to audit what a
+# recovery does before wiring it into a watchdog.
+set -euo pipefail
+
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+p="${1:?usage: reset-claude-env <profile>   e.g. reset-claude-env default}"
+case " $(profiles | tr '\n' ' ') " in
+  *" $p "*) ;;
+  *) echo "reset-claude-env: unknown profile '$p' (no $HOME/.claude or $HOME/.claude-$p)" >&2; exit 1 ;;
+esac
+
+svc="claude-remote@$p.service"
+cfg=$(cfg_for "$p")
+DRY_RUN="${DRY_RUN:-0}"
+
+run() { if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: $*"; else "$@"; fi; }
+
+# state cleared: the cached bridge-pointer.json under the unit's project dir (ported
+# verbatim from the live script — same encoding of WorkingDirectory into the projects/
+# subdirectory name that Claude Code itself uses for on-disk conversation state).
+wd=$(systemctl show -p WorkingDirectory --value "$svc" 2>/dev/null || true)
+enc=$(printf '%s' "$wd" | sed 's#/#-#g')
+bp="$cfg/projects/$enc/bridge-pointer.json"
+
+echo "[$(date '+%F %T')] reset $svc  cfg=$cfg  wd=$wd"
+
+# tolerate a failed stop (e.g. already stopped) and continue the recovery, matching the
+# live script's behavior; a failed start is fatal and propagates (see header).
+run sudo systemctl stop "$svc" || true
+sleep 2
+
+if [ -f "$bp" ]; then
+  run cp "$bp" "$bp.bak-$(date +%s)"
+  run rm -f "$bp"
+  if [ "$DRY_RUN" = 1 ]; then echo "  would clear cached env pointer"; else echo "  cleared cached env pointer"; fi
+else
+  echo "  (no bridge-pointer at $bp)"
+fi
+
+run sudo systemctl start "$svc"
+sleep 7
+
+if [ "$DRY_RUN" = 1 ]; then
+  echo "  DRY_RUN: no changes made (unit not stopped/started, pointer not touched)"
+else
+  echo "  new env: $(grep -o 'env_[A-Za-z0-9]*' "$bp" 2>/dev/null | head -1)"
+  echo "  >> old cloud threads were on the previous env; start a NEW session on the refreshed entry."
+fi

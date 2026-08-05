@@ -1,0 +1,120 @@
+<!-- clipboard-shim.html — the injectable clipboard-handling <script> for the /term web
+     terminal (ttyd), rescued from a live deployment that had it spliced into ttyd's own
+     ~700KB bundled index.html. That bundle (ttyd's vendored xterm.js + its own client JS,
+     inlined into one file) is a ttyd build/version artifact this repo does NOT vendor —
+     only the small, self-authored shim below ships here.
+     Two places reference this exact file path (see infra/webconsole/claude-web-term.
+     service.template's own header for the full explanation):
+       1. ttyd's own -I/--index flag — moot in normal operation, since Caddy's file_server
+          answers every real /term and /term/ request before ttyd ever sees it; this only
+          matters for a direct, Caddy-bypassing connection (e.g. an SSH tunnel to :7681).
+       2. The REAL page browsers get: Caddy serves a full HTML page (xterm.js + this shim's
+          <script> spliced in) from the SAME dashboard directory, at whatever filename its
+          Caddyfile route points `root`/`rewrite` at (infra/caddy/Caddyfile.template's
+          @termhtml route: /opt/claude-dashboard/term-index.html). Producing THAT file:
+          run infra/webconsole/make-term-index.sh [output-path] — one step, idempotent,
+          safe to re-run. Manual fallback, if you ever need to do it by hand (this is
+          exactly what that script automates): run ttyd once without -I, save the page it
+          serves at `/`, then paste the <script>...</script> block below into that saved
+          page immediately before </body>, and install the result at both paths above.
+     Everything below this comment is the rescued shim, unmodified. -->
+<script>
+/* mows clipboard shim v2 (injected via Caddy-served term-index.html)
+   1. OSC 52 sniffer: bundled xterm has no OSC 52 handler; watch the websocket.
+   2. copy-on-select: mouse drag -> execCommand('copy') via xterm's own handler.
+   3. telemetry: pings /term/__shim?<event> — 404s, but lands in Caddy's access
+      log so the chain can be debugged server-side without browser access. */
+(function () {
+  'use strict';
+  function ping(ev) {
+    try { fetch('/term/__shim?' + encodeURIComponent(ev), { cache: 'no-store', keepalive: true }).catch(function () {}); } catch (e) {}
+  }
+  ping('load');
+
+  var toastEl;
+  function toast(msg) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:9999;' +
+        'background:#2d2d2d;color:#9ece6a;font:12px monospace;padding:6px 10px;' +
+        'border-radius:4px;opacity:0;transition:opacity .15s;pointer-events:none';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    toastEl.style.opacity = '1';
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(function () { toastEl.style.opacity = '0'; }, 1500);
+  }
+
+  var pending = null;
+  function put(text) {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(function () {
+      ping('ok:' + text.length); toast('copied ' + text.length + ' chars');
+    }, function (err) {
+      pending = text;
+      ping('blocked:' + (err && err.name));
+      toast('copy blocked — click or press a key');
+    });
+  }
+  function flush() {
+    if (!pending) return;
+    var t = pending; pending = null;
+    navigator.clipboard.writeText(t).then(function () {
+      ping('flushok:' + t.length); toast('copied ' + t.length + ' chars');
+    }, function (err) { ping('flusherr:' + (err && err.name)); });
+  }
+  document.addEventListener('keydown', flush, true);
+  document.addEventListener('mousedown', flush, true);
+
+  /* --- 1. OSC 52 sniffer -------------------------------------------------- */
+  /* ponytail: carry capped at 32KB — a payload split across frames and longer
+     than that is lost. Bump if huge copies ever get eaten. */
+  var CAP = 32768;
+  var OSC = /\x1b\]52;[^;\x07\x1b]*;([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/g;
+  var carry = '';
+  var dec = new TextDecoder('latin1');
+  function scan(chunk) {
+    carry += chunk;
+    var m, last = 0;
+    OSC.lastIndex = 0;
+    while ((m = OSC.exec(carry))) {
+      last = OSC.lastIndex;
+      try {
+        var bin = atob(m[1]), bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var text = new TextDecoder().decode(bytes);
+        ping('osc52:' + text.length);
+        put(text);
+      } catch (e) { ping('oscerr'); }
+    }
+    carry = carry.slice(Math.max(carry.length - CAP, last));
+  }
+  function feed(buf) {
+    var u = new Uint8Array(buf);
+    if (u.length > 1 && u[0] === 0x30) scan(dec.decode(u.subarray(1))); // '0' = OUTPUT
+  }
+  var W = window.WebSocket;
+  window.WebSocket = function (url, protocols) {
+    var ws = protocols === undefined ? new W(url) : new W(url, protocols);
+    ping('ws');
+    ws.addEventListener('message', function (ev) {
+      try {
+        if (ev.data instanceof ArrayBuffer) feed(ev.data);
+        else if (ev.data instanceof Blob) ev.data.arrayBuffer().then(feed);
+      } catch (e) {}
+    });
+    return ws;
+  };
+  window.WebSocket.prototype = W.prototype;
+  ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function (k) { window.WebSocket[k] = W[k]; });
+
+  /* --- 2. copy-on-select --------------------------------------------------- */
+  var downX = 0, downY = 0;
+  document.addEventListener('mousedown', function (e) { downX = e.clientX; downY = e.clientY; }, true);
+  document.addEventListener('mouseup', function (e) {
+    if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) < 6) return; // click, not drag
+    setTimeout(function () { try { document.execCommand('copy'); } catch (err) {} }, 0);
+  }, true);
+})();
+</script>

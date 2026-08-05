@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# claude-status — fleet-wide glance: per-profile remote-control unit state + live `cc`
+# tmux session presence, then the cached watchdogs/bin/claude-health snapshot
+# (regenerated if stale, else printed with its age — same cache/format live uses).
+#
+# Delta vs. live ~/.local/bin/claude-status: live is a 4-line cache-or-regenerate
+# wrapper around claude-health with a hardcoded home path and no per-profile loop of
+# its own (claude-health already discovers profiles dynamically, so live inherited
+# that generalization transitively). This version loops profiles() directly so unit
+# state and cc-session presence are visible even without claude-health installed, and
+# drops the hardcoded path in favor of $HOME + PATH lookup.
+set -euo pipefail
+
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+echo "profile           unit        cc-session"
+echo "------------------------------------------------"
+for p in $(profiles); do
+  unit="claude-remote@$p.service"
+  active=$(systemctl is-active "$unit" 2>/dev/null || true)
+
+  sess="none"
+  line=$(tmux list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null | grep "^cc-$p-" || true)
+  if [ -n "$line" ]; then
+    case "$line" in
+      *" 0") sess="detached" ;;
+      *) sess="attached" ;;
+    esac
+  fi
+  printf '%-16s  %-10s  %s\n' "$p" "${active:-unknown}" "$sess"
+done
+echo "------------------------------------------------"
+
+OUT="$HOME/.local/state/claude-health.txt"
+if [ ! -f "$OUT" ] || [ $(( $(date +%s) - $(stat -c %Y "$OUT") )) -gt 360 ]; then
+  if command -v claude-health >/dev/null 2>&1; then
+    claude-health --once
+  else
+    echo "(claude-health not on PATH — no cached snapshot to show)"
+  fi
+else
+  cat "$OUT"
+  echo "(cached $(( ($(date +%s)-$(stat -c %Y "$OUT")) / 60 ))m ago)"
+fi

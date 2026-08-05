@@ -1,0 +1,58 @@
+{
+  "skill_name": "spec-driven-orchestration",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "i wanna build a skill on claude code that reads my spec.md and then automatically delegates the backend tasks to a backend agent, frontend tasks to a frontend agent, and db migrations to a db agent. all in parallel. can you help me write the SKILL.md for this?",
+      "expected_output": "Claude should correct the user's mental model — explain that a SKILL.md cannot fan out to multiple sub-agents directly, and instead recommend the slash-command-plus-orchestrator pattern (or orchestrator-as-main-agent via CLAUDE.md). Should propose a concrete two-file solution (trigger skill + orchestrator agent) and show the YAML frontmatter for each. Should NOT write a single SKILL.md that pretends to spawn sub-agents.",
+      "files": [],
+      "expectations": [
+        "States that a SKILL.md cannot directly fan out to or spawn multiple sub-agents",
+        "Mentions that only the main conversation (or a slash command) can spawn sub-agents via Task or Agent",
+        "Proposes a concrete alternative architecture (e.g., orchestrator sub-agent plus trigger skill, or slash command plus orchestrator)",
+        "Includes at least one YAML frontmatter example for either an orchestrator sub-agent or a trigger skill",
+        "Does NOT produce a SKILL.md that calls Task or Agent in its body as if a skill could spawn sub-agents"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I have a tasks.md in my repo with about 40 tasks tagged [backend], [frontend], [db], and [tests]. I'd like Claude Code to read this file and dispatch each task group to a different specialist. I'm starting from scratch with .claude/ — what files should I create? Just give me the scaffold, I'll customize later.",
+      "expected_output": "Claude should produce a concrete file list with paths and brief contents — at minimum a spec-orchestrator.md, specialists for backend/frontend/db/tests, a trigger skill or slash command, and CLAUDE.md routing rules. Should explain which is the orchestrator and which are workers, with frontmatter that correctly omits Edit/Write from the orchestrator and includes them in specialists.",
+      "files": [],
+      "expectations": [
+        "Lists a .claude/agents/ directory with at least a spec-orchestrator plus specialists for backend, frontend, db, and tests",
+        "Includes either a slash command (.claude/commands/implement-spec.md) or a trigger skill (.claude/skills/spec-detector/SKILL.md) — or both",
+        "The orchestrator agent's frontmatter does NOT grant Edit or Write tools",
+        "The specialist agents' frontmatter DOES grant Edit and Write tools",
+        "Mentions adding a routing block to CLAUDE.md so the main conversation knows when to invoke the orchestrator",
+        "Each agent has a description that explains when it should be invoked"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I've been looking at zhsama/claude-sub-agent and barkain/claude-code-workflow-orchestration. They both seem to do orchestration but with different shapes. For a small 2-person team building a SaaS app, which one should I pick? And how do they actually differ under the hood?",
+      "expected_output": "Claude should accurately characterize zhsama as the seven-role spec-* sub-agent pattern with quality-gate thresholds (95/80/85) and Planning/Development/Validation phases, and barkain as the hook-enforced delegation pattern with PreToolUse blocking direct edits. Should recommend zhsama for a 2-person team since the hook enforcement is overkill for small trust-aligned teams. Should mention the staged adoption — start with zhsama, only escalate to barkain-style hooks if delegation discipline becomes a problem.",
+      "files": [],
+      "expectations": [
+        "Accurately describes zhsama as using a planning/development/validation phase structure with multiple spec-* sub-agents",
+        "Accurately describes barkain as using a PreToolUse hook to enforce that direct file edits go through specialists",
+        "Recommends zhsama (or equivalent lighter-weight option) for a small 2-person team",
+        "Justifies the recommendation by noting that hook enforcement adds friction unsuited to small trust-aligned teams",
+        "Mentions that the user could start with zhsama and adopt barkain-style hooks later if needed (staged adoption)"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Set me up for spec-driven dev in this project. Generate the actual .claude/ files and tell me what to add to CLAUDE.md. I want the trigger to fire when I write 'implement spec.md' or similar natural phrases, not just on an explicit slash command.",
+      "expected_output": "Claude should scaffold the .claude/ structure with concrete file content (not just a list of filenames). Should include a spec-detector SKILL.md with a 'pushy' description that triggers on natural phrasing, a spec-orchestrator sub-agent, and at least a few specialist sub-agents. Should also produce a CLAUDE.md snippet. Should mention that the skill is the front door (detects spec files and routes) but the actual dispatch happens in the main conversation, not in the skill itself.",
+      "files": [],
+      "expectations": [
+        "Generates concrete file content (not just filenames) for at least the spec-detector skill and the spec-orchestrator agent",
+        "The spec-detector SKILL.md description includes pushy language (e.g., 'use whenever', 'make sure to', or 'MUST BE USED') to combat skill under-triggering",
+        "Includes a CLAUDE.md snippet with routing rules for when spec files exist",
+        "Explicitly states that the skill detects and routes but does not itself spawn sub-agents (the dispatch happens in the main conversation)",
+        "Provides at least one specialist sub-agent example with correct frontmatter"
+      ]
+    }
+  ]
+}

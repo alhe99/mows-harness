@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# claude-mem-health — verify claude-mem captured recent sessions across every profile.
+# Cron every 10 min. `claude-mem-health --once` prints current status.
+#
+# Outcome check: transcripts touched 3-45 min ago with >=1 real user message must have a
+# sdk_sessions row.
+# Cause check (self-heals): the claude-mem plugin's scope must be "user" in EVERY profile's
+# installed_plugins.json — a known regression class flips scope to project/<cwd>, which makes
+# hooks load only in that one directory, silently uncapturing sessions elsewhere for weeks.
+# Worker check: the shared memory worker must be listening on :37777 (single process, not
+# per-profile — informational only, the next session's SessionStart hook restarts it).
+#
+# Alerts land in $ALERT; wire a user-scope SessionStart hook to cat that file into the next
+# session's context. Profiles are discovered dynamically — this script assumes nothing about
+# which profiles exist and is a graceful no-op on a box with none configured.
+set -euo pipefail
+
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+ST="$HOME/.local/state"
+LOG="$ST/claude-mem-health.log"
+ALERT="$ST/claude-mem-health.alert"
+SEEN="$ST/claude-mem-health.seen"
+DB="$HOME/.claude-mem/claude-mem.db"
+ts=$(date '+%F %T')
+mkdir -p "$ST"
+touch "$SEEN"
+log() { echo "[$ts] $*" >> "$LOG"; }
+alerts=()
+
+# --- cause check + self-heal: plugin scope must be "user" in every profile
+for p in $(profiles); do
+  f="$(cfg_for "$p")/plugins/installed_plugins.json"
+  [ -f "$f" ] || continue
+  healed=$(python3 - "$f" <<'EOF' 2>/dev/null || true
+import json,sys
+f=sys.argv[1]
+d=json.load(open(f))
+e=(d.get('plugins',{}).get('claude-mem@thedotmack') or [{}])[0]
+if e and e.get('scope')!='user':
+    e['scope']='user'; e.pop('projectPath',None)
+    json.dump(d,open(f,'w'),indent=2)
+    print('healed')
+EOF
+)
+  if [ "$healed" = "healed" ]; then
+    log "HEALED: claude-mem scope reset to user in $f"
+    alerts+=("claude-mem plugin scope had regressed in $f — auto-fixed; sessions started before now are uncaptured")
+  fi
+done
+
+# --- worker check (single shared resource, not per-profile)
+if ! ss -ltnH 'sport = :37777' 2>/dev/null | grep -q .; then
+  log "worker port 37777 not listening"
+  alerts+=("claude-mem worker not listening on :37777 (auto-starts with next session; captures until then may be lost)")
+fi
+
+# --- outcome check: recent transcripts vs sdk_sessions, per profile
+for p in $(profiles); do
+  d="$(cfg_for "$p")/projects"
+  [ -d "$d" ] || continue
+  mapfile -t recent < <(find "$d" -name '*.jsonl' \
+      -mmin -45 -mmin +3 -not -path '*subagents*' -not -path '*observer-sessions*' 2>/dev/null)
+  for f in "${recent[@]}"; do
+    id=$(basename "$f" .jsonl)
+    case "$id" in *[!0-9a-f-]*) continue;; esac        # only real session UUIDs
+    grep -qm1 '"type":"user"' "$f" 2>/dev/null || continue   # ignore pre-created/idle stubs
+    grep -qm1 "^$id\$" "$SEEN" 2>/dev/null && continue       # already alerted once
+    n="err"
+    if command -v sqlite3 >/dev/null 2>&1; then
+      n=$(sqlite3 -cmd '.timeout 2000' "$DB" \
+          "SELECT count(*) FROM sdk_sessions WHERE content_session_id='$id'" 2>/dev/null || echo err)
+    fi
+    [ "$n" = "0" ] || continue
+    proj=$(basename "$(dirname "$f")" | sed 's/^-//')
+    log "MISS: $id ($p, $proj) has user messages but no sdk_sessions row"
+    alerts+=("session ${id:0:8} ($p, $proj) was NOT captured by claude-mem")
+    echo "$id" >> "$SEEN"
+  done
+done
+
+if tail -200 "$SEEN" > "$SEEN.t"; then mv "$SEEN.t" "$SEEN"; fi
+
+if [ "${#alerts[@]}" -gt 0 ]; then
+  {
+    echo "claude-mem-health ($ts):"
+    printf ' - %s\n' "${alerts[@]}"
+    echo "   log: ~/.local/state/claude-mem-health.log — investigate with: claude-mem-health --once"
+  } > "$ALERT"
+else
+  rm -f "$ALERT"
+fi
+
+if [ "${1:-}" = "--once" ]; then
+  echo "claude-mem-health @ $ts"
+  if [ -s "$ALERT" ]; then cat "$ALERT"; else echo "OK — recent sessions captured, scope=user all profiles, worker up"; fi
+fi
+exit 0

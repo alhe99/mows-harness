@@ -1,0 +1,31 @@
+[Unit]
+Description=Claude Code Remote Control (control workspace, home root, profile %i)
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ADMIN_USER}}
+# Fixed at the home root by design — unlike claude-remote@.service, this unit
+# does NOT consult a workdir hint file. `claude-rc workdir <p> <path> --control`
+# will still happily write $HOME/.config/claude-rc/<p>-control.workdir (kept for
+# interface symmetry), but nothing here reads it — intentional, not a gap; see
+# task-8-report.md's port table ("its practical value is thin, since Task 9's
+# control unit is described as fixed at the home root by design").
+WorkingDirectory=/home/{{ADMIN_USER}}
+Environment=HOME=/home/{{ADMIN_USER}}
+UnsetEnvironment=ANTHROPIC_API_KEY
+StandardInput=data
+StandardInputText=y\n
+# Same %i profile mapping as claude-remote@.service; no `cd` needed in ExecStart
+# since WorkingDirectory= above is already the fixed, correct root — see
+# no-PATH-pin rationale in claude-remote@.service (same `bash -lc` login-shell
+# reasoning applies here).
+ExecStart=/bin/bash -lc 'P=%i; C=$HOME/.claude; [ "$P" != default ] && C=$HOME/.claude-$P; \
+  CLAUDE_CONFIG_DIR=$C exec claude remote-control --name "%H-$P-control" --spawn same-dir'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+# infra/os/firewall/rules.v4.template — IPv4 baseline, iptables-save/iptables-restore format.
+#
+# REVIEW EVERY LINE BEFORE APPLYING. This is a generic starting point, modeled on a real
+# hardened box but stripped of anything cloud- or host-specific — it opens exactly three
+# ports (22/80/443). Add whatever else this host actually serves before loading it, or you
+# will lock yourself out of any other service you're running.
+#
+# Load it with `iptables-apply <rendered-file>` — NEVER a blind `iptables-restore` over SSH.
+# iptables-apply shows you a diff, asks you to confirm the new rules still work, and
+# auto-reverts to the previous ruleset if you don't confirm inside its timeout (default
+# 10s, see `iptables-apply -t`). iptables-restore has no such safety net: one wrong line
+# and you've locked yourself out until someone reaches the console. See infra/os/SETUP.md.
+#
+# Cloud firewalls are a SEPARATE layer in front of this one. Opening 80/443 here does
+# nothing if your provider's network firewall (security group / security list / cloud
+# firewall / NSG — naming varies) still blocks them at the edge. Open the same ports there
+# too, or every connection dies before it ever reaches these rules.
+#
+# Persist across reboots with netfilter-persistent (infra/os/SETUP.md): it loads this file
+# from /etc/iptables/rules.v4 on boot and whenever `netfilter-persistent reload` runs.
+*filter
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22 -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 80 -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 443 -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-host-prohibited
+-A FORWARD -j REJECT --reject-with icmp-host-prohibited
+COMMIT

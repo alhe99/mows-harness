@@ -1,0 +1,48 @@
+# infra/oauth2-proxy/oauth2-proxy.cfg.template — Google auth for the Claude dashboard
+# family, sitting behind Caddy's forward_auth. Paired 1:1 with the (gauth) snippet in
+# infra/caddy/Caddyfile.template: that snippet reverse-proxies /oauth2/* to the
+# http_address below and calls /oauth2/auth on every other request first.
+#
+# Placeholders:
+#   {{OAUTH_CLIENT_ID}}      Google OAuth client ID (ends in .apps.googleusercontent.com)
+#   {{OAUTH_CLIENT_SECRET}}  Google OAuth client secret (starts GOCSPX- for a web-app
+#                             OAuth client created after ~2022)
+#   {{COOKIE_SECRET}}        random seed for the session cookie's encryption — generate
+#                             with: openssl rand -base64 32
+#   {{DOMAIN}}                same domain as infra/caddy/Caddyfile.template
+# Create the Google OAuth client (Authorized redirect URI =
+# https://{{DOMAIN}}/oauth2/callback) in Google Cloud Console under APIs & Services ->
+# Credentials -> OAuth client ID -> Web application.
+provider = "google"
+client_id = "{{OAUTH_CLIENT_ID}}"
+client_secret = "{{OAUTH_CLIENT_SECRET}}"
+# redirect_url intentionally left UNSET: oauth2-proxy derives it per-request from
+# X-Forwarded-Host, which it trusts here because Caddy — not the open Internet — is the
+# one setting that header. Caddy's (gauth) snippet always anchors login at the apex (see
+# its redir line), so in practice the callback always lands on
+# https://{{DOMAIN}}/oauth2/callback regardless of which host started the flow. Set this
+# explicitly only if you remove that apex-anchoring and need a fixed callback host.
+
+# http_address is loopback-only on purpose: Caddy is the only caller that can ever reach
+# it, which is what makes reverse_proxy=true safe below without also setting
+# trusted_proxy_ips (oauth2-proxy will otherwise log a startup warning that it trusts
+# X-Forwarded-* from any IP — true in general, but moot here since no IP other than
+# 127.0.0.1 can open this socket at all). If you ever rebind http_address to a
+# non-loopback address, add trusted_proxy_ips restricting it to Caddy's address first.
+http_address = "127.0.0.1:4180"
+reverse_proxy = true
+upstreams = [ "static://202" ]
+
+# Google accounts allowed in — one per line in emails.txt (see emails.txt.template).
+authenticated_emails_file = "/etc/oauth2-proxy/emails.txt"
+
+cookie_secret = "{{COOKIE_SECRET}}"
+# one login covers the apex plus every {{EXAMPLE_SUB}}.{{DOMAIN}} segment
+cookie_domains = [".{{DOMAIN}}"]
+whitelist_domains = [".{{DOMAIN}}"]
+cookie_secure = true
+cookie_expire = "168h"
+
+# straight to Google, no interstitial button page
+skip_provider_button = true
+set_xauthrequest = true

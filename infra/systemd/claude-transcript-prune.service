@@ -1,0 +1,6 @@
+[Unit]
+Description=Prune Claude transcripts idle >30 days (all accounts, lsof in-use guard)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/claude-transcript-prune.sh

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# cc — launch Claude Code for a profile in a named tmux session.
+# usage: cc [profile] [dir] [-- <claude flags...>]   (bare `cc` = default profile, cwd)
+# caveat: profile names containing '-' can alias with directory slugs in session names.
+#
+# tmux session name: cc-<profile>-<slug-of-dir-basename>. watchdogs/bin/reap-idle-claude
+# reaps sessions matching ^cc- when detached+idle; the naming here is the contract it
+# depends on — do not change the cc-<profile>-<slug> shape.
+#
+# Delta vs. live ~/.local/bin/cc + ~/.local/bin/ccw (full reconciliation in
+# .superpowers/sdd/task-7-report.md): live is two fixed-profile scripts (one per
+# account), each always operating in $PWD with no [profile]/[dir] args, and each
+# branches on $1 to either wrap bare/-c/--continue/-r/--resume invocations in tmux or
+# `exec` claude directly for one-off args (e.g. --print). This unifies both into one
+# profile-parameterized launcher per the Task 7 interface (`cc [profile] [dir]`), now
+# with pass-through claude flags restored via a trailing `--` and the live
+# TTY/nested-tmux guard restored verbatim — the original "flags no longer forwarded"
+# trade-off no longer applies. Two live tmux details DO matter and are ported verbatim:
+# `-D` (detach any other attached client before attaching — a dropped SSH connection
+# must never block a clean reattach) added alongside `-A`, and the printf '%q'
+# env-passing style for safe shell-quoting of the inner command (stronger than plain
+# interpolation once profile-specific paths vary).
+set -euo pipefail
+
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+P=default
+[ $# -ge 1 ] && case " $(profiles | tr '\n' ' ') " in *" $1 "*) P=$1; shift ;; esac
+DIR=$PWD; if [ $# -ge 1 ] && [ "$1" != "--" ]; then DIR=$1; shift; fi; [ "${1-}" = "--" ] && shift
+CFG=$(cfg_for "$P")
+[ -d "$CFG" ] || { echo "cc: no profile dir $CFG (create it or run: cc)" >&2; exit 1; }
+
+RUN=(claude)
+[ -f "$CFG/mcp-interactive.json" ] && RUN+=(--strict-mcp-config --mcp-config "$CFG/mcp-interactive.json")
+RUN+=("$@")
+
+if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
+  SLUG=$(basename "$DIR" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
+  SES="cc-$P-$SLUG"
+  exec tmux new-session -AD -s "$SES" -c "$DIR" \
+    "$(printf '%q ' env CLAUDE_CONFIG_DIR="$CFG" "${RUN[@]}")"
+elif env -C / true 2>/dev/null; then
+  # direct-exec fallback (no tty, or already nested in tmux): chdir into [dir] before exec
+  # — same effect as the tmux branch's own `-c "$DIR"` above. Used to silently ignore
+  # [dir] here and run wherever `cc` itself was invoked from instead. `env -C` (GNU
+  # coreutils >= 8.28) chdirs and execs in one call; probed with `/` (always chdir-able)
+  # so this only tests whether -C itself is supported, not whether "$DIR" is valid — a bad
+  # "$DIR" fails the same way either branch, via the plain `cd` in the fallback below.
+  exec env -C "$DIR" CLAUDE_CONFIG_DIR="$CFG" "${RUN[@]}"
+else
+  cd "$DIR" && exec env CLAUDE_CONFIG_DIR="$CFG" "${RUN[@]}"
+fi

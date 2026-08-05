@@ -1,0 +1,147 @@
+# infra/caddy/Caddyfile.template — reverse proxy + Google-gated auth for the harness's
+# web surface (dashboard, /term web terminal, noVNC watch browser). One Caddy instance
+# in front of everything; it is the only thing this box exposes to the Internet and the
+# only thing that terminates TLS.
+#
+# Placeholders (render with sed, or install.sh once it exists):
+#   {{DOMAIN}}       the harness's own domain, e.g. example.com — needs an A/AAAA record
+#                     already pointed at this box before first reload (see the TLS note
+#                     at the bottom: automatic HTTPS needs to resolve it to prove
+#                     ownership via HTTP-01).
+#   {{EXAMPLE_SUB}}   one subdomain label, e.g. "alpha". Duplicate the whole
+#                     {{EXAMPLE_SUB}}.{{DOMAIN}} block below once per profile/agent,
+#                     renaming the label each time (see that block's own comment).
+#
+# Upstream dependencies, all plain HTTP on loopback — Caddy is what puts TLS in front
+# of them, none should ever bind a non-loopback address themselves:
+#   127.0.0.1:4180   oauth2-proxy (this task — infra/oauth2-proxy/oauth2-proxy.cfg.template)
+#   127.0.0.1:3005   the harness's own dashboard process
+#   127.0.0.1:7681   ttyd, the /term web terminal
+#   127.0.0.1:6080   websockify/noVNC — only if the qa-watch stack (infra/qa-watch/, not
+#                    shipped by this task) is installed; harmless if vncproxy's route
+#                    never gets hit otherwise
+#
+# Validate a rendered copy before reloading:
+#   caddy validate --config <rendered-file> --adapter caddyfile
+# Reload live (exact-match sudoers grant, see infra/os/sudoers.d/):
+#   sudo systemctl reload caddy
+
+# --- Google OAuth via oauth2-proxy: imported inside each site's route so the
+# /oauth2/* endpoints and the auth gate run before any upstream. Pairs 1:1 with
+# infra/oauth2-proxy/oauth2-proxy.cfg.template — same {{DOMAIN}}, same port (4180). ---
+(gauth) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        # frame-ancestors 'self' still allows the /vnc page's same-origin noVNC iframe
+        Content-Security-Policy "frame-ancestors 'self'"
+        Referrer-Policy "same-origin"
+    }
+    reverse_proxy /oauth2/* 127.0.0.1:4180
+    forward_auth 127.0.0.1:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-Email
+        @bad status 401
+        handle_response @bad {
+            # login anchored on the apex: one Google redirect URI
+            # (https://{{DOMAIN}}/oauth2/callback), cookie on .{{DOMAIN}} covers every
+            # subdomain below — see oauth2-proxy.cfg.template's own redirect_url note
+            redir * https://{{DOMAIN}}/oauth2/start?rd={scheme}://{host}{uri}
+        }
+    }
+}
+
+# --- noVNC proxy for the QA watch browser (websockify), gated by gauth above ---
+(vncproxy) {
+    handle /vnc/* {
+        uri strip_prefix /vnc
+        reverse_proxy 127.0.0.1:6080
+    }
+}
+
+# --- PWA statics skip the auth gate: OS installers fetch manifest/icons/sw without
+# cookies; they contain nothing private (an app name + a drawn icon) ---
+(pwa) {
+    @pwa path /manifest.webmanifest /sw.js /icon-192.png /icon-512.png /apple-touch-icon.png /favicon.png /favicon.ico
+    handle @pwa {
+        reverse_proxy 127.0.0.1:3005
+    }
+}
+
+# --- primary dashboard vhost: default session view + /term web terminal ---
+{{DOMAIN}} {
+    log {
+        output file /var/log/caddy/console.json {
+            roll_size 20mb
+            roll_keep 3
+        }
+    }
+    encode zstd gzip
+    route {
+        import pwa
+        import gauth
+        import vncproxy
+        # web terminal (ttyd) — start/continue Claude Code sessions.
+        # /term HTML is served by Caddy's own file_server (the same file ttyd -I uses):
+        # ttyd itself sends no-store + no ETag, so relying on ttyd's headers alone means
+        # phones cache a stale page for a full day if you instead force a long max-age.
+        # file_server gets a real ETag -> a cheap 304 revalidation on every open, so
+        # CSS/JS fixes show up immediately. /term/token + /term/ws still go to ttyd.
+        @termhtml path /term /term/
+        handle @termhtml {
+            root * /opt/claude-dashboard
+            rewrite * /term-index.html
+            header Cache-Control "no-cache"
+            file_server
+        }
+        handle /term* {
+            reverse_proxy 127.0.0.1:7681
+        }
+        handle {
+            reverse_proxy 127.0.0.1:3005
+        }
+    }
+}
+
+# --- per-profile/agent dashboard segment — duplicate this whole block once per
+# profile/agent, replacing {{EXAMPLE_SUB}} with that profile's own subdomain label each
+# time (alpha.{{DOMAIN}}, bravo.{{DOMAIN}}, ...). Same auth gate, same dashboard
+# upstream — only the hostname differs, so Caddy requests one certificate per label. ---
+{{EXAMPLE_SUB}}.{{DOMAIN}} {
+    log
+    encode zstd gzip
+    route {
+        import pwa
+        import gauth
+        import vncproxy
+        reverse_proxy 127.0.0.1:3005
+    }
+}
+
+# --- TLS: explicit-block HTTP-01 (what a stock `apt install caddy` gives you) ---
+# Every hostname above is its own named, explicit site block. Caddy's automatic HTTPS
+# issues each one a cert via ACME HTTP-01 the moment it sees a matching block — no extra
+# config, no DNS API credentials, nothing to run as root beyond binding 80/443. That is
+# exactly what the stock Debian/Ubuntu `caddy` package (a plain `apt install caddy`)
+# supports out of the box, and it's why this file lists real, literal hostnames instead
+# of a wildcard: Caddy has no "*.{{DOMAIN}} site block" concept, and ACME's HTTP-01
+# challenge cannot prove ownership of a wildcard name at all — the protocol requires
+# DNS-01 for that, full stop.
+#
+# If hand-duplicating {{EXAMPLE_SUB}}.{{DOMAIN}} blocks becomes the bottleneck (dozens
+# of profiles, frequent churn), the real fix is DNS-01 + one true wildcard cert
+# (*.{{DOMAIN}}) covering every current and future subdomain with a single block. That
+# needs a Caddy build with a DNS provider module compiled in — the stock apt/binary
+# release ships with none. Build one with xcaddy:
+#   xcaddy build --with github.com/caddy-dns/<your-provider>
+# then, once, replace every per-subdomain block above with:
+#   {{DOMAIN}}, *.{{DOMAIN}} {
+#       tls {
+#           dns <your-provider> {env.<PROVIDER_API_TOKEN_VAR>}
+#       }
+#       ... (same route as the apex/example blocks above)
+#   }
+# Pick the module matching wherever {{DOMAIN}}'s DNS is actually hosted — see
+# https://github.com/caddy-dns for the full provider list. The xcaddy-built binary is a
+# drop-in replacement for /usr/bin/caddy: same systemd unit, same Caddyfile syntax
+# everywhere else in this file.

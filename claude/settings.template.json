@@ -1,0 +1,27 @@
+{
+  "statusLine": {"type": "command", "command": "npx -y ccusage@latest statusline", "padding": 0},
+  "remoteControlAtStartup": true,
+  "autoCompactEnabled": true,
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.env)", "Read(./.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
+      "Read(**/credentials*)", "Read(**/secrets/**)"
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "claude-mem@thedotmack": true
+  },
+  "extraKnownMarketplaces": {
+    "thedotmack": {"source": {"source": "github", "repo": "thedotmack/claude-mem"}},
+    "ponytail": {"source": {"source": "github", "repo": "DietrichGebert/ponytail"}},
+    "karpathy-skills": {"source": {"source": "github", "repo": "forrestchang/andrej-karpathy-skills"}}
+  }
+}

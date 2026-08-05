@@ -1,0 +1,41 @@
+[Unit]
+Description=Claude Code Remote Control (Projects workspace, profile %i)
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ADMIN_USER}}
+# Default root; overridden below at runtime if a `claude-rc workdir` hint file
+# exists for this profile. Kept as a real WorkingDirectory= (not left unset) so
+# `systemctl show -p WorkingDirectory` — read by fleet/bin/reset-claude-env for
+# its cached-env-pointer recovery — always resolves to something, even before
+# any hint file is ever written.
+WorkingDirectory=/home/{{ADMIN_USER}}/Projects
+Environment=HOME=/home/{{ADMIN_USER}}
+# Remote Control requires OAuth/subscription auth; refuse if an API key ever leaks into env.
+UnsetEnvironment=ANTHROPIC_API_KEY
+# Auto-answer the one-time "Enable Remote Control? (y/n)" consent (no TTY under systemd).
+StandardInput=data
+StandardInputText=y\n
+# %i = profile (default -> $HOME/.claude, else $HOME/.claude-<profile>; same
+# cfg_for() mapping as fleet/bin/claude-rc and watchdogs/bin/claude-health).
+#
+# WD re-roots this instance's NEW sessions at the path in
+# $HOME/.config/claude-rc/<profile>.workdir if `claude-rc workdir <profile> <path>`
+# has written one (see fleet/bin/claude-rc's `workdir` subcommand) — this is the
+# hook that hint-file mechanism proposed in task-8-report.md, adopted here.
+# Falls back to the static WorkingDirectory= above when no hint file exists.
+#
+# No PATH= is set here on purpose (no pinned fnm/node version): `bash -lc` runs
+# a login shell, which on stock Ubuntu sources ~/.profile -> ~/.bashrc, picking
+# up whatever fnm/nvm shims the account's own shell setup already provides.
+ExecStart=/bin/bash -lc 'P=%i; C=$HOME/.claude; [ "$P" != default ] && C=$HOME/.claude-$P; \
+  WD=$HOME/Projects; [ -f "$HOME/.config/claude-rc/$P.workdir" ] && WD="$(cat "$HOME/.config/claude-rc/$P.workdir")"; \
+  cd "$WD" && CLAUDE_CONFIG_DIR=$C exec claude remote-control --name "%H-$P" --spawn same-dir'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

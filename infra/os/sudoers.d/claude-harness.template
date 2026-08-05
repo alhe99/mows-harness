@@ -1,0 +1,64 @@
+# claude-harness: allow the harness user to manage ONLY its own units, non-interactively.
+# Scope: systemctl start|stop|restart|enable|disable on the two claude-remote unit template
+# families, start/stop on the QA watch-stack unit, and a caddy config reload. Nothing else —
+# no `systemd-run` line, and never `ALL` in place of a named command.
+#
+# This is the ENTIRE sudo surface fleet/bin/claude-rc and watchdogs/bin/claude-health need
+# (see claude-rc's sc() wrapper and claude-health's auto-recovery restart — both call bare
+# `sudo systemctl ...` on exactly these two unit families). claude-rc's OTHER privileged
+# calls (transient per-project listeners, model/effort re-hosting) deliberately do NOT need
+# sudo at all: they run as `systemd-run --user` under this same account instead (see
+# claude-rc's own header comment for the full rationale), which needs
+# `sudo loginctl enable-linger {{ADMIN_USER}}` (one-time, see infra/os/SETUP.md) but nothing
+# in this file. That is why there is no systemd-run entry below.
+#
+# The 10 claude-remote(-control)@ lines below are sudo's ANCHORED POSIX-ERE command-argument
+# form (`^..$`), NOT shell-style globs. This requires sudo >= 1.9.10 (ships by default on
+# Ubuntu 22.04+ and Debian 12+ — confirm with `sudo -V`, first line; older boxes must upgrade
+# sudo before this file will do anything useful). Why: sudoers' `*` glob matches shell-style
+# wildcards ACROSS word boundaries too — command line arguments are matched as a single,
+# concatenated string, so a glob line like `systemctl start claude-remote@*` would ALSO match
+# `systemctl start claude-remote@alpha.service /tmp/evil.service`, and because `systemctl
+# enable`/`disable`/etc. accept absolute paths to arbitrary unit files as trailing arguments,
+# that one extra space-separated argument hands the harness user password-free root code
+# execution via any unit file it can place on disk — defeating this entire template. The
+# anchored form closes it: sudo only treats a Cmnd's argument field as a regex — instead of
+# silently falling back to fnmatch(3) glob matching over the same literal string — when that
+# WHOLE field starts with `^` and ends with `$`; the verb (`start`/`enable`/...) MUST be
+# written inside the anchors, e.g. `^start claude-remote@[A-Za-z0-9_-]+[.]service$`, never in
+# front of them (`start ^claude-remote@...$`), or sudo reverts to literal glob matching on the
+# whole string — including the `^`, `+`, and `$` as ordinary characters — and the rule then
+# matches nothing at all, legitimate calls included. `[A-Za-z0-9_-]+` admits systemd instance
+# characters but not whitespace or `/`; `[.]` is sudoers regex syntax for a required literal
+# dot — write it as `[.]`, never backslash-escaped as `\.`, which is a sudoers parse error.
+# The `claude-qa-watch` and `caddy` lines below carry no glob or regex at all, so they require
+# an EXACT argv match — a future caller must invoke them exactly as
+# `systemctl start claude-qa-watch` / `systemctl stop claude-qa-watch` /
+# `systemctl reload caddy`, with no `.service` suffix and no extra arguments, or this rule
+# will not match and sudo will fall through to a password prompt (fail closed, not open).
+#
+# Command patterns use the ABSOLUTE path /usr/bin/systemctl, not bare `systemctl` — sudoers
+# always matches the fully-resolved binary path. The scripts above call bare
+# `sudo systemctl ...`; sudo resolves that via its own `secure_path` Defaults (not the
+# invoking user's $PATH) before comparing it to the patterns below, so this only works
+# unmodified if secure_path also resolves systemctl to /usr/bin/systemctl on your box.
+# Confirm with `command -v systemctl` (as root, or under `sudo`) and edit every line below
+# if it prints something else (e.g. /bin/systemctl on a merged-/usr-less layout).
+#
+# Install:
+#   visudo -cf this-file
+#   install -m 0440 this-file /etc/sudoers.d/claude-harness
+{{ADMIN_USER}} ALL=(root) NOPASSWD: \
+  /usr/bin/systemctl ^start claude-remote@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^stop claude-remote@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^restart claude-remote@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^enable claude-remote@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^disable claude-remote@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^start claude-remote-control@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^stop claude-remote-control@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^restart claude-remote-control@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^enable claude-remote-control@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^disable claude-remote-control@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl start claude-qa-watch, \
+  /usr/bin/systemctl stop claude-qa-watch, \
+  /usr/bin/systemctl reload caddy

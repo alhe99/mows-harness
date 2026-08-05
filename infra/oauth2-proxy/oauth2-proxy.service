@@ -1,0 +1,32 @@
+# infra/oauth2-proxy/oauth2-proxy.service — harvested from the reference box's own
+# /etc/systemd/system/oauth2-proxy.service verbatim, no template placeholders: nothing
+# in it is account- or host-specific. User= is oauth2-proxy's own dedicated system
+# service account, never a personal login.
+#
+# Prerequisites this unit assumes are already in place:
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin oauth2-proxy
+#   sudo install -d -o oauth2-proxy -g oauth2-proxy -m 0750 /etc/oauth2-proxy
+#   sudo install -o oauth2-proxy -g oauth2-proxy -m 0640 <rendered oauth2-proxy.cfg> \
+#       /etc/oauth2-proxy/oauth2-proxy.cfg
+#   sudo install -o oauth2-proxy -g oauth2-proxy -m 0640 <rendered emails.txt> \
+#       /etc/oauth2-proxy/emails.txt
+# oauth2-proxy.cfg holds client_secret + cookie_secret in plaintext — keep it at 0640
+# owned by the service account, not the 0644 a plain `cp` would leave you with.
+#
+# Binary: no apt package on Ubuntu/Debian. Download the oauth2-proxy release matching
+# `uname -m` from https://github.com/oauth2-proxy/oauth2-proxy/releases and place the
+# extracted binary at /usr/local/bin/oauth2-proxy — that non-/usr/bin path is why
+# ExecStart below points where it does.
+[Unit]
+Description=oauth2-proxy (Google auth for Claude dashboard + terminal)
+After=network.target
+
+[Service]
+Type=simple
+User=oauth2-proxy
+ExecStart=/usr/local/bin/oauth2-proxy --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

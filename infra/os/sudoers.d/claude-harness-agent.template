@@ -1,0 +1,56 @@
+# claude-harness (fleet AGENT copy) — grants exactly ONE fleet agent account NOPASSWD
+# systemctl rights over ONLY its own claude-remote-<name>@ unit family. This is a TEMPLATE:
+# fleet/add-agent.sh (--remote-control) renders one fresh copy per agent — substituting
+# that one agent's own Linux username everywhere below — before installing it. Never
+# install this shipped copy as-is; see fleet/SETUP.md for the full walkthrough.
+#
+# WHY THIS IS A SEPARATE FILE FROM infra/os/sudoers.d/claude-harness.template, NOT AN
+# EXTRA LINE IN IT: that file grants the harness's single PROFILE-model admin account
+# (one Linux user, N ~/.claude-<profile> config dirs) rights over the CANONICAL
+# `claude-remote@`/`claude-remote-control@` unit families. Those unit templates
+# (infra/systemd/claude-remote@.service, claude-remote-control@.service) hardcode
+# `User={{ADMIN_USER}}` — one rendered unit file can only ever run as ONE Linux user. The
+# AGENT model (fleet/add-agent.sh) is N *separate Linux user accounts* on the same box, each
+# needing its OWN unit (installed as `claude-remote-<name>@.service`, NOT the canonical
+# name — see fleet/add-agent.sh's header for why the canonical name can't be reused) and
+# therefore its OWN sudoers grant: sudoers rules are keyed by the invoking user ("who"), so
+# an agent's unit can never be covered by the admin's existing grant without either (a)
+# widening the ADMIN's grant to reach into units it doesn't own, or (b) letting every agent
+# share one wildcarded "any agent" pattern (so agent A could start/stop/enable/disable agent
+# B's listener too — a real cross-account DoS/interference surface). This template picks
+# neither: each agent gets a grant that can only ever match ITS OWN literal unit family,
+# because the render step below splices that one agent's own Linux username into BOTH the
+# grantee ("who") line AND the unit-family name inside the Cmnd patterns — agent
+# "agent-alpha" ends up able to touch claude-remote-agent-alpha@* and nothing else, not
+# even claude-remote-agent-bravo@* or the admin's own claude-remote@*.
+#
+# Same anchored-POSIX-ERE mechanism as claude-harness.template, and the same requirement:
+# sudo >= 1.9.10 (Ubuntu 22.04+ / Debian 12+ ship this; confirm with `sudo -V`). Per `man
+# sudoers` and sudo's own `command_args_match()`, a Cmnd's argument field is matched as ONE
+# concatenated string, and is treated as a regex ONLY when that whole field starts with `^`
+# and ends with `$` — anything else (including a bare `*` glob, or `^` placed AFTER the verb
+# instead of before it) falls back to fnmatch(3) glob matching over the same literal string,
+# which either (a) lets a trailing extra argument — e.g. an absolute path to an
+# attacker-placed unit file — ride along unchecked (systemctl enable/disable/etc. all accept
+# one as a trailing arg), or (b) silently matches nothing at all, not even a legitimate call.
+# The verb MUST sit INSIDE the anchors: `^start claude-remote-<name>@[A-Za-z0-9_-]+[.]service$`,
+# never `start ^claude-remote-<name>@...$`. `[A-Za-z0-9_-]+` covers the systemd instance
+# token (the part after `@`; this agent model only ever uses `default`, but the pattern
+# stays open the same way the admin template's does, for parity). `[.]` is sudoers-regex for
+# a literal dot — write it that way, never backslash-escaped (`\.` is a sudoers parse error).
+#
+# Absolute path /usr/bin/systemctl, matching sudo's own secure_path resolution — same caveat
+# as claude-harness.template: confirm with `command -v systemctl` (as root) and edit this
+# file if your box resolves it elsewhere (e.g. a merged-/usr-less layout).
+#
+# Install (done automatically by fleet/add-agent.sh's --remote-control path; shown here for
+# reference / manual recovery):
+#   sed "s/{{ADMIN_USER}}/<agent-name>/g" this-file > /tmp/rendered
+#   visudo -cf /tmp/rendered                    # MUST print "parsed OK" before install
+#   install -o root -g root -m 0440 /tmp/rendered /etc/sudoers.d/claude-harness-<agent-name>
+{{ADMIN_USER}} ALL=(root) NOPASSWD: \
+  /usr/bin/systemctl ^start claude-remote-{{ADMIN_USER}}@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^stop claude-remote-{{ADMIN_USER}}@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^restart claude-remote-{{ADMIN_USER}}@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^enable claude-remote-{{ADMIN_USER}}@[A-Za-z0-9_-]+[.]service$, \
+  /usr/bin/systemctl ^disable claude-remote-{{ADMIN_USER}}@[A-Za-z0-9_-]+[.]service$

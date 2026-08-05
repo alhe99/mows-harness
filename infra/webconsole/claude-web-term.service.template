@@ -1,0 +1,48 @@
+# claude-web-term.service.template — ttyd web terminal for /term, behind Caddy's
+# Google-OAuth gate (infra/caddy/, infra/oauth2-proxy/). Spawns web-term.sh per browser
+# connection; ttyd always hands that script a real pty, so it — and anything it execs,
+# e.g. fleet/bin/cc — behaves exactly like an interactive SSH session. No direct-exec
+# fallback path (cc's other branch, taken only with no pty) is ever reachable from here.
+#
+# REQUIRED before this unit can start: mask the distro-packaged ttyd.service first — a
+# plain `apt install ttyd` ships its own generic unit that also wants port 7681, and
+# having both enabled races for the same bind (confirmed on the reference box: `systemctl
+# is-enabled ttyd.service` -> masked):
+#   sudo systemctl mask --now ttyd.service
+#
+# Serving model — read before assuming ttyd's own page is what browsers see: this unit's
+# ttyd process does NOT answer a plain GET /term or /term/. infra/caddy/Caddyfile.
+# template's @termhtml route intercepts those two exact paths ahead of the reverse_proxy
+# handler below it and serves the HTML page itself via Caddy's own file_server, from the
+# dashboard directory. Only /term/ws (the websocket) and /term/token actually reach this
+# ttyd process, through Caddy's reverse_proxy to 127.0.0.1:7681.
+#
+# -I/--index below points at clipboard-shim.html — NOT a complete, working xterm.js page
+# by itself. This repo ships only the small, self-authored clipboard-handling <script>
+# (rescued from a live deployment that had it spliced into ttyd's own ~700KB bundled
+# index.html — a ttyd build/version artifact this repo does not vendor), so a direct,
+# Caddy-bypassing hit on this ttyd process (e.g. an SSH tunnel to 127.0.0.1:7681) sees an
+# intentionally minimal page until you've produced the real one — run
+# infra/webconsole/make-term-index.sh (one step; the manual splice it automates is still
+# documented, as a fallback, in clipboard-shim.html's own header comment). This is a
+# documented scope boundary, not a bug: the page ordinary browsers actually get is
+# Caddy's file_server copy (see above), not this ttyd process's own -I target.
+#
+# clipboard.conf (the sibling drop-in file) is an alternate, non-destructive way to add
+# this same -I flag onto an ALREADY-DEPLOYED ttyd unit you don't want to hand-edit —
+# install ONE of the two, not both; applying that drop-in on top of THIS template just
+# re-declares an identical ExecStart=.
+[Unit]
+Description=Web terminal (ttyd) for Claude Code sessions — /term behind Caddy auth
+After=network.target
+
+[Service]
+Type=simple
+User={{ADMIN_USER}}
+Environment=LANG=C.UTF-8
+ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -t titleFixed={{DOMAIN}} -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

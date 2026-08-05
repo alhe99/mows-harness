@@ -1,0 +1,8 @@
+*.bak*
+*.good.*
+*.orig
+.DS_Store
+node_modules/
+rendered/
+.superpowers/
+scripts/preflight-local.pat

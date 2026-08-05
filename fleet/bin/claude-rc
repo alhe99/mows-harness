@@ -1,0 +1,632 @@
+#!/usr/bin/env bash
+# claude-rc — manage / switch Claude Remote Control profiles on this box.
+#
+# Generalized from a 2-account, 2-hardcoded-unit live script to N profiles
+# (profiles()/cfg_for(), byte-identical to watchdogs/bin/claude-health) x
+# 2 unit KINDS per profile:
+#   unit_projects(p) = claude-remote@$p.service            (Projects workspace)
+#   unit_control(p)  = claude-remote-control@$p.service    (control / home-root workspace)
+# Every subcommand that manages a unit takes a profile positional; append --control
+# (any position) to target that profile's control unit instead of its projects unit.
+# This fixes the live bug where -control units had no management path at all.
+#
+# PROJECTS_ROOT=${PROJECTS_ROOT:-$HOME/Projects}. RC_PATH is built fresh each run
+# (no pinned fnm version): $HOME/.local/bin, then node's own bin dir if on PATH,
+# then the standard system dirs.
+#
+# DRY_RUN=1 makes every MUTATING action print what it would run instead of running
+# it: sc() (sudo systemctl start|stop|restart|enable|disable on the two unit
+# families above — the ONLY sudo this script performs, sized to fit a sudoers rule
+# scoped to exactly those two `@*` templates), urun()/ucl() (see below), and the
+# workdir hint-file writes. Read-only subcommands (status, listeners, logs) and the
+# read half of open/close (existence checks) are unaffected by DRY_RUN.
+#
+# --- Two deliberate restructurings vs. live, both load-bearing for the sudoers story ---
+#
+# 1) live's `open` (spawn a per-project listener) and `switch`/`_rehost` (re-host the
+#    CURRENT remote session under new model/effort settings) used `sudo systemd-run`
+#    to create ad-hoc transient units with a free-form unit name, `-p User=<user>`,
+#    and a free-form ExecStart. That is fundamentally wider than "systemctl
+#    start|stop|restart|enable|disable claude-remote@*" — a sudoers line that covers
+#    it (e.g. `NOPASSWD: /usr/bin/systemd-run *`) grants unrestricted root command
+#    execution and defeats the point of scoping sudo at all. Since every actor in
+#    this design (the profile's remote-control unit, the project listener, the
+#    re-hosting helper) already runs as the SAME single harness user, none of this
+#    actually needs a UID switch — only *system*-scope transient-unit creation
+#    inherently needs root, not the User= it was combined with. So: open/close/
+#    listeners' transient section, and switch/_rehost, now use `systemd-run --user`
+#    / `systemctl --user` (helpers urun()/ucl() below) — NO sudo at all. This
+#    requires the harness user to have `loginctl enable-linger <user>` set (one-time,
+#    root-run OS setup) so --user units survive past login/SSH session end; without
+#    it they die when the last session for that user closes. Net effect for Task
+#    10's sudoers template: NO systemd-run line is needed — the live draft's
+#    "narrow to the exact pattern used, or drop if unused" resolves to DROP.
+#    EXACT live invocation shapes (for the record, in case a future box can't grant
+#    linger and this needs to be reverted to a sudo path):
+#      sudo systemd-run --quiet --collect --unit="claude-rc-listen-<acct>-<slug>" \
+#        -p User=<user> -p WorkingDirectory=<abs> -p MemoryHigh=2G \
+#        -p Environment=HOME=<home> -p Environment=CLAUDE_CONFIG_DIR=<cfg> \
+#        -p Environment=PATH=<RC_PATH> -p UnsetEnvironment=ANTHROPIC_API_KEY \
+#        -p StandardInput=data -p StandardInputData=eQo= \
+#        <claude> remote-control --name <name> --spawn same-dir --capacity 8
+#      sudo systemd-run --quiet --collect --unit="claude-rc-switch-$$" \
+#        -p Environment=PATH=<RC_PATH> <claude-rc> _rehost <cse> <hostpid> <owner> <cwd> <cfg>
+#      (inside _rehost, already root): systemd-run --quiet --collect --unit="<u>" \
+#        -p User=<user> -p WorkingDirectory=<cwd> -p MemoryHigh=2G ... <claude> remote-control --session-id <cse>
+#
+# 2) live's `workdir` re-roots a profile's unit by writing a root-owned systemd
+#    drop-in (/etc/systemd/system/<unit>.d/workdir.conf) via `sudo mkdir`/`sudo tee`/
+#    `sudo rm` + `sudo systemctl daemon-reload` — none of which is a systemctl verb
+#    on claude-remote@*, so none of it fits the sudoers scope either. Restructured:
+#    this script now writes a plain USER-OWNED hint file
+#    ($HOME/.config/claude-rc/<profile>[-control].workdir) — no sudo — and applies it
+#    with `sc restart` (in-scope). This is a PROPOSED CONTRACT for Task 9's unit
+#    ExecStart, not yet consumed by anything: for workdir to actually take effect,
+#    Task 9's ExecStart needs a line like
+#      WD="$HOME/Projects"; [ -f "$HOME/.config/claude-rc/%i.workdir" ] && WD="$(cat "$HOME/.config/claude-rc/%i.workdir")"; cd "$WD" &&
+#    before the `exec claude remote-control ...`. Until that hook exists, `workdir`
+#    writes the hint and restarts the unit (matching live's UX/messages) but the new
+#    root won't actually take effect — a known, documented gap, not a silent bug;
+#    see task-8-report.md for the full writeup.
+#
+# No tmux sessions are created anywhere in this script (confirmed by reading live
+# end-to-end — open/workdir spawn systemd transient units directly, never tmux), so
+# reap-idle-claude's cc-* reaping does not apply here; nothing to rename.
+#
+# `logs` drops live's `sudo journalctl` for a plain `journalctl` — reading this
+# profile's own unit logs is a group-membership concern (systemd-journal), not a
+# sudo one; add the harness user to that group if `logs` reports permission denied.
+set -euo pipefail
+
+# ---- profiles()/cfg_for(): byte-identical to watchdogs/bin/claude-health --------
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+# derive a profile from a config dir (default: $CLAUDE_CONFIG_DIR or $HOME/.claude) —
+# generalized form of live's acct_from_cfg(); unmatched paths fall back to "default",
+# same fallback live used for its equivalent unmatched case.
+profile_from_cfg() {
+  local c="${1:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+  case "$c" in
+    "$HOME/.claude") echo default ;;
+    "$HOME"/.claude-*) basename "$c" | sed 's/^\.claude-//' ;;
+    *) echo default ;;
+  esac
+}
+
+require_profile() {
+  case " $(profiles | tr '\n' ' ') " in
+    *" $1 "*) ;;
+    *) echo "claude-rc: unknown profile '$1' (known: $(profiles | tr '\n' ' '))" >&2; return 1 ;;
+  esac
+}
+
+slug() { basename "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//'; }
+
+# ---- unit_* / --control flag handling --------------------------------------------
+unit_projects() { echo "claude-remote@$1.service"; }
+unit_control()  { echo "claude-remote-control@$1.service"; }
+unit_pick() { if [ "${2:-projects}" = control ]; then unit_control "$1"; else unit_projects "$1"; fi; }
+
+# scans "$@" for a literal --control (anywhere); sets KIND=control|projects and the
+# global ARGS array to the remaining args, in order. Every unit-targeting subcommand
+# calls this first so --control can appear anywhere on its command line.
+KIND=projects
+ARGS=()
+split_control() {
+  KIND=projects
+  local rest=()
+  for a in "$@"; do
+    if [ "$a" = --control ]; then KIND=control; else rest+=("$a"); fi
+  done
+  ARGS=("${rest[@]}")
+}
+
+PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/Projects}"
+RC_PATH="$HOME/.local/bin:$(dirname "$(command -v node || echo /usr/bin)"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+DRY_RUN="${DRY_RUN:-0}"
+
+need_sudo() {
+  command -v sudo >/dev/null 2>&1 \
+    || { echo "claude-rc: 'sudo' not found — required to manage system units (claude-remote@*, claude-remote-control@*)" >&2; exit 1; }
+}
+# sc() — the ONLY path for sudo in this script. Scope: systemctl
+# start|stop|restart|enable|disable on claude-remote@* / claude-remote-control@* —
+# sized to match the sudoers template Task 10 installs.
+sc() {
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: sudo systemctl $*"; return 0; fi
+  need_sudo
+  sudo systemctl "$@"
+}
+# urun()/ucl() — the --user counterparts used by open/close/listeners/switch/_rehost
+# (see restructuring note above). No sudo; requires `loginctl enable-linger` for the
+# spawned units to outlive the session that created them.
+urun() {
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: systemd-run --user $*"; return 0; fi
+  systemd-run --user "$@"
+}
+ucl() {
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: systemctl --user $*"; return 0; fi
+  systemctl --user "$@"
+}
+# workdir hint-file helpers (plain user-owned file — see restructuring note above).
+hint_file() { local sfx=""; [ "${2:-projects}" = control ] && sfx="-control"; echo "$HOME/.config/claude-rc/$1$sfx.workdir"; }
+wfile() {
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: write '$2' > $1"; else mkdir -p "$(dirname "$1")"; printf '%s\n' "$2" > "$1"; fi
+}
+wrm() {
+  if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: rm -f $1"; else rm -f "$1"; fi
+}
+
+# need_user_bus() — fail fast, before switch/open mutate anything, when this box has no
+# reachable systemd --user session (linger not enabled yet — see header restructuring
+# note above). `systemctl --user is-system-running` exits nonzero for "degraded" and
+# "maintenance" too even though both still have a working --user bus, so branch on the
+# state string itself rather than the bare exit code. Skipped entirely under DRY_RUN
+# (dry runs shouldn't need a bus at all).
+need_user_bus() {
+  case "$(systemctl --user is-system-running 2>/dev/null || true)" in
+    running|degraded|maintenance) ;;
+    *) echo 'claude-rc: no systemd --user session (enable with: sudo loginctl enable-linger $USER)' >&2; return 1 ;;
+  esac
+}
+
+usage() {
+  cat <<'EOF'
+claude-rc — manage / switch Claude Remote Control profiles
+
+  claude-rc status              show state of every profile (both unit kinds)
+  claude-rc start  <p> [--control]   start one profile's listener
+  claude-rc stop   <p> [--control]   stop one
+  claude-rc only   <p> [--control]   run ONLY this profile (stop the others) — a clean switch
+                                 (default: both unit kinds; --control: control-unit family only)
+  claude-rc all                 run every profile at once   (alias: both)
+  claude-rc workdir <p> <path|reset> [--now] [--control]
+                                 re-root this profile's NEW remote sessions at <path>
+                                 (reset = back to default $PROJECTS_ROOT; --now restarts now)
+  claude-rc boot   <p> on|off [--control]   start-on-boot on/off
+  claude-rc logs   <p> [--control]   follow that profile's logs
+  claude-rc resume <p>           open your NEWEST session in THIS terminal (SSH)
+  claude-rc resume <p> <id|prefix>
+                                 open a specific session (auto-forks if it's still live)
+  claude-rc resume <p> --list    list recent sessions to choose from
+  claude-rc resume <p> --pick    native picker (blank in non-git dirs)
+                                 flags: --fork force a safe copy · --no-fork resume in place
+  claude-rc set-effort <low|medium|high|xhigh|max|auto> [p]
+                                 rewrite the default effort (applies to NEXT session)
+  claude-rc set-model  <opus[1m]|opus|sonnet[1m]|sonnet|haiku|fable|fable[1m]|opusplan|default> [p]
+                                 rewrite the default model (applies to NEXT session)
+  claude-rc open <path|project> [p]
+                                 spawn a per-project listener: new mobile/web sessions can
+                                 start FRESH in that directory (pick it in the app's list)
+  claude-rc close <project|--all> [p]   stop a project listener
+  claude-rc listeners           list core + project listeners
+  claude-rc switch <model|-> [effort]
+                                 change model/effort for the CURRENT remote session — same
+                                 conversation, re-hosted (run from inside it, via /switch)
+
+  <p> = a profile (see: claude-rc status). set-effort/set-model/open/switch default
+        to $CLAUDE_CONFIG_DIR's profile. --control targets the control-workspace
+        unit instead of the Projects-workspace unit (see: claude-rc status).
+EOF
+}
+
+cmd="${1:-status}"; shift || true
+case "$cmd" in
+  status)
+    for p in $(profiles); do
+      for k in projects control; do
+        u="$(unit_pick "$p" "$k")"
+        label="$p"; [ "$k" = control ] && label="$p (control)"
+        printf '  %-20s  active:%-10s  boot:%s\n' "$label" \
+          "$(systemctl is-active "$u" 2>/dev/null || true)" \
+          "$(systemctl is-enabled "$u" 2>/dev/null || true)"
+      done
+    done ;;
+
+  start)
+    split_control "$@"
+    p="${ARGS[0]:?profile required}"; require_profile "$p"
+    sc start "$(unit_pick "$p" "$KIND")" ;;
+
+  stop)
+    split_control "$@"
+    p="${ARGS[0]:?profile required}"; require_profile "$p"
+    sc stop "$(unit_pick "$p" "$KIND")" ;;
+
+  only)
+    split_control "$@"
+    want="${ARGS[0]:?usage: claude-rc only <profile> [--control]}"; require_profile "$want"
+    kinds=(projects control); [ "$KIND" = control ] && kinds=(control)
+    for a in $(profiles); do
+      for k in "${kinds[@]}"; do
+        if [ "$a" = "$want" ]; then sc start "$(unit_pick "$a" "$k")"
+        else sc stop "$(unit_pick "$a" "$k")"; fi
+      done
+    done
+    scope="both unit kinds"; [ "$KIND" = control ] && scope="control unit only"
+    echo "now running only: $want ($scope)" ;;
+
+  both|all)
+    split_control "$@"
+    kinds=(projects control); [ "$KIND" = control ] && kinds=(control)
+    for a in $(profiles); do
+      for k in "${kinds[@]}"; do sc start "$(unit_pick "$a" "$k")"; done
+    done
+    echo "all running" ;;
+
+  workdir)
+    # Re-root a profile's listener at a project dir. cwd is fixed at spawn — this is
+    # the ONLY durable way to "change dir" over remote control; a mid-session /cd
+    # cannot persist. See the file header for the hint-file mechanism and its Task 9
+    # ExecStart dependency (not yet wired up anywhere — proposed contract).
+    split_control "$@"
+    p="${ARGS[0]:?usage: claude-rc workdir <profile> <path|reset> [--now] [--control]}"; require_profile "$p"
+    target="${ARGS[1]:?usage: claude-rc workdir <profile> <path|reset> [--now] [--control]}"
+    u="$(unit_pick "$p" "$KIND")"
+    hf="$(hint_file "$p" "$KIND")"
+    if [ "$target" = reset ]; then
+      wrm "$hf"
+      echo "$p workdir -> default (\$PROJECTS_ROOT: $PROJECTS_ROOT)"
+    else
+      case "$target" in /*) abs="$target" ;; *) abs="$PROJECTS_ROOT/$target" ;; esac
+      [ -d "$abs" ] || { echo "workdir: not a directory: $abs" >&2; exit 1; }
+      wfile "$hf" "$abs"
+      echo "$p workdir -> $abs"
+    fi
+    if [ "$KIND" = control ]; then
+      [ "${ARGS[2]:-}" = --now ] && sc restart "$u"
+      echo "$hf updated — but control units always start at \$HOME (no effect); the control-unit template never reads a workdir hint, by design"
+    else
+      if [ "${ARGS[2]:-}" = --now ]; then
+        sc restart "$u"
+        echo "restarted $p listener — reconnect from mobile/web; new sessions start in the new root"
+      else
+        echo "takes effect on restart (drops the current live session):  claude-rc start $p   (or): sudo systemctl restart $u"
+        echo "   ...or re-run with --now to restart immediately"
+      fi
+      echo "note: takes effect once the unit template reads the workdir hint (see infra/systemd/claude-remote@.service)"
+    fi
+    ;;
+
+  boot)
+    split_control "$@"
+    p="${ARGS[0]:?profile required}"; require_profile "$p"
+    state="${ARGS[1]:?on|off}"
+    u="$(unit_pick "$p" "$KIND")"
+    case "$state" in
+      on)  sc enable  "$u" ;;
+      off) sc disable "$u" ;;
+      *) echo "use: on | off" >&2; exit 1 ;;
+    esac ;;
+
+  logs)
+    split_control "$@"
+    p="${ARGS[0]:?profile required}"; require_profile "$p"
+    journalctl -u "$(unit_pick "$p" "$KIND")" -f ;;
+
+  resume)
+    acct="${1:-default}"; shift || true
+    require_profile "$acct"
+    mode="open"; want_id=""; force_fork="auto"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --fork)              force_fork=1 ;;
+        --no-fork|--same)    force_fork=0 ;;
+        --list|--ls|-l|list) mode="list" ;;
+        --pick|--picker)     mode="pick" ;;
+        --id)                shift; want_id="${1:?--id needs a session id or prefix}" ;;
+        -*) echo "claude-rc resume: unknown option '$1'" >&2; exit 1 ;;
+        *)  want_id="$1" ;;   # positional session id / prefix
+      esac
+      shift
+    done
+    cfg="$(cfg_for "$acct")"
+    # Auth precheck: the resume shares this profile's OAuth file with the live listener;
+    # a mid-rotation token refresh can momentarily bounce to a raw login screen. Guard it.
+    if ! env CLAUDE_CONFIG_DIR="$cfg" claude auth status 2>/dev/null \
+         | grep -q '"loggedIn": *true'; then
+      echo "claude-rc resume: '$acct' is not showing a valid login right now." >&2
+      echo "  Do NOT paste a login code — usually a transient token refresh, not a logout. Try:" >&2
+      echo "    1) wait ~30s, then re-run:     claude-rc resume $acct" >&2
+      echo "    2) continue in the browser:    claude.ai/code   (no SSH race)" >&2
+      echo "    3) take the listener offline:  claude-rc stop $acct && claude-rc resume $acct" >&2
+      exit 1
+    fi
+    cd "$PROJECTS_ROOT"
+
+    # The native --resume picker enumerates by git repo/branch and shows NOTHING when the
+    # launch dir isn't a git repo (our case). So we read sessions from disk and resume by id.
+    rc_list() {  # emit "mtime<TAB>id<TAB>path" for top-level convos, newest first
+      [ -d "$cfg/projects" ] || return 0   # no projects dir yet — nothing to list, not an error
+      find "$cfg/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' 2>/dev/null \
+        | while read -r f; do printf '%s\t%s\t%s\n' "$(stat -c %Y "$f")" "$(basename "$f" .jsonl)" "$f"; done \
+        | sort -rn
+    }
+
+    # ----- list mode: a working text menu (replaces the blank native picker) -----
+    if [ "$mode" = "list" ]; then
+      echo "recent '$acct' sessions  (CLAUDE_CONFIG_DIR=$cfg)"
+      printf '  %-13s %-7s %-36s %s\n' "WHEN" "STATUS" "SESSION ID" "FIRST MESSAGE"
+      now="$(date +%s)"
+      { rc_list | head -20 | while IFS="$(printf '\t')" read -r mt id f; do
+          when="$(date -d "@$mt" '+%m-%d %H:%M')"
+          status=""; if [ $((now - mt)) -lt 150 ]; then status="* live"; fi
+          snip="$(grep -m1 '"type":"user"' "$f" 2>/dev/null \
+                  | jq -r 'try .message.content catch "" | if type=="array" then (map(.text? // empty)|join(" ")) elif type=="string" then . else "" end' 2>/dev/null \
+                  | tr "\n\t" "  " | cut -c1-46)"
+          printf '  %-13s %-7s %-36s %s\n' "$when" "$status" "$id" "$snip"
+        done; } || true
+      echo
+      echo "open newest:  claude-rc resume $acct"
+      echo "open one:     claude-rc resume $acct <ID|prefix> [--fork | --no-fork]"
+      exit 0
+    fi
+
+    # ----- pick mode: native picker escape hatch ----------------------------------
+    if [ "$mode" = "pick" ]; then
+      if [ "$force_fork" = 1 ]; then pf="--fork-session"; else pf=""; fi
+      echo "resuming '$acct' via the native picker  (CLAUDE_CONFIG_DIR=$cfg)"
+      echo "  note: blank when the dir isn't a git repo — 'claude-rc resume $acct' is reliable"
+      exec env CLAUDE_CONFIG_DIR="$cfg" claude --resume $pf
+    fi
+
+    # ----- open mode (default): resolve a session, then resume it ------------------
+    if [ -n "$want_id" ]; then
+      line="$(rc_list | awk -F'\t' -v p="$want_id" '$2 ~ "^"p')"
+      n="$(printf '%s\n' "$line" | grep -c . || true)"
+      if [ "$n" -eq 0 ]; then echo "claude-rc resume: no '$acct' session matching '$want_id' (try: claude-rc resume $acct --list)" >&2; exit 1; fi
+      if [ "$n" -gt 1 ]; then echo "claude-rc resume: '$want_id' matches $n sessions — add more characters" >&2; exit 1; fi
+    else
+      line="$(rc_list | head -1)"
+      if [ -z "$line" ]; then echo "claude-rc resume: no '$acct' sessions found under $cfg/projects" >&2; exit 1; fi
+    fi
+    mt="$(printf '%s' "$line" | cut -f1)"
+    id="$(printf '%s' "$line" | cut -f2)"
+
+    # Decide fork. auto = fork only if the transcript was written very recently (likely
+    # still live on mobile/web) — resuming a live transcript in place corrupts it.
+    now="$(date +%s)"
+    case "$force_fork" in
+      1) fork="--fork-session"; why="--fork: branching a clean copy" ;;
+      0) fork="";               why="--no-fork: resuming in place" ;;
+      *) if [ $((now - mt)) -lt 300 ]; then
+           fork="--fork-session"; why="looks active — auto-forking a safe copy (override with --no-fork)"
+         else
+           fork="";              why="resuming in place; if it's also open on mobile/web, Ctrl-C and add --fork"
+         fi ;;
+    esac
+    echo "opening '$acct' session $id  (CLAUDE_CONFIG_DIR=$cfg)"
+    echo "  $why"
+    exec env CLAUDE_CONFIG_DIR="$cfg" claude --resume "$id" $fork
+    ;;
+
+  set-effort)
+    # Rewrite the DEFAULT effort in a profile's settings.json (mobile can't use /effort).
+    lvl="${1:?usage: claude-rc set-effort <low|medium|high|xhigh|max|auto> [profile]}"
+    if [ -n "${2:-}" ]; then require_profile "$2"; cfg="$(cfg_for "$2")"
+    else cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; fi
+    s="$cfg/settings.json"
+    [ -f "$s" ] || { echo "set-effort: no settings.json at $s" >&2; exit 1; }
+    case "$lvl" in
+      low|medium|high|xhigh) expr='.effortLevel=$l | del(.env.CLAUDE_CODE_EFFORT_LEVEL)' ;;
+      max)                   expr='del(.effortLevel) | .env.CLAUDE_CODE_EFFORT_LEVEL="max"' ;;
+      auto)                  expr='del(.effortLevel) | del(.env.CLAUDE_CODE_EFFORT_LEVEL)' ;;
+      *) echo "set-effort: use low|medium|high|xhigh|max|auto" >&2; exit 1 ;;
+    esac
+    if [ "$DRY_RUN" = 1 ]; then
+      echo "DRY_RUN: would set default effort -> $lvl in $s   (profile: $(basename "$cfg"))"
+    else
+      cp -a "$s" "$s.bak-effort"
+      tmp="$(mktemp "$(dirname "$s")/settings.json.XXXXXX")"
+      if jq --arg l "$lvl" "$expr" "$s" > "$tmp" && jq -e . "$tmp" >/dev/null 2>&1; then
+        chmod 600 "$tmp"; mv -f "$tmp" "$s"
+        echo "default effort -> $lvl   (profile: $(basename "$cfg"))"
+        echo "applies to your NEXT session — start a fresh session to use it (a running session can't change effort over remote control)"
+      else
+        rm -f "$tmp"; echo "set-effort: edit failed, no change made" >&2; exit 1
+      fi
+    fi
+    ;;
+
+  set-model)
+    # Rewrite the DEFAULT model in a profile's settings.json (mobile can't use /model).
+    m="${1:?usage: claude-rc set-model <opus[1m]|opus|sonnet[1m]|sonnet|haiku|fable|fable[1m]|opusplan|default> [profile]}"
+    if [ -n "${2:-}" ]; then require_profile "$2"; cfg="$(cfg_for "$2")"
+    else cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; fi
+    s="$cfg/settings.json"
+    [ -f "$s" ] || { echo "set-model: no settings.json at $s" >&2; exit 1; }
+    case "$m" in
+      'opus[1m]')   id='claude-opus-4-8[1m]'      ; raw=1 ;;
+      opus)         id='claude-opus-4-8'          ; raw=1 ;;
+      'sonnet[1m]') id='claude-sonnet-4-6[1m]'    ; raw=1 ;;
+      sonnet)       id='claude-sonnet-4-6'        ; raw=1 ;;
+      haiku)        id='claude-haiku-4-5-20251001'; raw=1 ;;
+      fable)        id='claude-fable-5'           ; raw=1 ;;
+      'fable[1m]')  id='claude-fable-5[1m]'       ; raw=1 ;;
+      opusplan)     id='opusplan'                 ; raw=0 ;;
+      default)      id=''                         ; raw=0 ;;
+      *) echo "set-model: unknown '$m' (use opus[1m]|opus|sonnet[1m]|sonnet|haiku|fable|fable[1m]|opusplan|default)" >&2; exit 1 ;;
+    esac
+    if   [ "$m" = default ]; then expr='del(.model) | del(.env.ANTHROPIC_MODEL)'
+    elif [ "$raw" = 1 ];     then expr='.model=$id | .env.ANTHROPIC_MODEL=$id'
+    else                          expr='.model=$id | del(.env.ANTHROPIC_MODEL)'   # opusplan: alias, no raw env id
+    fi
+    if [ "$DRY_RUN" = 1 ]; then
+      echo "DRY_RUN: would set default model -> ${id:-account default} in $s   (profile: $(basename "$cfg"))"
+    else
+      cp -a "$s" "$s.bak-model"
+      tmp="$(mktemp "$(dirname "$s")/settings.json.XXXXXX")"
+      if jq --arg id "$id" "$expr" "$s" > "$tmp" && jq -e . "$tmp" >/dev/null 2>&1; then
+        chmod 600 "$tmp"; mv -f "$tmp" "$s"
+        echo "default model -> ${id:-account default}   (profile: $(basename "$cfg"))"
+        echo "applies to your NEXT session — model is read at session start, so start a fresh session"
+      else
+        rm -f "$tmp"; echo "set-model: edit failed, no change made" >&2; exit 1
+      fi
+    fi
+    ;;
+
+  open)
+    # Spawn a per-project Remote Control listener (transient --user systemd unit — see
+    # header restructuring note). The mobile app shows one new-session entry per
+    # listener, so this is how a phone session gets BORN in an arbitrary directory —
+    # cwd is fixed at listener launch and can't move. Transient; gone on logout unless
+    # linger is enabled for this user — only the core listeners persist across reboot.
+    [ "$DRY_RUN" = 1 ] || need_user_bus || exit 1   # fail fast, before any mutation
+    target="${1:?usage: claude-rc open <path|Projects-relative> [profile]}"
+    acct="${2:-$(profile_from_cfg)}"; require_profile "$acct"
+    cfg="$(cfg_for "$acct")"
+    case "$target" in /*) abs="$target" ;; *) abs="$PROJECTS_ROOT/$target" ;; esac
+    abs="${abs%/}"
+    [ -d "$abs" ] || { echo "open: not a directory: $abs" >&2; exit 1; }
+    proj="$(slug "$abs")"
+    u="claude-rc-listen-$acct-$proj.service"
+    name="$(hostname)-$acct-$proj"
+    if systemctl --user --quiet is-active "$u" 2>/dev/null; then
+      echo "already up: '$name' -> $abs   (profile: $acct)"
+      echo "phone: pull to refresh the session list and start a new session on '$name'"
+      exit 0
+    fi
+    urun --quiet --collect --unit="${u%.service}" \
+      -p WorkingDirectory="$abs" -p MemoryHigh=2G \
+      -p "Environment=CLAUDE_CONFIG_DIR=$cfg" \
+      -p "Environment=PATH=$RC_PATH" \
+      -p UnsetEnvironment=ANTHROPIC_API_KEY \
+      -p StandardInput=data -p StandardInputData=eQo= \
+      claude remote-control --name "$name" --spawn same-dir --capacity 8
+    if [ "$DRY_RUN" = 1 ]; then
+      echo "DRY_RUN: no unit actually started; skipping the post-start liveness check"
+      exit 0
+    fi
+    sleep 4
+    if systemctl --user --quiet is-active "$u"; then
+      echo "listener up: '$name' -> $abs   (profile: $acct)"
+      echo "phone: pull to refresh the session list, then start a NEW session on '$name' — it begins fresh in that directory"
+      echo "later: claude-rc close $proj $acct   ·   claude-rc listeners"
+    else
+      echo "open: listener failed to start — logs: journalctl --user -u $u -n 30" >&2
+      exit 1
+    fi
+    ;;
+
+  close)
+    t="${1:?usage: claude-rc close <project|--all> [profile]}"
+    if [ "$t" = --all ]; then
+      us="$(systemctl --user list-units --plain --no-legend 'claude-rc-listen-*.service' 'claude-rc-serve-*.service' 2>/dev/null | awk '{print $1}' || true)"
+      if [ -z "$us" ]; then echo "no project/switch listeners running"; exit 0; fi
+      for x in $us; do ucl stop "$x" && echo "stopped $x"; done
+      exit 0
+    fi
+    acct="${2:-$(profile_from_cfg)}"; require_profile "$acct"
+    u="claude-rc-listen-$acct-$(slug "$t").service"
+    if systemctl --user --quiet is-active "$u" 2>/dev/null; then
+      ucl stop "$u" && echo "closed: $u (its picker entry disappears shortly)"
+    else
+      echo "close: '$u' not running — see: claude-rc listeners" >&2; exit 1
+    fi
+    ;;
+
+  listeners)
+    echo "core (boot-persistent):"
+    for p in $(profiles); do
+      for k in projects control; do
+        x="$(unit_pick "$p" "$k")"
+        printf '  %-38s %-9s %s\n' "$x" "$(systemctl is-active "$x" 2>/dev/null || true)" \
+          "$(systemctl show -p WorkingDirectory --value "$x" 2>/dev/null || true)"
+      done
+    done
+    echo "project / switch (transient --user — claude-rc open / switch):"
+    found=0
+    while read -r x _; do
+      [ -n "$x" ] || continue; found=1
+      printf '  %-38s %-9s %s\n' "$x" "$(systemctl --user is-active "$x" 2>/dev/null || true)" \
+        "$(systemctl --user show -p WorkingDirectory --value "$x" 2>/dev/null || true)"
+    done < <(systemctl --user list-units --plain --no-legend 'claude-rc-listen-*.service' 'claude-rc-serve-*.service' 2>/dev/null)
+    [ "$found" = 1 ] || echo "  (none)"
+    ;;
+
+  switch)
+    # Change model/effort for the CURRENT mobile/web session, SAME conversation.
+    # model & effort are read only at process start, and /model & /effort are excluded
+    # from the Remote Control allowlist — so: rewrite the defaults, then a detached
+    # --user helper replaces this session's host process; the fresh host re-serves the
+    # same session id and reads the new settings. The app reconnects to the same chat.
+    [ "$DRY_RUN" = 1 ] || need_user_bus || exit 1   # fail fast, before any mutation
+    m="${1:?usage: claude-rc switch <model|-> [effort]   (run from INSIDE the session)}"
+    eff="${2:-}"
+    acct="$(profile_from_cfg)"
+    cfg="$(cfg_for "$acct")"
+    [ "$m" = - ] || "$0" set-model "$m" "$acct" >/dev/null
+    [ -n "$eff" ] && "$0" set-effort "$eff" "$acct" >/dev/null
+    case "$m" in opusplan|default)
+      echo "note: '$m' has no raw model id, so it can't override this conversation's saved model — it applies to NEW sessions only (effort, if given, still switches now)" ;;
+    esac
+    # find our hosting claude process: the ancestor whose argv carries the remote session id
+    p=$$; host=""
+    for _ in $(seq 1 15); do
+      p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ' || true)"
+      [ -n "$p" ] && [ "$p" != 1 ] || break
+      if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- '--session-id cse_'; then host="$p"; break; fi
+    done
+    if [ -z "$host" ]; then
+      echo "model -> ${m} · effort -> ${eff:-unchanged}   (profile: $acct)"
+      echo "this is NOT a remote-control session, so nothing to re-host: the new defaults apply to your NEXT session (in the CLI use the native /model and /effort to switch live)"
+      exit 0
+    fi
+    cse="$(tr '\0' '\n' < "/proc/$host/cmdline" | grep -x -A1 -- '--session-id' | tail -1)"
+    cwd="$(readlink "/proc/$host/cwd" 2>/dev/null || pwd)"
+    owner="$(ps -o unit= -p "$host" 2>/dev/null | tr -d ' ' || true)"
+    urun --quiet --collect --unit="claude-rc-switch-$$" \
+      -p "Environment=PATH=$RC_PATH" -p "Environment=DRY_RUN=$DRY_RUN" \
+      claude-rc _rehost "$cse" "$host" "$owner" "$cwd" "$cfg"
+    echo "Switching NOW: model -> ${m} · effort -> ${eff:-unchanged}"
+    echo "This session re-hosts itself in ~10s — same conversation, new settings. If the app shows it disconnected for a moment, pull to refresh and reopen the SAME session. Don't send anything for ~20s."
+    echo "(other live sessions on this same workspace listener will blip too — they can be reopened from the session list)"
+    ;;
+
+  _rehost)
+    # internal — runs detached (--user unit), independent of the session it replaces.
+    # Verified flow (ported from live): the serving DAEMON holds the session lock
+    # (killing just the child host does not release it), so: stop the owner ->
+    # claim the session id with a fresh single-session server (reads the NEW
+    # settings) -> restore the owner. Core-unit stop/start goes through sc() (sudo,
+    # in-scope); a project-listener owner goes through --user systemctl (no sudo).
+    cse="$1"; hostpid="$2"; owner="$3"; cwd="$4"; cfg="$5"
+    u="claude-rc-serve-$(printf '%s' "$cse" | tail -c 6)-$(date +%s)"
+    sleep 8                                      # let the /switch reply finish streaming to the app
+    if [ -n "$owner" ]; then
+      case "$owner" in
+        claude-remote@*.service|claude-remote-control@*.service) sc stop "$owner" 2>/dev/null || true ;;
+        *) ucl stop "$owner" 2>/dev/null || true ;;
+      esac
+    else
+      if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: kill $hostpid"; else kill "$hostpid" 2>/dev/null || true; fi
+    fi
+    sleep 2
+    if [ "$DRY_RUN" = 1 ]; then echo "DRY_RUN: kill -0 $hostpid && kill -9 $hostpid"; else kill -0 "$hostpid" 2>/dev/null && { kill -9 "$hostpid" 2>/dev/null || true; sleep 1; }; fi
+    urun --quiet --collect --unit="$u" \
+      -p WorkingDirectory="$cwd" -p MemoryHigh=2G \
+      -p "Environment=CLAUDE_CONFIG_DIR=$cfg" \
+      -p "Environment=PATH=$RC_PATH" \
+      -p UnsetEnvironment=ANTHROPIC_API_KEY \
+      -p StandardInput=data -p StandardInputData=eQo= \
+      claude remote-control --session-id "$cse" || true
+    sleep 6
+    case "$owner" in
+      claude-remote@*.service|claude-remote-control@*.service) sc start "$owner" ;;   # bring the core listener back
+      claude-rc-listen-*)                                                             # transient project listener: recreate
+        a="$(profile_from_cfg "$cfg")"
+        claude-rc open "$cwd" "$a" >/dev/null 2>&1 || true ;;
+    esac
+    systemctl --user --quiet is-active "$u.service" \
+      || echo "claude-rc _rehost: serve unit $u is not active — session $cse may need manual reopen" >&2
+    ;;
+
+  -h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

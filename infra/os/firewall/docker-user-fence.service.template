@@ -1,0 +1,33 @@
+# docker-user-fence.service.template — block internet access to a Docker-published port
+# that Docker's own iptables rules would otherwise expose.
+#
+# WHY THIS EXISTS: Docker inserts its NAT/filter rules (the DOCKER-USER chain) AHEAD of your
+# host firewall's INPUT chain. That means rules.v4.template's INPUT allowlist above does NOT
+# protect a `-p 1433:1433` (or any) Docker-published port — Docker's DNAT hands the packet
+# straight to the container before INPUT ever sees it. `ufw` has the exact same blind spot,
+# for the same reason. The only place to block a published container port from the public
+# internet is the DOCKER-USER chain itself, which Docker guarantees to preserve across
+# restarts/reloads (unlike INPUT/FORWARD, which `docker` freely rewrites).
+#
+# BEFORE INSTALLING:
+#   1. Set IFACE below to this host's WAN-facing interface (find it with:
+#      `ip route show default` — the `dev <name>` field). It is intentionally a plain
+#      Environment= value, not a double-brace placeholder, because it's a real systemd
+#      setting you may need to change again later (e.g. after a NIC rename) without
+#      re-rendering a template.
+#   2. Change --dport 1433 to whatever Docker-published port you're fencing. 1433 (MSSQL) is
+#      this file's original worked example, not a default worth keeping — add one ExecStart
+#      line per port if you need to fence more than one.
+[Unit]
+Description=Block internet access to a Docker-published port (ufw/iptables INPUT is bypassed by Docker's DNAT)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=IFACE=eth0
+ExecStart=/bin/sh -c '/usr/sbin/iptables -C DOCKER-USER -i "$IFACE" -p tcp --dport 1433 -j DROP 2>/dev/null || /usr/sbin/iptables -I DOCKER-USER -i "$IFACE" -p tcp --dport 1433 -j DROP'
+
+[Install]
+WantedBy=multi-user.target

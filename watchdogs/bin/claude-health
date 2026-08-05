@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# claude-health — monitor per-profile Claude Code remote-control units. Cron every 5 min.
+# `claude-health --once` prints the current status snapshot now.
+#
+# Ground truth for "connected" = an established TCP connection on the unit's main PID —
+# a live remote-control bridge holds one open to the backend. Auto-recovers a WEDGED unit
+# only when sustained >=8 min AND not recovered in the last 2h (avoids dead-env littering +
+# restart thrash). Touch ~/.local/state/claude-health.norecover for alert-only mode (never
+# auto-restarts; still logs).
+#
+# Profiles are discovered dynamically (default + every ~/.claude-<suffix> dir) — this
+# script assumes nothing about which profiles exist, how many there are, or what they're
+# named. Runs as a graceful no-op on a box with no matching remote-control units installed.
+set -euo pipefail
+
+profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
+  echo default
+  for d in "$HOME"/.claude-*; do [ -d "$d" ] && basename "$d" | sed 's/^\.claude-//'; done
+}
+cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
+
+ST="$HOME/.local/state"
+LOG="$ST/claude-health.log"
+OUT="$ST/claude-health.txt"
+NORECOVER="$ST/claude-health.norecover"
+mkdir -p "$ST/health"
+
+now=$(date +%s)
+ts=$(date '+%F %T %Z')
+log() { echo "[$ts] $*" >> "$LOG"; }
+
+boxstats="RAM/swap: unavailable (free not installed)"
+boxflag="OK"
+avail=0
+if command -v free >/dev/null 2>&1; then
+  boxstats=$(free -m | awk '
+    /^Mem:/  {mu=$3; mt=$2; ma=$7}
+    /^Swap:/ {su=$3; st=$2}
+    END {printf "RAM %s/%sMiB used, %sMiB avail - swap %s/%sMiB", mu+0,mt+0,ma+0,su+0,st+0}
+  ' 2>/dev/null || true)
+  [ -n "$boxstats" ] || boxstats="RAM/swap: read failed"
+  avail=$(free -m | awk '/^Mem:/{print $7}' 2>/dev/null || true)
+  [ -n "$avail" ] || avail=0
+  [ "$avail" -lt 500 ] && boxflag="LOW-MEM"
+fi
+
+{
+  echo "Claude remote stack - $ts"
+  echo "box: $boxstats   [$boxflag]"
+  echo "------------------------------------------------------------"
+} > "$OUT.tmp"
+
+action="none"
+for p in $(profiles); do
+  unit="claude-remote@$p"
+  active=$(systemctl is-active "$unit" 2>/dev/null || true)
+  pid=$(systemctl show -p MainPID --value "$unit" 2>/dev/null || true)
+  memb=$(systemctl show -p MemoryCurrent --value "$unit" 2>/dev/null || true)
+  memg=$(awk -v b="${memb:-0}" 'BEGIN { b += 0; printf "%.1f", b/1073741824 }')
+
+  est=0
+  if [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
+    est=$(ss -tnpH state established 2>/dev/null | grep -c "pid=$pid," || true)
+  fi
+
+  if [ "$active" != "active" ]; then
+    verdict="DOWN"; glyph="x"
+  elif [ "${est:-0}" -ge 1 ] 2>/dev/null; then
+    verdict="OK"; glyph="*"
+  else
+    verdict="WEDGED"; glyph="o"
+  fi
+
+  badf="$ST/health/$p.badsince"
+  recf="$ST/health/$p.lastrecover"
+  if [ "$verdict" != "WEDGED" ]; then
+    if [ -f "$badf" ]; then log "$p cleared -> $verdict"; rm -f "$badf"; fi
+  else
+    badsince="$now"
+    if [ -f "$badf" ]; then badsince=$(cat "$badf" 2>/dev/null || echo "$now"); fi
+    echo "$badsince" > "$badf"
+    badmin=$(( (now - badsince) / 60 ))
+    lastrec=0
+    if [ -f "$recf" ]; then lastrec=$(cat "$recf" 2>/dev/null || echo 0); fi
+    if [ ! -f "$NORECOVER" ] && [ "$badmin" -ge 8 ] && [ $((now - lastrec)) -ge 7200 ]; then
+      log "AUTO-RECOVER $p (wedged ${badmin}m, no backend conn) -> reset-claude-env"
+      if command -v reset-claude-env >/dev/null 2>&1; then
+        reset-claude-env "$p" >> "$LOG" 2>&1 || log "reset-claude-env $p exited non-zero"
+      else
+        log "reset-claude-env not on PATH — skipping env reset for $p"
+      fi
+      # reset-claude-env performs the unit stop/clear/start itself
+      echo "$now" > "$recf"; rm -f "$badf"; action="recovered $p"
+    else
+      norecover_word="no"; [ -f "$NORECOVER" ] && norecover_word="yes"
+      log "$p WEDGED ${badmin}m no-backend-conn (recover at 8m, rate-limit 2h, norecover=$norecover_word)"
+    fi
+  fi
+
+  cfg=$(cfg_for "$p")
+  authstr="?"
+  c="$cfg/.credentials.json"
+  if [ -f "$c" ]; then
+    exp=$(jq -r '.claudeAiOauth.expiresAt // .expiresAt // empty' "$c" 2>/dev/null || true)
+    if [ -n "$exp" ]; then
+      h=$(( (exp/1000 - now) / 3600 ))
+      if [ "$h" -lt 0 ]; then authstr="stale(daemon-refreshes)"; else authstr="ok(${h}h)"; fi
+    fi
+  fi
+
+  printf '%-16s %s %-7s %5sG  auth=%s\n' "$p" "$glyph" "$verdict" "$memg" "$authstr" >> "$OUT.tmp"
+done
+
+recover_word="ON"; [ -f "$NORECOVER" ] && recover_word="OFF"
+{
+  echo "------------------------------------------------------------"
+  echo "last action: $action  ·  auto-recovery: $recover_word"
+} >> "$OUT.tmp"
+mv "$OUT.tmp" "$OUT"
+
+if [ "${1:-}" = "--once" ]; then cat "$OUT"; fi
+exit 0

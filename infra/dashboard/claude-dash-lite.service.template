@@ -1,0 +1,33 @@
+[Unit]
+Description=Claude session dashboard (lite, zero-dep) — port 3005
+After=network.target
+
+[Service]
+Type=simple
+# User=root is intentional, not an oversight: lite.mjs reads Claude session
+# transcripts under EVERY discovered account's home directory (see
+# discoverAccounts() in infra/dashboard/lite.mjs, scanned fresh at startup) —
+# including other Linux logins' 0700/0750 homes, which only root can traverse.
+# Running this unit as any single one of those accounts would silently drop
+# every OTHER account from the dashboard (own profile visible, rest missing) —
+# this is the shipped design, verified on a real multi-account box, not
+# accidental over-privilege. One consequence: root's OWN ~/.claude sessions
+# are therefore also visible to every authenticated viewer, same as any
+# other discovered account.
+#
+# Operational notes:
+# - Account discovery runs ONCE at process startup (discoverAccounts() in
+#   lite.mjs) — restart this unit after provisioning a new profile, or the
+#   new profile stays invisible until the next restart.
+# - A profile is only discovered once it has a projects/ subdir, i.e. after
+#   its first real session — this deliberately filters out non-profile
+#   .claude-* dirs (e.g. a template cache or the claude-mem plugin's store).
+User=root
+ExecStart=/usr/bin/node /opt/claude-dashboard/lite.mjs --port 3005 --host 127.0.0.1
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-200
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target

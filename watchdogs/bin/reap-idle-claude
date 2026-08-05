@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Reap abandoned Claude tmux sessions (cc-<profile>-*): DETACHED and IDLE longer than $IDLE
+# seconds. Safe kill: the conversation is on disk — resuming in the project dir picks it
+# back up. An idle Claude TUI does not repaint (verified), so session_activity is a true
+# idleness clock; a session mid-task keeps printing -> stays fresh -> never reaped. Attached
+# sessions are never reaped.
+# 24h default; tighten via IDLE env or cron arg if RAM pressure demands.
+set -euo pipefail
+
+IDLE=${IDLE:-86400}
+ST="$HOME/.local/state"
+LOG="$ST/reap-idle-claude.log"
+mkdir -p "$ST"
+
+now=$(date +%s)
+ts=$(date '+%F %T')
+
+mapfile -t sessions < <(tmux ls -F '#{session_name} #{session_attached} #{session_activity}' 2>/dev/null |
+  awk -v now="$now" -v idle="$IDLE" '$1 ~ /^cc-/ && $2==0 && (now-$3) > idle {print $1}')
+
+for s in "${sessions[@]}"; do
+  [ -n "$s" ] || continue
+  # limit-stuck sessions are asleep, not abandoned — claude-limit-shield revives them after reset
+  if tmux capture-pane -p -t "$s" 2>/dev/null | grep -qiE "(hit|reached) your [a-z0-9 -]*limit|usage limit reached"; then
+    echo "$ts spared $s (usage-limit banner on screen; shield will resume it)" >> "$LOG"
+    continue
+  fi
+  if tmux kill-session -t "$s" 2>/dev/null; then
+    echo "$ts reaped $s (detached, idle>${IDLE}s)" >> "$LOG"
+  fi
+done
+
+exit 0

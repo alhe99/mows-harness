@@ -1,0 +1,2 @@
+# one email per line — each Google account listed here passes oauth2-proxy's auth gate
+{{ADMIN_EMAIL}}

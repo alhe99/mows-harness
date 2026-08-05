@@ -1,0 +1,9 @@
+# Layer 2 watchdogs — example crontab entries.
+# cron does NOT expand $HOME (or any shell variable) — replace $HOME below with your
+# absolute home directory path before installing with `crontab -e`.
+*/5  * * * * $HOME/.local/bin/claude-health
+*/10 * * * * $HOME/.local/bin/claude-mem-health
+17   * * * * $HOME/.local/bin/reap-idle-claude
+*/15 * * * * $HOME/.local/bin/reap-mcp-orphans
+*/5  * * * * $HOME/bin/claude-limit-shield.sh >/dev/null 2>&1
+@reboot      $HOME/.local/bin/log-boot

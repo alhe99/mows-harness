@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$comment": "Lifecycle state for a single /ship-spec run. Owned by Lead. Persisted to .agent-team/<run-id>/state.json on every transition. QA and Deploy READ ONLY.",
+  "title": "ship-spec run state",
+  "type": "object",
+  "required": ["run_id", "started_at", "spec_path", "phase", "team", "builders", "qa", "deploy"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "Convention: <YYYYMMDD-HHMM>-<spec-slug> (e.g., 20260525-2300-example-feature).",
+      "pattern": "^[0-9]{8}-[0-9]{4}-[a-z0-9-]+$"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of run start."
+    },
+    "spec_path": {
+      "type": "string",
+      "description": "Path to the input spec file (copied to .agent-team/<run-id>/spec.md)."
+    },
+    "version": {
+      "type": "object",
+      "description": "Tag version resolution. proposed is Lead's auto-bump; approved is what the user confirmed at Gate 2 (may differ if overridden).",
+      "properties": {
+        "proposed": {"type": "string", "description": "e.g., v0.3.0 — derived from latest tag + release: keyword in spec front-matter."},
+        "approved": {"type": ["string", "null"], "description": "Final version pushed by Deploy. Null until Gate 2 closes."},
+        "source": {"type": "string", "enum": ["frontmatter", "auto-bump-patch", "auto-bump-minor", "auto-bump-major", "first-tag", "user-override"]}
+      }
+    },
+    "repos": {
+      "type": "array",
+      "description": "Repositories involved in this run. Default: single entry for cwd. Multi-repo runs declare in spec front-matter.",
+      "items": {
+        "type": "object",
+        "required": ["path", "stack"],
+        "properties": {
+          "path": {"type": "string", "description": "Absolute or relative-to-cwd path to repo root (must contain .git/)."},
+          "stack": {"type": "string", "description": "Stack tag (fe, be, data, ...) — drives Builder routing."}
+        }
+      }
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "PLANNING",
+        "BUILDING",
+        "QA",
+        "FIXING",
+        "READY",
+        "DEPLOYING",
+        "RELEASING",
+        "DEPLOYED",
+        "FAILED"
+      ],
+      "description": "Current lifecycle phase. FAILED is paired with failure_class."
+    },
+    "failure_class": {
+      "type": ["string", "null"],
+      "description": "When phase=FAILED, the failure class from references/failure-modes.md."
+    },
+    "team": {
+      "type": "object",
+      "required": ["team_name"],
+      "properties": {
+        "team_name": {"type": "string", "description": "Value passed to TeamCreate."},
+        "team_id": {"type": ["string", "null"], "description": "Value returned by TeamCreate, if available."}
+      }
+    },
+    "builders": {
+      "type": "array",
+      "description": "One entry per spawned Builder.",
+      "items": {
+        "type": "object",
+        "required": ["name", "stack", "status"],
+        "properties": {
+          "name": {"type": "string", "description": "Task name (e.g., builder-fe)."},
+          "stack": {"type": "string", "description": "Stack tag (fe, be, data, ...)."},
+          "ownership_paths": {"type": "array", "items": {"type": "string"}},
+          "branch": {"type": ["string", "null"]},
+          "handoff_path": {"type": ["string", "null"], "description": "Path to builder-<stack>.json once written."},
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "submitted", "rejected", "accepted", "fixing"]
+          },
+          "fix_cycles": {"type": "integer", "minimum": 0, "default": 0}
+        }
+      }
+    },
+    "qa": {
+      "type": "object",
+      "properties": {
+        "name": {"type": ["string", "null"], "description": "Task name (default 'qa')."},
+        "report_path": {"type": ["string", "null"]},
+        "status": {
+          "type": "string",
+          "enum": ["not_started", "running", "ship", "fix", "stalled"]
+        },
+        "fix_cycles": {"type": "integer", "minimum": 0, "default": 0}
+      }
+    },
+    "deploy": {
+      "type": "object",
+      "properties": {
+        "name": {"type": ["string", "null"], "description": "Task name (default 'deploy')."},
+        "timeline_path": {"type": ["string", "null"]},
+        "feature_pr": {"type": ["object", "null"], "properties": {"url": {"type": "string"}, "number": {"type": "integer"}, "merged_sha": {"type": ["string", "null"]}}},
+        "release_pr": {"type": ["object", "null"], "properties": {"url": {"type": "string"}, "number": {"type": "integer"}, "merged_sha": {"type": ["string", "null"]}}},
+        "tag": {"type": ["string", "null"], "description": "e.g., v0.3.0"},
+        "prod_workflow_url": {"type": ["string", "null"]},
+        "status": {
+          "type": "string",
+          "enum": ["not_started", "pushing_feature", "feature_ci", "feature_merged", "awaiting_gate_1", "release_open", "release_ci", "release_merged", "awaiting_gate_2", "tag_pushed", "prod_watching", "prod_green", "prod_red", "rolled_back"]
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "properties": {
+        "gate_1_release_pr": {"type": "object", "properties": {"approved_at": {"type": ["string", "null"]}, "approved_by": {"type": "string", "default": "user"}}},
+        "gate_2_tag_push": {"type": "object", "properties": {"approved_at": {"type": ["string", "null"]}, "approved_by": {"type": "string", "default": "user"}, "version_override": {"type": ["string", "null"]}}}
+      }
+    },
+    "_example": {
+      "$comment": "Example payload showing a mid-flight state. Strip this key in real runs.",
+      "run_id": "20260525-2300-example-feature",
+      "started_at": "2026-05-25T23:00:14Z",
+      "spec_path": "docs/spec.md",
+      "phase": "QA",
+      "team": {"team_name": "ship-spec-20260525-2300-example-feature", "team_id": null},
+      "builders": [
+        {"name": "builder-fe", "stack": "fe", "ownership_paths": ["src/features/example-feature/**"], "branch": "feat/example-feature", "handoff_path": ".agent-team/20260525-2300-example-feature/builder-fe.json", "status": "accepted", "fix_cycles": 0}
+      ],
+      "qa": {"name": "qa", "report_path": null, "status": "running", "fix_cycles": 0},
+      "deploy": {"name": null, "timeline_path": null, "feature_pr": null, "release_pr": null, "tag": null, "prod_workflow_url": null, "status": "not_started"}
+    }
+  }
+}

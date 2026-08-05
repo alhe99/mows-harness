@@ -1,0 +1,12 @@
+{
+  "name": "mows-harness",
+  "owner": {"name": "alhe99"},
+  "description": "Layered self-hosted Claude Code harness: agentic-dev config, watchdogs, VPS infra templates, and multi-identity fleet tooling.",
+  "plugins": [
+    {
+      "name": "mows-core",
+      "source": "./claude",
+      "description": "Agentic-dev + harness-ops skills, commands, and agents from the mows harness"
+    }
+  ]
+}
