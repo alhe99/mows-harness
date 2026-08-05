@@ -1,6 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "mows-harness",
-  "owner": {"name": "alhe99"},
+  "owner": {
+    "name": "alhe99"
+  },
   "description": "Layered self-hosted Claude Code harness: agentic-dev config, watchdogs, VPS infra templates, and multi-identity fleet tooling.",
   "plugins": [
     {

@@ -1,6 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "mows-core",
   "version": "0.1.0",
   "description": "Agentic-dev + harness-ops skills, commands, and agents from the mows harness",
-  "author": {"name": "alhe99"}
+  "author": {
+    "name": "alhe99"
+  }
 }
