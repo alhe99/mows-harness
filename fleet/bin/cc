@@ -28,6 +28,29 @@ profiles() {            # prints: default + every suffix of ~/.claude-<suffix>
 }
 cfg_for() { [ "$1" = default ] && echo "$HOME/.claude" || echo "$HOME/.claude-$1"; }
 
+# -h/--help before anything else: without this the word "--help" falls through to the
+# positional [dir] slot and becomes a directory name. Claude's own --help is still
+# reachable as `cc -- --help`, which forwards it like any other claude flag.
+case "${1-}" in
+  -h|--help)
+    cat <<'EOF'
+usage: cc [profile] [dir] [-- <claude flags...>]
+
+  cc                       default profile (~/.claude), current directory
+  cc <profile>             ~/.claude-<profile>, current directory
+  cc <profile> <dir>       ~/.claude-<profile>, in <dir>
+  cc <dir>                 default profile, in <dir>
+  cc <profile> -- --continue   pass flags through to claude itself
+
+Runs claude inside tmux session cc-<profile>-<slug> when attached to a terminal,
+so a dropped connection never kills the session; execs claude directly otherwise.
+
+profiles on this box:
+EOF
+    profiles | sed 's/^/  /'
+    exit 0 ;;
+esac
+
 P=default
 [ $# -ge 1 ] && case " $(profiles | tr '\n' ' ') " in *" $1 "*) P=$1; shift ;; esac
 DIR=$PWD; if [ $# -ge 1 ] && [ "$1" != "--" ]; then DIR=$1; shift; fi; [ "${1-}" = "--" ] && shift
