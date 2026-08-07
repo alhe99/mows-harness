@@ -112,6 +112,18 @@ Expect the last line to be `preflight: ALL CLEAN`. That gate checks manifest com
 scans for leaked secrets/identity, shellchecks every script, and runs a sandboxed install
 dry-run. **If it fails, stop** — do not install from a repo that fails its own gate.
 
+There is also a full end-to-end test, if you want proof before touching your own box:
+
+```bash
+./scripts/e2e-container       # needs docker; ~4 min
+```
+
+It builds a throwaway `ubuntu:24.04`, creates an unprivileged user, and runs everything in
+Part 2 as that user — preflight, install, every verification command below, the crontab
+recipe, `--infra` rendering with real values — then asserts idempotency (a second install
+backs up and restores cleanly) and blast radius (nothing written outside `$HOME`). 64 checks;
+all must pass.
+
 ## Step 2 — install the layers you chose
 
 ```bash

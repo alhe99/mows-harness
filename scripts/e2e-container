@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# e2e-container — build a throwaway ubuntu:24.04 box, create an unprivileged user, and run
+# scripts/e2e-container.sh inside it as that user: the full README Part-2 flow (preflight,
+# install, every documented verification command, the crontab recipe, --infra rendering with
+# real values) plus idempotency and blast-radius assertions.
+#
+# This is the "does it actually work for a stranger" test. scripts/preflight.sh's own
+# --container check is narrower on purpose: it proves install.sh exits 0 as root, nothing more.
+#
+#   ./scripts/e2e-container            # full run (installs caddy in the container too)
+#   ./scripts/e2e-container --quick    # skip the caddy apt repo; the caddy-validate check
+#                                      # will report FAIL for lack of the binary
+#
+# Requires docker and network access. Nothing touches the host: the repo is bind-mounted
+# read-only and copied inside, and the container is --rm.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+QUICK=0; [ "${1:-}" = "--quick" ] && QUICK=1
+
+CADDY_SETUP='
+apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null
+apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq caddy >/dev/null 2>&1'
+[ "$QUICK" = 1 ] && CADDY_SETUP='echo "(--quick: skipping caddy install)"'
+
+docker run --rm \
+  -v "$PWD":/src:ro \
+  -v "$PWD/scripts/e2e-container.sh":/e2e.sh:ro \
+  ubuntu:24.04 bash -c '
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >/dev/null 2>&1
+# systemd here only supplies the systemctl/systemd-analyze binaries; nothing runs as PID 1.
+apt-get install -y -qq git curl systemd tmux cron sudo python3 shellcheck ca-certificates gnupg >/dev/null 2>&1
+# Ubuntu 24.04 ships node 18; the harness wants 20+ (see README Requirements).
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+apt-get install -y -qq nodejs >/dev/null 2>&1
+'"$CADDY_SETUP"'
+useradd -m -s /bin/bash adopter
+service cron start >/dev/null 2>&1 || true
+install -o adopter -m755 /e2e.sh ~adopter/e2e.sh
+su - adopter -c "bash ~/e2e.sh"
+'
