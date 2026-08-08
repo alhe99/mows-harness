@@ -32,6 +32,13 @@
 # this same -I flag onto an ALREADY-DEPLOYED ttyd unit you don't want to hand-edit —
 # install ONE of the two, not both; applying that drop-in on top of THIS template just
 # re-declares an identical ExecStart=.
+#
+# Do NOT add ttyd's `-t titleFixed=...` here: it pins document.title once and makes the
+# client IGNORE every later title change — which silently defeats the whole tab-naming
+# chain (tmux set-titles in infra/os/tmux.conf -> OSC title -> browser tab), leaving N
+# /term windows all named alike. Without it the tab reads
+# "<session> · <dir> | <command> (<host>)" — the session name first, where the tab strip
+# can show it. (Removed from a live deployment 2026-08-08 for exactly this reason.)
 [Unit]
 Description=Web terminal (ttyd) for Claude Code sessions — /term behind Caddy auth
 After=network.target
@@ -40,7 +47,7 @@ After=network.target
 Type=simple
 User={{ADMIN_USER}}
 Environment=LANG=C.UTF-8
-ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -t titleFixed={{DOMAIN}} -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
+ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
 Restart=on-failure
 RestartSec=3
 

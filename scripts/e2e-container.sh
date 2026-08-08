@@ -103,6 +103,10 @@ chk "infra staging exit 0"        "[ $? -eq 0 ]"
 chk "rendered/ populated"         '[ "$(ls rendered 2>/dev/null | wc -l)" -gt 5 ]'
 chk "no placeholders in rendered" '! grep -rq "{{" rendered/'
 chk "cookie secret generated"     '! grep -rq "COOKIE_SECRET" rendered/oauth2-proxy.cfg'
+# titleFixed pins the browser-tab title and defeats per-session tab names (tmux
+# set-titles -> OSC -> document.title); it must never come back in either unit variant.
+# ExecStart lines only: both files carry a do-not-add-back COMMENT that names the flag.
+chk "no titleFixed in web-term units" '! grep -E "^ExecStart=.*titleFixed" rendered/claude-web-term.service rendered/clipboard.conf'
 chk "no live services started"    '[ -z "$(systemctl list-units --state=running 2>/dev/null | grep -i claude)" ]'
 chk "our caddy config NOT installed" "! grep -q claude-dashboard /etc/caddy/Caddyfile 2>/dev/null"
 chk "our sudoers NOT installed"      "[ ! -f /etc/sudoers.d/claude-harness ]"
