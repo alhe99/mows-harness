@@ -1,6 +1,6 @@
 <h1>mows-harness</h1>
 
-**Keep Claude Code running on your own server — and drive it from your phone.**
+**Keep Claude Code running on your own server — and drive it from everywhere.**
 
 Your coding agent lives on a box you control: it survives dropped SSH and closed laptops,
 restarts itself when it wedges, and waits behind your Google login on a dashboard and web
