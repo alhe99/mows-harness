@@ -64,6 +64,21 @@ ALLOWED='DOMAIN|EXAMPLE_SUB|OAUTH_CLIENT_ID|OAUTH_CLIENT_SECRET|COOKIE_SECRET|AD
 # exclude this script: it documents the {{VAR}} convention in comments/patterns
 if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | grep -vE "^\{\{($ALLOWED)\}\}$"; then bad "unsanctioned placeholder"; fi
 
+# 4b. commit metadata. Checks 1-4 only ever look at file CONTENT, so identity can still
+# ship in the history itself -- GitHub's web editor in particular stamps commits with the
+# account's configured name and, unless "keep my email private" is enabled, a real email
+# address. No content scan can see that. Author, committer and message are all permanent
+# and public the moment the repo is, so they get scanned too. --all covers remote-tracking
+# refs, which is deliberate: an unpushed local fix does not clear a leak still on origin.
+BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
+if git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u | grep -nE "$BADIDENT"; then
+  bad "personal identity in commit author/committer (rewrite before publishing)"
+fi
+# commit messages get the same forbidden-string treatment the tree gets
+if git log --all --format='%s%n%b' | grep -nIE "$PAT" | grep -v 'preflight-allow'; then
+  bad "forbidden strings in commit messages"
+fi
+
 # 5. shell static checks
 mapfile -t SH < <(git ls-files '*.sh' 'watchdogs/bin/*' 'fleet/bin/*' 'install.sh' 2>/dev/null | sort -u)
 for f in "${SH[@]}"; do
