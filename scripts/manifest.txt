@@ -76,6 +76,10 @@ claude/skills/stack-health/check.py
 claude/skills/sync-to-vps/SKILL.md
 claude/skills/sync-to-vps/sync.py
 docs/architecture.md
+docs/assets/dashboard.png
+docs/assets/fleet.gif
+docs/assets/fleet.tape
+docs/assets/phone.png
 fleet/SETUP.md
 fleet/add-agent.sh
 fleet/bin/cc
