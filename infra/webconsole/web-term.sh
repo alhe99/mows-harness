@@ -61,7 +61,11 @@ slug() { basename "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed
 # instead of dumping the user on the menu. Auto-attach only if it's detached
 # (never silently steals from another live device); menu Enter re-attaches always.
 LAST="$HOME/.cache/webterm-last"
-mark() { mkdir -p "${LAST%/*}"; printf '%s\n' "$1" >"$LAST"; }
+# mark() also stamps the terminal title (OSC 2) with the session name: ttyd's xterm
+# client mirrors it into the browser-tab title, so many /term windows stay tellable
+# apart. tmux's own set-titles (infra/os/tmux.conf) takes over once attached; this
+# covers the moment of attach and every pre-attach state.
+mark() { mkdir -p "${LAST%/*}"; printf '%s\n' "$1" >"$LAST"; printf '\033]2;%s\007' "$1"; }
 lastn() { cat "$LAST" 2>/dev/null || true; }   # missing file is the normal first-ever-run case, not an error
 
 # newest sessions across every profile: "mtime<TAB>profile<TAB>sid<TAB>cwd"
@@ -170,6 +174,7 @@ do_new() {
 
 menu() {
   echo
+  printf '\033]2;picker · %s\007' "$(hostname)"   # tab title while nothing is attached
   printf '\033[1;32m Claude Code — %s\033[0m  (tmux everywhere: Ctrl+b d detaches, tab close is safe)\n' "$(hostname)"
   echo " ─────────────────────────────────────────────────────────────"
   local live=() rec=() i ts p sid cwd tag

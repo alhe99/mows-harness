@@ -16,8 +16,17 @@ hand) renders.
 cp infra/os/tmux.conf ~/.tmux.conf
 ```
 
-Prefix remapped to `C-q`, Alt+Arrow pane switching, mouse on, 50000-line history. Nothing
-in it is account- or host-specific — it's a straight copy, safe to drop in as-is.
+Prefix remapped to `C-q`, Alt+Arrow pane switching, mouse on, 50000-line history, and
+`set-titles` so the attached client's title bar carries `<session> · <dir>` — which is
+what names each `/term` browser tab (the web terminal mirrors terminal titles into
+`document.title`), keeping many session windows tellable apart. Nothing in it is
+account- or host-specific — it's a straight copy, safe to drop in as-is.
+
+Already-running tmux server? Apply without restarting anything:
+
+```bash
+tmux source-file ~/.tmux.conf
+```
 
 ## 2. Firewall (IPv4 + IPv6)
 
