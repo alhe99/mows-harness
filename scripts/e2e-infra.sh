@@ -33,6 +33,10 @@ mkdir -p /etc/oauth2-proxy && echo "admin@example.test" > /etc/oauth2-proxy/emai
 oauth2-proxy --config /etc/oauth2-proxy.cfg >/tmp/oauth.log 2>&1 &
 sleep 4
 chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/'
+# desktop/tablet browsers open sessions in their own named windows (client-side, so just
+# prove the wiring is served: the per-session data-nw attr and the gate that applies it)
+chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
+chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'

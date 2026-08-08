@@ -3,9 +3,10 @@
 # usage: cc [profile] [dir] [-- <claude flags...>]   (bare `cc` = default profile, cwd)
 # caveat: profile names containing '-' can alias with directory slugs in session names.
 #
-# tmux session name: cc-<profile>-<slug-of-dir-basename>. watchdogs/bin/reap-idle-claude
-# reaps sessions matching ^cc- when detached+idle; the naming here is the contract it
-# depends on — do not change the cc-<profile>-<slug> shape.
+# tmux session name: cc-<profile>-<slug-of-dir-basename>, plus a -2, -3 … suffix for a
+# second, deliberate session in a directory that already has one (see the prompt below).
+# watchdogs/bin/reap-idle-claude reaps sessions matching ^cc- when detached+idle; the
+# naming here is the contract it depends on — do not change the cc-<profile>-<slug> shape.
 #
 # Delta vs. live ~/.local/bin/cc + ~/.local/bin/ccw (full reconciliation in
 # .superpowers/sdd/task-7-report.md): live is two fixed-profile scripts (one per
@@ -44,6 +45,8 @@ usage: cc [profile] [dir] [-- <claude flags...>]
 
 Runs claude inside tmux session cc-<profile>-<slug> when attached to a terminal,
 so a dropped connection never kills the session; execs claude directly otherwise.
+If that directory already has a live session, asks whether to work in it or start
+a second one alongside it (cc-<profile>-<slug>-2, -3 …).
 
 profiles on this box:
 EOF
@@ -64,6 +67,28 @@ RUN+=("$@")
 if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
   SLUG=$(basename "$DIR" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
   SES="cc-$P-$SLUG"
+  # A live session in this directory used to be joined silently — `-AD` attaches whenever
+  # the name already exists — so "start a session here" and "get back into the session
+  # here" were one indistinguishable action, and a SECOND parallel session in the same
+  # directory was simply unreachable: you always got the first one back. Ask instead.
+  # A new one takes the next free -2, -3 … suffix, still under the cc- prefix
+  # watchdogs/bin/reap-idle-claude matches (^cc-), so extra sessions are reaped like any
+  # other. Only asked when there is a terminal to answer with: the `-t 0` guard above
+  # already gates this branch, so scripted and nested-tmux callers keep the old path.
+  if tmux has-session -t "=$SES" 2>/dev/null; then
+    printf 'cc: a Claude session is already running in %s\n' "$DIR"
+    printf '    %s · %s\n' "$SES" \
+      "$(tmux display -p -t "=$SES" '#{?session_attached,attached on another client,detached}' 2>/dev/null || echo live)"
+    printf '  [Enter] work in that one   [n] new session, same directory   [q] quit\n'
+    read -rp '  > ' ANS || ANS=q
+    case "$ANS" in
+      n|N|new) N=2
+               while tmux has-session -t "=$SES-$N" 2>/dev/null; do N=$((N+1)); done
+               SES="$SES-$N"; printf 'cc: starting %s\n' "$SES" ;;
+      q|Q) exit 0 ;;
+      *) exec tmux attach -d -t "=$SES" ;;
+    esac
+  fi
   exec tmux new-session -AD -s "$SES" -c "$DIR" \
     "$(printf '%q ' env CLAUDE_CONFIG_DIR="$CFG" "${RUN[@]}")"
 elif env -C / true 2>/dev/null; then

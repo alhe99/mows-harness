@@ -39,7 +39,10 @@ intended NOPASSWD path.
 
 - **`cc [profile] [dir] [-- <claude flags>]`** — launch Claude Code for a profile inside a
   named tmux session (`cc-<profile>-<slug>`), or `exec` directly when there's no tty (systemd,
-  a nested shell). Bare `cc` = `default` profile, current directory.
+  a nested shell). Bare `cc` = `default` profile, current directory. If that profile+directory
+  already has a live session, `cc` asks — `[Enter]` re-attaches it, `[n]` starts a second
+  session alongside it (`cc-<profile>-<slug>-2`, `-3` …), `[q]` backs out — so parallel
+  sessions in one directory are a deliberate choice, never a silent re-attach.
   ```bash
   cc                      # default profile, here
   cc work ~/Projects/foo  # "work" profile (~/.claude-work), that directory

@@ -23,10 +23,16 @@
 # here is the contract [reap-idle-claude] depends on — do not change the
 # cc-<profile>-<slug> shape"). Same inherited caveat as cc's own header: a profile name
 # containing '-' can alias with a directory slug in the combined session name.
-# Bonus effect, not just parity: opening /term for a project that already has a live CLI
-# `cc` session on the same profile+directory now attaches to that SAME tmux session
-# instead of spawning a second, competing one — `tmux new-session -AD` already does the
-# right thing given a matching name.
+# Bonus effect, not just parity: /term and the CLI now share one name per
+# profile+directory, so a deep-link resume (do_resume) lands in the SAME tmux session a
+# live `cc` already holds instead of spawning a second claude on one transcript — `tmux
+# new-session -AD` does the right thing given a matching name. Starting a session where
+# one already runs is no longer forced into that, though: `cc` asks (work in it / second
+# session in the same directory / quit), so parallel sessions in one directory are
+# reachable on purpose. Extra ones are named cc-<profile>-<slug>-2, -3 …; the LIVE list
+# below and the dashboard's per-session attach button address them by exact name, while
+# the `>_` transcript deep link derives its name from the directory and so always lands on
+# the unsuffixed session — see do_resume.
 #
 # "new session" (do_new, below) now calls `cc <profile> <dir>` directly. fleet/bin/cc
 # unifies what live split across two hardcoded-account binaries into one
@@ -107,7 +113,10 @@ do_resume() { # profile cwd sid — own tmux name so it never hijacks an unrelat
   cfg=$(cfg_for "$1")
   n="cc-$1-$(slug "$2")"
   # already live -> ATTACH. A second `claude --resume` of the same session steals
-  # it and kills the first one's in-flight work.
+  # it and kills the first one's in-flight work. Note this name is derived from the
+  # directory, so in a directory running several sessions (cc's -2, -3 … suffixes) this
+  # always attaches the unsuffixed one; reach a specific extra session from the LIVE list
+  # in the menu, or from the dashboard's attach button, which both use exact names.
   mark "$n"
   if tmux has-session -t "=$n" 2>/dev/null; then
     tmux attach -d -t "=$n" || true
@@ -153,8 +162,9 @@ do_new() {
     [ "$w" = y ] || return
     mkdir -p "$d" || return
   fi
-  # cc wraps itself in tmux (cc-<profile>-<slug>) and reattaches if already running —
-  # ttyd always hands us a pty, so that branch always fires (see header comment).
+  # cc wraps itself in tmux (cc-<profile>-<slug>); when that directory already has a live
+  # session it asks whether to work in that one or start a second alongside it. ttyd always
+  # hands us a pty, so both the prompt and the tmux wrap fire here (see header comment).
   cc "$p" "$d" || echo " cc exited nonzero — check the profile/directory and try again"
 }
 

@@ -157,6 +157,12 @@ not more safely. `claude-remote@<profile>`/`claude-remote-control@<profile>` (th
 the dashboard and `/term` actually drive) are managed separately — see
 [`fleet/SETUP.md`](../fleet/SETUP.md), never auto-enabled by this layer.
 
+Once up: on a desktop or tablet **browser** the dashboard's `attach` / `>_` buttons open
+each session in its own named window (clicking the same session again reuses its window),
+so the session list stays put; in the installed PWA and at phone widths there is no second
+window to spend, and everything opens in place exactly as before. No-JS clients keep the
+in-place links.
+
 ### 7. Linger
 
 ```bash

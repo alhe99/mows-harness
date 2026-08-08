@@ -208,7 +208,11 @@ async function tmuxLive() {
 // never the leader itself: tmux babysits its pane leader and auto-SIGCONTs it, so
 // signalling the leader is futile — but it leaves the leader's descendants alone.
 // (root-caused 2026-07-07: bare-command panes couldn't be paused for this reason.)
-const NAME_RE = /^[\w.:@-]{1,40}$/;
+// 64, not 40: cc-<profile>-<slug> already reaches ~40 for a long project directory, and
+// cc's second-session suffix (-2, -3 …) pushes it over — a rejected name here means
+// pause/kill answer 400 for exactly those sessions. Only the length moved; the character
+// class is the guard, and the name is matched against the live session list below anyway.
+const NAME_RE = /^[\w.:@-]{1,64}$/;
 async function descendants(root) {
   const out = await sh('ps', ['-eo', 'pid=,ppid=']);
   const kids = new Map();
@@ -555,6 +559,17 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
 ${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
+/* attach / >_ open the session in its OWN window on a desktop or tablet BROWSER, so the
+   dashboard stays put and pause/kill/the other sessions stay one click away. NOT in the
+   installed PWA: there is no second window there, and target=_blank throws the user out to
+   the system browser and off the app — same reason phone-width (<700px, the layout
+   breakpoint this file uses everywhere) stays in place. The target is named per session
+   (data-nw), so clicking one twice reuses its window instead of opening a rival tmux
+   client, which would detach the first (attach -d). Deliberately no rel=noopener: with
+   it the spec ignores the window name and every click spawns another window, and the page
+   opened is our own /term on this origin. JS off => in place, exactly as before. */
+if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700)
+  document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw});
 /* ccdiag: install-mode + safe-area readout in the footer (e.g. "app · sat59 sab34")
    so device rendering issues can be diagnosed without guessing */
 (function(){var o=document.getElementById('envout');if(!o)return;
@@ -722,7 +737,7 @@ async function listView(req, res, url) {
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
 <span class="ln">${nm}</span><span class="muted">${esc(proj)} · ${l.paused ? 'PAUSED' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
-<span class="la"><a class="ab" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span></div>`;
+<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span></div>`;
   }).join('') + `</div>` : '';
 
   let lastDay = '', items = '';
@@ -732,7 +747,7 @@ async function listView(req, res, url) {
     const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
     const isLive = liveNames.has('web-' + sid8);
     const t = titles[i].title;
-    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
+    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
     // delete = same no-JS <details> confirm as kill; hidden on live sessions (kill first)
     const del = isLive ? '' : `<details class="kx del"><summary class="dx" title="delete transcript" aria-label="delete transcript ${sid8}">✕</summary><div class="kc"><div>delete <b>${sid8}</b>?</div><span class="muted">removes the transcript from disk — no undo.</span><form class="af" method="post" action="/a/del"><input type="hidden" name="a" value="${e.a}"><input type="hidden" name="sid" value="${esc(e.sid)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab danger">delete it</button></form></div></details>`;
     items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}">
@@ -785,7 +800,7 @@ async function detailView(req, res, a, sid) {
 
   const term = acct.term
     ? (canResume(e.mt, live)
-      ? `<div class="la" style="justify-content:flex-start"><a class="btn" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3">&gt;_ ${live ? (lv.paused ? 'attach — PAUSED' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
+      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3">&gt;_ ${live ? (lv.paused ? 'attach — PAUSED' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
       : `<p class="muted" style="margin:8px 0">resume disabled — idle ${rel(e.mt)} (cutoff ${RESUME_DAYS}d). transcript stays readable; resume manually with <span style="font-family:var(--mono)">cc -r</span> if you really need it.</p>`)
     : '';
   const pgr = pager(`/s/${a}/${sid}`, {}, cur, max,

@@ -64,6 +64,28 @@ chk "claude-rc DRY_RUN start"      "DRY_RUN=1 claude-rc start default | grep -q 
 echo "### multi-profile discovery (the fleet contract)"
 mkdir -p "$HOME/.claude-alpha/projects" "$HOME/.claude-beta/projects"
 chk "cc --help sees alpha"     "cc --help | grep -q alpha"
+
+echo "### cc: second session in an already-running directory asks, never silently attaches"
+# a stub claude keeps the tmux panes alive; `script` supplies the pty cc's prompt needs,
+# and TERM must name a real terminal — the container session leaves it dumb/unset, and
+# tmux refuses to attach to one ("terminal does not support clear").
+# The container has no ambient TMUX, so cc's tmux branch fires exactly as it does for a
+# real terminal user. Every tmux call here is this user's own private server.
+export TERM=xterm-256color
+mkdir -p "$HOME/stub" "$HOME/proj-dup"
+printf '#!/bin/sh\nexec sleep 300\n' > "$HOME/stub/claude"; chmod +x "$HOME/stub/claude"
+export PATH="$HOME/stub:$PATH"
+printf '\n' | timeout 8 script -qec "cc alpha $HOME/proj-dup" /dev/null >/tmp/cc1.log 2>&1; sleep 1
+chk "first cc created cc-alpha-proj-dup" "tmux has-session -t '=cc-alpha-proj-dup'"
+chk "first cc asked nothing"             "! grep -q 'already running' /tmp/cc1.log"
+printf 'n\n' | timeout 8 script -qec "cc alpha $HOME/proj-dup" /dev/null >/tmp/cc2.log 2>&1; sleep 1
+chk "second cc asked first"              "grep -q 'already running in' /tmp/cc2.log"
+chk "answer n -> cc-alpha-proj-dup-2"    "tmux has-session -t '=cc-alpha-proj-dup-2'"
+chk "both keep the ^cc- reap prefix"     '[ "$(tmux ls -F "#{session_name}" | grep -c "^cc-alpha-proj-dup")" -eq 2 ]'
+printf 'q\n' | timeout 8 script -qec "cc alpha $HOME/proj-dup" /dev/null >/dev/null 2>&1; sleep 1
+chk "answer q creates nothing"           '[ "$(tmux ls -F "#{session_name}" | grep -c "^cc-alpha-proj-dup")" -eq 2 ]'
+tmux kill-server 2>/dev/null || true
+PATH="${PATH#"$HOME"/stub:}"
 chk "claude-rc status 3 profiles" '[ "$(claude-rc status | grep -cE "^[[:space:]]*(default|alpha|beta)[[:space:]]")" -ge 3 ]'
 chk "DRY_RUN only alpha"       "DRY_RUN=1 claude-rc only alpha | grep -q 'claude-remote@alpha'"
 
