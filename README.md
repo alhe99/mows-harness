@@ -1,18 +1,56 @@
-# mows-harness
+<h1>mows-harness</h1>
 
-A complete, self-hosted Claude Code harness: agentic config, unattended watchdogs, a
-Google-gated web cockpit, and multi-identity fleet tooling. Four independent layers —
-install only what you need, from a single laptop up to a public, phone-reachable VPS.
+**Keep Claude Code running on your own server — and drive it from your phone.**
 
-**This README is written to be executed by a Claude Code agent.** Point Claude at this repo
-and say *"install this harness"*; everything it needs to do that autonomously — the decision
-tree, the exact commands, what to verify after each one, and the short list of things it must
-stop and ask you about — is below. A human reading it top-to-bottom gets the same
-information in the same order.
+Your coding agent lives on a box you control: it survives dropped SSH and closed laptops,
+restarts itself when it wedges, and waits behind your Google login on a dashboard and web
+terminal you can open from anywhere.
+
+<img src="docs/assets/phone.png" alt="The mows-harness dashboard on a phone: three Claude Code sessions across two profiles, each showing the prompt that started it, with sessions / terminal / watch tabs along the bottom." width="300" align="right">
+
+```bash
+git clone https://github.com/alhe99/mows-harness.git
+cd mows-harness && ./install.sh --claude
+```
+
+That's the laptop install — config, skills, and commands only. Add `--watchdogs` on a server
+you leave running, `--all` for the full web cockpit.
+
+**Four layers, install any subset:**
+
+- **claude** — `CLAUDE.md`, 9 commands, 11 skills, an agent, settings + MCP templates
+- **watchdogs** — 6 cron jobs that restart a wedged agent, reap idle sessions and orphaned
+  MCP processes, and auto-continue past usage-limit stalls
+- **infra** — Caddy + Google OAuth, a session dashboard, a browser terminal (the phone view)
+- **fleet** — several Claude identities on one box, switched with one command
+
+<br clear="right">
+
+### What it looks like
+
+<img src="docs/assets/fleet.gif" alt="Terminal recording: claude-rc status lists three profiles with their systemd units active, a dry-run switches the whole fleet to one profile, and cc --help shows the session launcher." width="820">
+
+<img src="docs/assets/dashboard.png" alt="The dashboard in a desktop browser, listing Claude Code sessions across profiles with per-session size, id, and a button to attach a terminal." width="820">
+
+> **Before you install anything on a server:** the infra layer puts a web terminal on the
+> public internet behind Google sign-in. Read [Security defaults](#security-defaults) first —
+> it explains what is and isn't gated, and why every sudo grant here is a narrow anchored
+> pattern rather than `NOPASSWD: ALL`.
+
+**Who this is for:** people who already self-host and want an AI coding agent running
+unattended on their own hardware. Layer 1 works on any laptop. Layers 2–4 assume you're
+comfortable with a VPS, DNS, and creating a Google OAuth app — there's no way around that,
+and the setup guide walks each step.
+
+Requires Ubuntu/Debian + systemd, Node 20+, tmux. MIT.
 
 ---
 
 # Part 1 — Agent brief
+
+**This part is written to be executed by a Claude Code agent.** Point Claude at this repo and
+say *"install this harness"*; everything below — the decision tree, exact commands, what to
+verify, and what it must stop and ask you about — is what it needs to do that autonomously.
 
 **You are installing this on the machine you are running on.** Read this whole part before
 running anything.
