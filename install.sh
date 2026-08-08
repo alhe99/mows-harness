@@ -123,9 +123,14 @@ render(){
 resolve_cookie_secret(){
   [ -n "${COOKIE_SECRET:-}" ] && return 0
   command -v openssl >/dev/null 2>&1 || { echo "WARN: openssl not found, cannot auto-generate COOKIE_SECRET" >&2; return 0; }
-  COOKIE_SECRET=$(openssl rand -base64 32)
+  # URL-safe base64, not plain: oauth2-proxy decodes cookie_secret with Go's URL encoding,
+  # so a secret containing '+' or '/' fails to decode, gets treated as 44 raw bytes, and the
+  # service refuses to start ("must be 16, 24, or 32 bytes ... but is 44 bytes"). Plain
+  # `openssl rand -base64 32` hits that roughly 3 runs in 4. The tr is oauth2-proxy's own
+  # documented form.
+  COOKIE_SECRET=$(openssl rand -base64 32 | tr -- '+/' '-_')
   export COOKIE_SECRET
-  echo "COOKIE_SECRET auto-generated (openssl rand -base64 32)"
+  echo "COOKIE_SECRET auto-generated (openssl rand -base64 32, URL-safe)"
 }
 
 # resolve_admin_user: SPECIAL CASE. Defaults to the invoking $USER; in interactive mode this

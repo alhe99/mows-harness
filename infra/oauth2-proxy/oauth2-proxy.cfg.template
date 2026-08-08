@@ -8,7 +8,7 @@
 #   {{OAUTH_CLIENT_SECRET}}  Google OAuth client secret (starts GOCSPX- for a web-app
 #                             OAuth client created after ~2022)
 #   {{COOKIE_SECRET}}        random seed for the session cookie's encryption — generate
-#                             with: openssl rand -base64 32
+#                             with: openssl rand -base64 32 | tr -- '+/' '-_'   (URL-safe: oauth2-proxy rejects + and /)
 #   {{DOMAIN}}                same domain as infra/caddy/Caddyfile.template
 # Create the Google OAuth client (Authorized redirect URI =
 # https://{{DOMAIN}}/oauth2/callback) in Google Cloud Console under APIs & Services ->

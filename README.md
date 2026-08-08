@@ -101,7 +101,7 @@ credential** — stop and ask the human:
 | `CONTEXT7_API_KEY` | context7.com (optional — skip if they don't use it) | the `context7` MCP server |
 
 You *may* generate `COOKIE_SECRET` yourself — `install.sh` does it automatically with
-`openssl rand -base64 32` when it's unset. `ADMIN_USER` defaults to the invoking user.
+`openssl rand -base64 32 | tr -- '+/' '-_'` (URL-safe) when it's unset. `ADMIN_USER` defaults to the invoking user.
 `EXAMPLE_SUB` is any subdomain label (e.g. `alpha`) used as the template's worked example.
 
 Pass values as environment variables to stay non-interactive:

@@ -117,6 +117,8 @@ infra/webconsole/web-term.sh
 install.sh
 scripts/e2e-container
 scripts/e2e-container.sh
+scripts/e2e-infra
+scripts/e2e-infra.sh
 scripts/manifest.txt
 scripts/preflight.sh
 watchdogs/SETUP.md

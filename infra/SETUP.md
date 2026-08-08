@@ -102,7 +102,7 @@ to `infra/oauth2-proxy/emails.txt.template` (one per line) before rendering it.
 ### 4. Cookie secret
 
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32 | tr -- '+/' '-_'   # URL-safe; oauth2-proxy refuses a secret containing + or /
 ```
 
 Feed the output in as `COOKIE_SECRET` in step 5 below. If you render through `install.sh

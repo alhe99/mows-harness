@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# e2e-infra — stand the layer-3 web cockpit up for real in a throwaway container and prove
+# the auth chain end to end: Caddy route -> forward_auth -> oauth2-proxy -> Google redirect,
+# with the dashboard and ttyd as the actual upstreams behind it.
+#
+# scripts/e2e-container covers README Part 2 (the install). This covers Part 3 (the infra
+# walkthrough), which otherwise only ever gets its templates syntax-checked. Uses dummy
+# Google credentials and no DNS, so it proves routing/gating, not certificate issuance.
+#
+#   ./scripts/e2e-infra          # ~5 min, needs docker + network
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+docker run --rm -v "$PWD":/src:ro -v "$PWD/scripts/e2e-infra.sh":/infra-e2e.sh:ro ubuntu:24.04 bash -c '
+set -e; export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >/dev/null 2>&1
+apt-get install -y -qq curl git systemd ttyd ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
+apt-get install -y -qq nodejs >/dev/null 2>&1
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null
+apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq caddy >/dev/null 2>&1
+ARCH=$(dpkg --print-architecture)
+OPV=$(curl -fsSL https://api.github.com/repos/oauth2-proxy/oauth2-proxy/releases/latest | grep -oP "\"tag_name\": \"v\K[^\"]+")
+curl -fsSL "https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v${OPV}/oauth2-proxy-v${OPV}.linux-${ARCH}.tar.gz" | tar xz -C /tmp
+cp /tmp/oauth2-proxy-v${OPV}.linux-${ARCH}/oauth2-proxy /usr/local/bin/
+cp -r /src /r && bash /infra-e2e.sh
+'
