@@ -96,7 +96,7 @@ claude-quota ──▶ Claude decides ──▶ agy-run   (sync, small/medium)
   2. Writes `HANDOFF.md` into the worktree: task, acceptance criteria,
      **runnable verification commands**, constraints, size class, merge
      policy. This file is the contract every later gate checks against.
-  3. Spawns detached tmux session `agy-h-<id>`: agy headless with
+  3. Spawns detached tmux session `agyh-<id>`: agy headless with
      `--dangerously-skip-permissions`, cwd = worktree, `--output-format
      stream-json` teed to `<worktree>/.agy/run.log`; command chain ends with
      `agy-gate <id>` so gating runs the moment agy exits. No daemon.
@@ -155,7 +155,7 @@ agy fails fast on unknown model slugs; `agy-run` surfaces that as a loud
 - Dashboard: zero changes — `web-term.sh` live list already shows all tmux
   sessions; tab titles come free from global tmux `set-titles`.
 - Reaper: `reap-idle-claude` pattern extended to idle interactive `agy-*`
-  sessions; **never** `agy-h-*` (running handoffs self-terminate via their
+  sessions; **never** `agyh-*` (running handoffs self-terminate via their
   command chain).
 
 ## Error handling
@@ -175,7 +175,7 @@ agy fails fast on unknown model slugs; `agy-run` surfaces that as a loud
   manifest/render checks; `agy-run` fails loud on empty-success and auth
   errors; `agy-handoff` creates worktree/branch/HANDOFF.md; `agy-gate`
   re-runs verification, parks on red, merges on green, escalates review for
-  `big`; reaper never matches `agy-h-*`.
+  `big`; reaper never matches `agyh-*`.
 - **Live smoke** (post-auth, on the box): `agy -p "ping" --output-format
   json`; auth persistence across fresh shells; one real handoff on a toy repo
   end-to-end through auto-merge.

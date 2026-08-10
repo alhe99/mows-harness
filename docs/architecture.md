@@ -13,6 +13,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Six cron scripts supervising the remote-control fleet |
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts) |
+| 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
 
 ## Port map
 

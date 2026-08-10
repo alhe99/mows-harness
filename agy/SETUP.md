@@ -17,10 +17,16 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
    lacks a freedesktop-secrets keyring (headless-Linux issue
    google-antigravity/antigravity-cli#57): install `gnome-keyring` + `dbus`
    and enable a user-session keyring, then re-login and re-verify.
-4. `agy models` → copy your preferred slugs into
+4. Placeholder — populate baseline permission allow-rules in
+   `~/.gemini/antigravity-cli/settings.json` (git commands + common
+   build/test commands; no blanket write outside worktrees) once the live
+   agy's rule schema is confirmed on this box. Until then, interactive `ag`
+   sessions may prompt-block on routine commands; run `agy` interactively,
+   note what it stops to ask about, and encode those as allow-rules.
+5. `agy models` → copy your preferred slugs into
    `~/.config/mows-agy/config` (`AGY_FAST_MODEL`, `AGY_REVIEW_MODEL`).
    Record the agy version here when you deploy: `agy --version`.
-5. Optional notifications: set `AGY_NOTIFY_CMD` in the config to any command
+6. Optional notifications: set `AGY_NOTIFY_CMD` in the config to any command
    taking the message as `$1` (e.g. a Discord/openclaw send wrapper).
    Fallback is always `~/.local/state/agy-handoffs/events.log` +
    `agy-handoff list`.
@@ -48,6 +54,11 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
   on big handoffs; when Claude has no quota left, or the review times out,
   `agy-gate` falls back to agy self-review (`agy-run --effort high`, the
   smartest configured model) instead of blocking forever.
+- Additional Claude profiles (e.g. a work profile at `~/.claude-<suffix>`) are
+  hand-managed: `install.sh --claude` only ever writes `~/.claude`. If you
+  want delegation available in another profile too, mirror the CLAUDE.md
+  delegation section, the SessionStart quota hook, and the `agy-delegate`
+  skill into that profile's own config dir yourself.
 
 ## Trust model
 
@@ -62,3 +73,10 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
 2. `AGY_NOTIFY_CMD` must be a bare executable path (no arguments) — the gate
    invokes it as a single token with the message as `$1`; wrap multi-arg
    senders in a tiny script.
+3. Residual risk: Gate 2's review prompt embeds the handoff contract
+   (`HANDOFF.md`) and the diff verbatim, with no data/instruction delimiter
+   between "the contract to judge against" and "the diff being judged" —
+   a prompt-injection surface if either ever contains untrusted text.
+   Acceptable today because handoff contracts are self-authored (see item 1,
+   above); revisit if handoff inputs ever include third-party content (an
+   external PR diff, a scraped issue, etc.).
