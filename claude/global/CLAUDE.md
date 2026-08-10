@@ -113,3 +113,13 @@ Modes (journey frontmatter `mode:`):
   say "continue", the agent resumes on the same browser.
 
 Never write to prod Firestore; journeys target staging/deployed URLs via `target:`.
+
+# Antigravity delegation (agy)
+
+Before starting sizeable implementation work, run `claude-quota --check`. If
+the active account is at ≥70% of its 5-hour or weekly limit (exit 1), don't
+burn the remainder — delegate per the `agy-delegate` skill (synchronous
+`agy-run` for small tasks, `agy-handoff` worktree handoffs for big ones).
+Also delegate whenever the user explicitly asks. `unknown` quota (exit 2)
+means no auto-delegation. At session start, surface any `parked`/`ready`
+handoffs from `agy-handoff list`.

@@ -28,6 +28,7 @@ claude/global/CLAUDE.md
 claude/mcp.template.json
 claude/rules/context7.md
 claude/settings.template.json
+claude/skills/agy-delegate/SKILL.md
 claude/skills/build-with-agent-team/SKILL.md
 claude/skills/context7-mcp/SKILL.md
 claude/skills/graphify/.graphify_version

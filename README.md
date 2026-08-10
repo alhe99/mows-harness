@@ -18,7 +18,7 @@ you leave running, `--all` for the full web cockpit.
 
 **Four layers, install any subset:**
 
-- **claude** — `CLAUDE.md`, 9 commands, 11 skills, an agent, settings + MCP templates
+- **claude** — `CLAUDE.md`, 9 commands, 12 skills, an agent, settings + MCP templates
 - **watchdogs** — 6 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, a session dashboard, a browser terminal (the phone view)
@@ -59,7 +59,7 @@ running anything.
 
 | Layer | Flag | What lands where | Reversible? |
 |---|---|---|---|
-| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 11 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
+| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 12 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
 | **watchdogs** | `--watchdogs` | 6 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
@@ -182,7 +182,7 @@ doesn't match, report it rather than working around it.
 ```bash
 # --claude
 ls ~/.claude/CLAUDE.md ~/.claude/settings.json ~/.claude/mcp-interactive.json
-ls ~/.claude/skills | wc -l            # expect 11
+ls ~/.claude/skills | wc -l            # expect 12
 ls ~/.claude/commands | wc -l          # expect 9
 python3 -m json.tool ~/.claude/settings.json > /dev/null && echo "settings.json OK"
 grep -c '{{' ~/.claude/mcp-interactive.json    # expect 0; nonzero = an unfilled placeholder
