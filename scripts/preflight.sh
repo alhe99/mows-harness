@@ -80,7 +80,7 @@ if git log --all --format='%s%n%b' | grep -nIE "$PAT" | grep -v 'preflight-allow
 fi
 
 # 5. shell static checks
-mapfile -t SH < <(git ls-files '*.sh' 'watchdogs/bin/*' 'fleet/bin/*' 'install.sh' 2>/dev/null | sort -u)
+mapfile -t SH < <(git ls-files '*.sh' 'watchdogs/bin/*' 'fleet/bin/*' 'agy/bin/*' 'install.sh' 2>/dev/null | sort -u)
 for f in "${SH[@]}"; do
   head -1 "$f" | grep -q bash || continue
   bash -n "$f" || bad "bash -n: $f"
