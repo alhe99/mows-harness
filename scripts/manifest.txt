@@ -7,6 +7,7 @@
 ATTRIBUTIONS.md
 LICENSE
 README.md
+agy/bin/ag
 agy/bin/agy-gate
 agy/bin/agy-handoff
 agy/bin/agy-run

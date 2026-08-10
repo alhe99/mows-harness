@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# ag — launch Antigravity CLI (agy) in a named tmux session, cc-style.
+# usage: ag [dir] [-- <agy flags...>]     (bare `ag` = current directory)
+# tmux session: agy-<slug-of-dir-basename> (+ -2, -3 … for deliberate seconds).
+# watchdogs/bin/reap-idle-claude reaps ^agy- when detached+idle but NEVER
+# ^agyh- (running handoffs) — this naming is that contract; don't change it.
+set -euo pipefail
+CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
+AGY=${AGY_BIN:-agy}
+
+case "${1-}" in
+  -h|--help)
+    cat <<'EOF'
+usage: ag [dir] [-- <agy flags...>]
+
+  ag                  antigravity CLI, current directory
+  ag <dir>            antigravity CLI, in <dir>
+  ag -- --continue    pass flags through to agy itself
+
+Runs agy inside tmux session agy-<slug> when attached to a terminal, so a
+dropped connection never kills the session; execs agy directly otherwise.
+If that directory already has a live session, asks whether to work in it or
+start a second one alongside it (agy-<slug>-2, -3 …).
+EOF
+    exit 0 ;;
+esac
+
+command -v "$AGY" >/dev/null 2>&1 || { echo "ag: '$AGY' not found — install: curl -fsSL https://antigravity.google/cli/install.sh | bash" >&2; exit 1; }
+
+DIR=$PWD; if [ $# -ge 1 ] && [ "$1" != "--" ]; then DIR=$1; shift; fi; [ "${1-}" = "--" ] && shift
+RUN=("$AGY" "$@")
+
+if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
+  SLUG=$(basename "$DIR" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
+  SES="agy-$SLUG"
+  if tmux has-session -t "=$SES" 2>/dev/null; then
+    printf 'ag: an agy session is already running in %s\n' "$DIR"
+    printf '    %s · %s\n' "$SES" \
+      "$(tmux display -p -t "=$SES" '#{?session_attached,attached on another client,detached}' 2>/dev/null || echo live)"
+    printf '  [Enter] work in that one   [n] new session, same directory   [q] quit\n'
+    read -rp '  > ' ANS || ANS=q
+    case "$ANS" in
+      n|N|new) N=2
+               while tmux has-session -t "=$SES-$N" 2>/dev/null; do N=$((N+1)); done
+               SES="$SES-$N"; printf 'ag: starting %s\n' "$SES" ;;
+      q|Q) exit 0 ;;
+      *) exec tmux attach -d -t "=$SES" ;;
+    esac
+  fi
+  exec tmux new-session -AD -s "$SES" -c "$DIR" "$(printf '%q ' "${RUN[@]}")"
+elif env -C / true 2>/dev/null; then
+  exec env -C "$DIR" "${RUN[@]}"
+else
+  cd "$DIR" && exec "${RUN[@]}"
+fi
