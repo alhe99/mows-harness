@@ -38,7 +38,7 @@ start(){
   if [ -n "$task" ]; then
     cp "$task" "$state/HANDOFF.md"
   else
-    [ -n "$prompt" ] && [ ${#verifies[@]} -ge 1 ] || { echo "agy-handoff: need --task FILE, or PROMPT with >=1 --verify CMD" >&2; exit 64; }
+    [ -n "$prompt" ] && [ ${#verifies[@]} -ge 1 ] || { echo "agy-handoff: need --task FILE, or PROMPT with >=1 --verify CMD" >&2; rm -rf "$state"; exit 64; }
     { echo "# Handoff $id"
       echo; echo "## Task"; echo "$prompt"
       echo; echo "## Acceptance criteria"; echo "- verification commands below all pass"
