@@ -144,6 +144,13 @@ chk "idle agy- reaped"    "! tmux has-session -t '=agy-e2e'"
 chk "agyh- never reaped"  "tmux has-session -t '=agyh-e2e'"
 tmux kill-server 2>/dev/null || true
 
+echo "### agy full scenario matrix (scripts/e2e-agy.sh, installed copies)"
+if BIN_DIR="$HOME/.local/bin" REAP="$HOME/.local/bin/reap-idle-claude" bash scripts/e2e-agy.sh > /tmp/agy-matrix.log 2>&1; then
+  ok "agy scenario matrix ($(grep -c '^PASS' /tmp/agy-matrix.log) checks)"
+else
+  no "agy scenario matrix"; tail -20 /tmp/agy-matrix.log
+fi
+
 echo "### Part 2 step 4 — crontab recipe from the README"
 { crontab -l 2>/dev/null; sed "s|\$HOME|$HOME|g" watchdogs/crontab.example | grep -v '^#'; } | crontab -
 chk "crontab took all 6 entries" '[ "$(crontab -l 2>/dev/null | grep -cE "^([*0-9@])")" -eq 6 ]'

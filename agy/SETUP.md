@@ -102,11 +102,14 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
   workaround needed.
 - Model table set from `agy models`:
   `AGY_FAST_MODEL=gemini-3.6-flash-medium`,
-  `AGY_REVIEW_MODEL=gemini-3.1-pro-high`.
-  **Caveat found live:** claude-family slugs via agy (e.g.
-  `claude-opus-4-6-thinking`) work for plain prompts but silently exit 1 when
-  combined with `--json-schema` — the review tier must be a slug that supports
-  structured output (the Gemini Pro tier does; verified).
+  `AGY_REVIEW_MODEL=claude-opus-4-6-thinking` (cross-vendor review of
+  gemini-written handoffs).
+  **Caveat found live (diagnosis corrected):** slugs with an embedded
+  effort/thinking level (`*-high/-low/-thinking`) reject an additional
+  `--effort` flag — the failure is a silent exit 1, and it initially
+  masqueraded as a `--json-schema` incompatibility. The gate passes
+  `--effort high` only for the default model; `--json-schema` itself works on
+  claude-family slugs (verified live: opus + schema, no effort → SUCCESS).
 - Notifications: log-only (`events.log` + `agy-handoff list`) — this box's
   openclaw profile has no chat channels configured; wire `AGY_NOTIFY_CMD`
   later if wanted.
@@ -117,3 +120,16 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
   usable key on the box makes agy's worktree commits fail → handoffs park as
   "no commits" (gpg errors visible in `run.err`). Either fix signing on the
   box or set `git config commit.gpgsign false` per target repo.
+
+## Testing
+
+- **Hermetic all-scenario matrix** — `bash scripts/e2e-agy.sh` (54 checks:
+  every quota/park/merge/review/resume/reaper/launcher path against stubs in
+  an isolated HOME on a private tmux socket; seconds, free, safe on a live
+  box). `BIN_DIR=~/.local/bin` targets the installed copies — do that after
+  every deploy; it catches stale installs. Also runs inside
+  `scripts/e2e-container.sh` (CI).
+- **Live matrix** — `scripts/live-agy.sh --yes` (real agy: auth persistence,
+  model-table validity, review-tier structured output, and three end-to-end
+  handoffs incl. a provoked merge conflict). Costs a little AI Pro quota;
+  never run by CI; re-run after every agy upgrade or model-table change.

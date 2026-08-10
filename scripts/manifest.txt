@@ -140,3 +140,5 @@ watchdogs/bin/reap-idle-claude
 watchdogs/bin/reap-mcp-orphans
 watchdogs/crontab.example
 watchdogs/logrotate.d/claude-harness
+scripts/e2e-agy.sh
+scripts/live-agy.sh
