@@ -105,6 +105,7 @@ exec agy-gate "$id"
 RUN
   chmod +x "$state/run.sh"
   meta_set "$id" status running
+  meta_set "$id" mode tmux
   tmux new-session -d -s "agyh-$id" "bash $(printf '%q' "$state/run.sh")"
   echo "$id resumed"
 }
