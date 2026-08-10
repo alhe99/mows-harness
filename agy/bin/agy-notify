@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# agy-notify — default AGY_NOTIFY_CMD target: posts the message ($1) to a
+# Discord webhook. Zero dependencies beyond curl+jq, no bot, no gateway
+# coupling. Silently a no-op until AGY_DISCORD_WEBHOOK is set in
+# ~/.config/mows-agy/config (chmod 600 recommended — webhook URLs grant
+# post access to their channel). events.log remains the source of truth
+# either way (agy-gate writes it before calling this).
+set -uo pipefail
+CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
+[ -n "${AGY_DISCORD_WEBHOOK:-}" ] || exit 0
+msg=${1:-}
+[ -n "$msg" ] || exit 0
+payload=$(jq -cn --arg c "$msg" '{content: $c}')
+# ponytail: fire-and-forget — a dead webhook must never fail a gate run
+curl -sf --max-time 10 -H 'Content-Type: application/json' \
+  -d "$payload" "$AGY_DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+exit 0

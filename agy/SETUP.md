@@ -39,10 +39,13 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
    `conversation_id` capture verified against real stream-json. Not yet
    live-tested: resume-of-a-resume conversation-id stability; the real agy
    auth-error stderr phrasing (classifier patterns are broad).
-6. Optional notifications: set `AGY_NOTIFY_CMD` in the config to any command
-   taking the message as `$1` (e.g. a Discord/openclaw send wrapper).
-   Fallback is always `~/.local/state/agy-handoffs/events.log` +
-   `agy-handoff list`.
+6. Optional notifications: the default `AGY_NOTIFY_CMD=agy-notify` posts
+   merge/park events to a Discord webhook — create one (channel settings →
+   Integrations → Webhooks), paste its URL into `AGY_DISCORD_WEBHOOK` in
+   `~/.config/mows-agy/config`, and `chmod 600` the file. Until then
+   `agy-notify` is a silent no-op. Any other bare executable taking the
+   message as `$1` also works as `AGY_NOTIFY_CMD`. Fallback is always
+   `~/.local/state/agy-handoffs/events.log` + `agy-handoff list`.
 
 ## Live smoke (proves the whole chain)
 

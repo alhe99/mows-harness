@@ -11,6 +11,7 @@ agy/SETUP.md
 agy/bin/ag
 agy/bin/agy-gate
 agy/bin/agy-handoff
+agy/bin/agy-notify
 agy/bin/agy-run
 agy/bin/claude-quota
 agy/config.example

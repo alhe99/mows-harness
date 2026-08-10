@@ -391,7 +391,7 @@ layer_agy(){
   echo "== agy (antigravity delegation) =="
   mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agy" "$HOME/.local/state/agy-handoffs"
   install -m755 agy/bin/ag agy/bin/agy-run agy/bin/agy-handoff agy/bin/agy-gate \
-    agy/bin/claude-quota "$HOME/.local/bin/"
+    agy/bin/claude-quota agy/bin/agy-notify "$HOME/.local/bin/"
   # config is user-owned after first install: seed only if absent, never clobber
   if [ ! -f "$HOME/.config/mows-agy/config" ]; then
     install -m644 agy/config.example "$HOME/.config/mows-agy/config"

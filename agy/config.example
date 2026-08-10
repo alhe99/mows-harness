@@ -5,6 +5,10 @@ AGY_BIN=${AGY_BIN:-agy}   # defaulting form: an env override (tests, stubs) beat
 AGY_FAST_MODEL=            # flash-tier slug for cheap sync tasks (empty = agy default)
 AGY_REVIEW_MODEL=          # smartest slug for big-handoff reviews (empty = agy default)
 AGY_HANDOFF_TIMEOUT=120m   # --print-timeout for detached handoff runs
-# Notification hook: a command that receives the message as its first argument
-# (wire your Discord/openclaw sender here). Empty = log-only.
-AGY_NOTIFY_CMD=
+# Notification hook: a bare executable receiving the message as $1.
+# Default agy-notify posts to the Discord webhook below and is a silent
+# no-op until the webhook is set — events.log always logs regardless.
+AGY_NOTIFY_CMD=${AGY_NOTIFY_CMD:-agy-notify}
+# Discord webhook URL (channel settings -> Integrations -> Webhooks).
+# Grants post access to that channel: keep this file chmod 600.
+AGY_DISCORD_WEBHOOK=

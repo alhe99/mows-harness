@@ -264,6 +264,15 @@ printf 'q\n' | timeout 8 script -qec "ag $T/projx" /dev/null 2>/dev/null | grep 
 printf 'n\n' | timeout 8 script -qec "ag $T/projx" /dev/null >/dev/null 2>&1; sleep 1
 chk "answer n -> agy-projx-2"         "tmux has-session -t '=agy-projx-2'"
 
+echo "### agy-notify (webhook notifier)"
+mkdir -p "$T/curlrec"
+printf '#!/bin/sh\necho "$@" >> "$CURL_LOG"\nexit 0\n' > "$T/curlrec/curl"
+chmod +x "$T/curlrec/curl"
+export CURL_LOG="$T/curl.log"
+chk "notify: no-op when webhook unset" "PATH=\"$T/curlrec:\$PATH\" agy-notify 'hello' && [ ! -s '$CURL_LOG' ]"
+chk "notify: posts when webhook set" "PATH=\"$T/curlrec:\$PATH\" AGY_DISCORD_WEBHOOK=https://discord.test/hook agy-notify 'gate says hi' && grep -q 'gate says hi' '$CURL_LOG' && grep -q 'discord.test/hook' '$CURL_LOG'"
+chk "notify: empty message is a no-op" ": > '$CURL_LOG'; PATH=\"$T/curlrec:\$PATH\" AGY_DISCORD_WEBHOOK=https://discord.test/hook agy-notify '' && [ ! -s '$CURL_LOG' ]"
+
 echo
 echo "=============================="
 echo "RESULT: $PASS passed, $FAIL failed"
