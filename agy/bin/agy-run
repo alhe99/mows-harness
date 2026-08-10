@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# agy-run — synchronous agy delegation with fail-loud semantics.
+# agy's known quota bug: on 429 exhaustion, headless agy retries silently until
+# --print-timeout then exits 0 with an EMPTY response. We turn that into exit 2.
+# Exit: 0 ok · 1 agy error · 2 empty-response(quota) · 3 auth error · 64 usage.
+set -uo pipefail
+CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
+AGY=${AGY_BIN:-agy}
+
+MODEL="" EFFORT="" TIMEOUT="5m" SCHEMA="" CONV="" RAWJSON=0
+while [ $# -gt 0 ]; do case "$1" in
+  --model) MODEL=$2; shift 2;;
+  --fast)  MODEL=${AGY_FAST_MODEL:-}; shift;;
+  --effort) EFFORT=$2; shift 2;;
+  --timeout) TIMEOUT=$2; shift 2;;
+  --schema) SCHEMA=$2; shift 2;;
+  --conversation) CONV=$2; shift 2;;
+  --json) RAWJSON=1; shift;;
+  --selftest) SELFTEST=1; shift; break;;
+  --) shift; break;;
+  -*) echo "agy-run: unknown flag $1" >&2; exit 64;;
+  *) break;;
+esac; done
+
+run(){
+  local prompt=$1 err out rc
+  err=$(mktemp)
+  cmd=("$AGY" -p "$prompt" --output-format json --print-timeout "$TIMEOUT")
+  [ -n "$MODEL" ]  && cmd+=(--model "$MODEL")
+  [ -n "$EFFORT" ] && cmd+=(--effort "$EFFORT")
+  [ -n "$SCHEMA" ] && cmd+=(--json-schema "$SCHEMA")
+  [ -n "$CONV" ]   && cmd+=(--conversation "$CONV")
+  out=$("${cmd[@]}" 2>"$err"); rc=$?
+  if grep -qiE 'auth|sign.?in|log.?in|unauthorized|credential' "$err" && [ $rc -ne 0 ]; then
+    echo "agy-run: agy auth error — run \`ag\` once and re-login" >&2; cat "$err" >&2; rm -f "$err"; return 3
+  fi
+  if [ $rc -ne 0 ]; then
+    echo "agy-run: agy exited $rc" >&2; cat "$err" >&2; rm -f "$err"; return 1
+  fi
+  local status resp
+  status=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null)
+  resp=$(printf '%s' "$out" | jq -r '.response // empty' 2>/dev/null)
+  if [ "$status" != "SUCCESS" ] || [ -z "$resp" ]; then
+    if [ -z "$resp" ] && { [ "$status" = "SUCCESS" ] || [ -z "$status" ]; }; then
+      echo "agy-run: empty response with success exit — agy quota likely exhausted (known 429-retry bug); stderr follows" >&2
+      cat "$err" >&2; rm -f "$err"; return 2
+    fi
+    echo "agy-run: agy status=$status" >&2
+    printf '%s' "$out" | jq -r '.error // empty' >&2; cat "$err" >&2; rm -f "$err"; return 1
+  fi
+  rm -f "$err"
+  if [ "$RAWJSON" = 1 ]; then printf '%s\n' "$out"; else printf '%s\n' "$resp"; fi
+}
+
+selftest(){
+  local t; t=$(mktemp -d); trap 'rm -rf "$t"' RETURN
+  # stub agy with switchable behavior via AGY_STUB_MODE
+  cat > "$t/agy" <<'STUB'
+#!/usr/bin/env bash
+case "${AGY_STUB_MODE:-ok}" in
+  ok)      echo '{"conversation_id":"c-1","status":"SUCCESS","response":"pong","num_turns":1}';;
+  empty)   echo '{"conversation_id":"c-2","status":"SUCCESS","response":""}';;
+  autherr) echo "please sign in to continue" >&2; exit 1;;
+  fail)    echo "boom" >&2; exit 7;;
+esac
+STUB
+  chmod +x "$t/agy"; AGY="$t/agy"
+  [ "$(AGY_STUB_MODE=ok run ping)" = "pong" ]            || { echo "FAIL ok-path"; return 1; }
+  AGY_STUB_MODE=empty   run ping >/dev/null 2>&1; [ $? -eq 2 ] || { echo "FAIL empty->2"; return 1; }
+  AGY_STUB_MODE=autherr run ping >/dev/null 2>&1; [ $? -eq 3 ] || { echo "FAIL auth->3"; return 1; }
+  AGY_STUB_MODE=fail    run ping >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL err->1"; return 1; }
+  echo "agy-run selftest OK"
+}
+
+if [ "${SELFTEST:-0}" = 1 ]; then selftest; exit $?; fi
+[ $# -ge 1 ] || { echo "usage: agy-run [--model M|--fast] [--effort E] [--timeout T] [--schema J] [--conversation ID] [--json] [--] PROMPT" >&2; exit 64; }
+run "$1"
