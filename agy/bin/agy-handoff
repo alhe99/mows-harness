@@ -51,9 +51,10 @@ start(){
   git -C "$repo" worktree add -b "agy/$id" "$state/wt" "$base" >/dev/null
 
   jq -n --arg id "$id" --arg repo "$repo" --arg base "$base" --arg size "$size" \
-        --arg am "$merge" --arg created "$(date -Is)" \
+        --arg am "$merge" --arg created "$(date -Is)" --arg mode "$([ "$fg" = 1 ] && echo fg || echo tmux)" \
     '{id:$id, repo:$repo, base:$base, branch:("agy/"+$id), size:$size,
-      auto_merge:($am=="true"), status:"running", created:$created}' > "$state/meta.json"
+      auto_merge:($am=="true"), status:"running", created:$created, mode:$mode}' \
+    > "$state/meta.json.tmp" && mv "$state/meta.json.tmp" "$state/meta.json"
 
   local agybin=${AGY_BIN:-agy}
   cat > "$state/run.sh" <<RUN
@@ -61,7 +62,7 @@ start(){
 cd "$state/wt" || exit 1
 $(printf '%q' "$agybin") -p "You are executing handoff $id. Read $state/HANDOFF.md fully. Work ONLY in the current directory (a git worktree on branch agy/$id). Implement the task so every acceptance criterion holds and every command in the verify block exits 0. Commit all work to the current branch with clear messages. Never merge, push, or switch branches." \
   --dangerously-skip-permissions --output-format stream-json \
-  --print-timeout "$TIMEOUT" > "$state/run.ndjson" 2> "$state/run.err"
+  --print-timeout $(printf '%q' "$TIMEOUT") > "$state/run.ndjson" 2> "$state/run.err"
 echo "agy_exit=\$?" >> "$state/run.err"
 exec agy-gate "$id"
 RUN
@@ -78,10 +79,11 @@ list(){
   local d id st size created stale
   for d in "$ROOT"/*/; do
     [ -f "$d/meta.json" ] || continue
-    id=$(jq -r .id "$d/meta.json"); st=$(jq -r .status "$d/meta.json")
-    size=$(jq -r .size "$d/meta.json"); created=$(jq -r .created "$d/meta.json")
+    id=$(jq -er .id "$d/meta.json" 2>/dev/null) && st=$(jq -er .status "$d/meta.json" 2>/dev/null) \
+      && size=$(jq -er .size "$d/meta.json" 2>/dev/null) && created=$(jq -er .created "$d/meta.json" 2>/dev/null) \
+      || { printf '%s  (unreadable meta.json)\n' "$(basename "$d")"; continue; }
     stale=""
-    if [ "$st" = running ] && ! tmux has-session -t "=agyh-$id" 2>/dev/null; then stale=" [STALE — session gone; resume or inspect]"; fi
+    if [ "$st" = running ] && [ "$(jq -r '.mode // "tmux"' "$d/meta.json")" = tmux ] && ! tmux has-session -t "=agyh-$id" 2>/dev/null; then stale=" [STALE — session gone; resume or inspect]"; fi
     printf '%s  %-7s %-5s %s%s  %s\n' "$id" "$st" "$size" "$created" "$stale" "$(jq -r '.reason // ""' "$d/meta.json")"
   done
 }
@@ -97,7 +99,7 @@ cd "$state/wt" || exit 1
 $(printf '%q' "$agybin") -p "Continue handoff $id per $state/HANDOFF.md. Finish the task; every verify command must exit 0; commit to the current branch." \
   ${cid:+--conversation "$cid"} \
   --dangerously-skip-permissions --output-format stream-json \
-  --print-timeout "$TIMEOUT" >> "$state/run.ndjson" 2>> "$state/run.err"
+  --print-timeout $(printf '%q' "$TIMEOUT") >> "$state/run.ndjson" 2>> "$state/run.err"
 echo "agy_exit=\$?" >> "$state/run.err"
 exec agy-gate "$id"
 RUN
