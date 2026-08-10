@@ -63,9 +63,10 @@ Reply with exactly APPROVE or REJECT: <reason> as your final line." 2>>"$STATE/g
     case "$VERDICT" in *APPROVE*) APPROVED=yes;; *REJECT*) APPROVED=no;; esac
   fi
   if [ -z "$APPROVED" ]; then   # no Claude budget (or no verdict) -> agy self-review, smartest model
-    V=$(agy-run --model "${AGY_REVIEW_MODEL:-}" --effort high --timeout 15m --json \
-        --schema '{"type":"object","properties":{"approve":{"type":"boolean"},"reason":{"type":"string"}},"required":["approve"]}' \
-        -- "$PROMPT") || park "review run failed (agy-run exit $?)"
+    RV_ARGS=(--effort high --timeout 15m --json \
+      --schema '{"type":"object","properties":{"approve":{"type":"boolean"},"reason":{"type":"string"}},"required":["approve"]}')
+    [ -n "${AGY_REVIEW_MODEL:-}" ] && RV_ARGS+=(--model "$AGY_REVIEW_MODEL")
+    V=$(agy-run "${RV_ARGS[@]}" -- "$PROMPT") || park "review run failed (agy-run exit $?)"
     if [ "$(printf '%s' "$V" | jq -r '.structured_output.approve')" = true ]; then APPROVED=yes
     else park "review rejected: $(printf '%s' "$V" | jq -r '.structured_output.reason // "no reason"')"; fi
   fi
