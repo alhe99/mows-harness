@@ -303,7 +303,7 @@ flowchart TB
 
 ## What each layer contains
 
-- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 11
+- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 12
   agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` and MCP templates.
   Also installable as a standalone plugin (below).
 - **`watchdogs/`** — six cron scripts keeping a remote-control Claude Code process alive and
