@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# agy-handoff — fire-and-forget agy implementation runs, isolated in a git
+# worktree, gated by agy-gate. State: ~/.local/state/agy-handoffs/<id>/
+set -euo pipefail
+CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
+ROOT="$HOME/.local/state/agy-handoffs"
+TIMEOUT=${AGY_HANDOFF_TIMEOUT:-120m}
+
+meta_set(){ # meta_set <id> key value  (string values)
+  local f="$ROOT/$1/meta.json"
+  jq --arg k "$2" --arg v "$3" '.[$k]=$v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+verify_block_ok(){ # file has a ```verify fence with >=1 non-empty line
+  awk '/^```verify/{f=1;next} /^```/{f=0} f&&NF{n++} END{exit n?0:1}' "$1"
+}
+
+start(){
+  local repo=$PWD size=small merge=true fg=0 task="" prompt="" verifies=()
+  while [ $# -gt 0 ]; do case "$1" in
+    --repo) repo=$2; shift 2;;
+    --size) size=$2; shift 2;;
+    --no-merge) merge=false; shift;;
+    --foreground) fg=1; shift;;
+    --task) task=$2; shift 2;;
+    --verify) verifies+=("$2"); shift 2;;
+    *) prompt=$1; shift;;
+  esac; done
+  repo=$(cd "$repo" && pwd)
+  git -C "$repo" rev-parse --git-dir >/dev/null || { echo "agy-handoff: $repo is not a git repo" >&2; exit 1; }
+  case "$size" in small|big) ;; *) echo "agy-handoff: --size must be small|big" >&2; exit 64;; esac
+
+  local id state base
+  id=$(date +%Y%m%d-%H%M%S)-$$
+  state="$ROOT/$id"; mkdir -p "$state"
+  base=$(git -C "$repo" symbolic-ref --short HEAD)
+
+  if [ -n "$task" ]; then
+    cp "$task" "$state/HANDOFF.md"
+  else
+    [ -n "$prompt" ] && [ ${#verifies[@]} -ge 1 ] || { echo "agy-handoff: need --task FILE, or PROMPT with >=1 --verify CMD" >&2; exit 64; }
+    { echo "# Handoff $id"
+      echo; echo "## Task"; echo "$prompt"
+      echo; echo "## Acceptance criteria"; echo "- verification commands below all pass"
+      echo; echo '## Verification commands (must exit 0)'; echo '```verify'
+      printf '%s\n' "${verifies[@]}"; echo '```'
+    } > "$state/HANDOFF.md"
+  fi
+  verify_block_ok "$state/HANDOFF.md" || { echo "agy-handoff: HANDOFF.md has no \`\`\`verify block with commands — refusing (the mechanical gate would be empty)" >&2; rm -rf "$state"; exit 64; }
+
+  git -C "$repo" worktree add -b "agy/$id" "$state/wt" "$base" >/dev/null
+
+  jq -n --arg id "$id" --arg repo "$repo" --arg base "$base" --arg size "$size" \
+        --arg am "$merge" --arg created "$(date -Is)" \
+    '{id:$id, repo:$repo, base:$base, branch:("agy/"+$id), size:$size,
+      auto_merge:($am=="true"), status:"running", created:$created}' > "$state/meta.json"
+
+  local agybin=${AGY_BIN:-agy}
+  cat > "$state/run.sh" <<RUN
+#!/usr/bin/env bash
+cd "$state/wt" || exit 1
+$(printf '%q' "$agybin") -p "You are executing handoff $id. Read $state/HANDOFF.md fully. Work ONLY in the current directory (a git worktree on branch agy/$id). Implement the task so every acceptance criterion holds and every command in the verify block exits 0. Commit all work to the current branch with clear messages. Never merge, push, or switch branches." \
+  --dangerously-skip-permissions --output-format stream-json \
+  --print-timeout "$TIMEOUT" > "$state/run.ndjson" 2> "$state/run.err"
+echo "agy_exit=\$?" >> "$state/run.err"
+exec agy-gate "$id"
+RUN
+  chmod +x "$state/run.sh"
+
+  if [ "$fg" = 1 ]; then bash "$state/run.sh" || true
+  else tmux new-session -d -s "agyh-$id" "bash $(printf '%q' "$state/run.sh")"
+  fi
+  echo "$id"
+}
+
+list(){
+  [ -d "$ROOT" ] || { echo "(no handoffs)"; return 0; }
+  local d id st size created stale
+  for d in "$ROOT"/*/; do
+    [ -f "$d/meta.json" ] || continue
+    id=$(jq -r .id "$d/meta.json"); st=$(jq -r .status "$d/meta.json")
+    size=$(jq -r .size "$d/meta.json"); created=$(jq -r .created "$d/meta.json")
+    stale=""
+    if [ "$st" = running ] && ! tmux has-session -t "=agyh-$id" 2>/dev/null; then stale=" [STALE — session gone; resume or inspect]"; fi
+    printf '%s  %-7s %-5s %s%s  %s\n' "$id" "$st" "$size" "$created" "$stale" "$(jq -r '.reason // ""' "$d/meta.json")"
+  done
+}
+
+resume(){
+  local id=$1 state cid
+  state="$ROOT/$id"; [ -f "$state/meta.json" ] || { echo "agy-handoff: no such handoff $id" >&2; exit 1; }
+  cid=$(grep -o '"conversation_id"[": ]*[a-zA-Z0-9-]*' "$state/run.ndjson" 2>/dev/null | head -1 | grep -oE '[a-zA-Z0-9-]+$' || true)
+  local agybin=${AGY_BIN:-agy}
+  cat > "$state/run.sh" <<RUN
+#!/usr/bin/env bash
+cd "$state/wt" || exit 1
+$(printf '%q' "$agybin") -p "Continue handoff $id per $state/HANDOFF.md. Finish the task; every verify command must exit 0; commit to the current branch." \
+  ${cid:+--conversation "$cid"} \
+  --dangerously-skip-permissions --output-format stream-json \
+  --print-timeout "$TIMEOUT" >> "$state/run.ndjson" 2>> "$state/run.err"
+echo "agy_exit=\$?" >> "$state/run.err"
+exec agy-gate "$id"
+RUN
+  chmod +x "$state/run.sh"
+  meta_set "$id" status running
+  tmux new-session -d -s "agyh-$id" "bash $(printf '%q' "$state/run.sh")"
+  echo "$id resumed"
+}
+
+case "${1:-}" in
+  start)  shift; start "$@";;
+  list)   list;;
+  path)   [ -n "${2:-}" ] && echo "$ROOT/$2";;
+  resume) shift; resume "$@";;
+  *) echo "usage: agy-handoff start|list|path|resume …" >&2; exit 64;;
+esac
