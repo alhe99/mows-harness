@@ -6,15 +6,16 @@
 set -uo pipefail
 CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
 AGY=${AGY_BIN:-agy}
+need2(){ [ -n "${VAL:-}" ] && [ "${VAL#-}" = "$VAL" ] || { echo "agy-run: $FLAG requires a value" >&2; exit 64; }; }
 
 MODEL="" EFFORT="" TIMEOUT="5m" SCHEMA="" CONV="" RAWJSON=0
 while [ $# -gt 0 ]; do case "$1" in
-  --model) MODEL=$2; shift 2;;
+  --model) FLAG=$1 VAL=${2:-}; need2; MODEL=$VAL; shift 2;;
   --fast)  MODEL=${AGY_FAST_MODEL:-}; shift;;
-  --effort) EFFORT=$2; shift 2;;
-  --timeout) TIMEOUT=$2; shift 2;;
-  --schema) SCHEMA=$2; shift 2;;
-  --conversation) CONV=$2; shift 2;;
+  --effort) FLAG=$1 VAL=${2:-}; need2; EFFORT=$VAL; shift 2;;
+  --timeout) FLAG=$1 VAL=${2:-}; need2; TIMEOUT=$VAL; shift 2;;
+  --schema) FLAG=$1 VAL=${2:-}; need2; SCHEMA=$VAL; shift 2;;
+  --conversation) FLAG=$1 VAL=${2:-}; need2; CONV=$VAL; shift 2;;
   --json) RAWJSON=1; shift;;
   --selftest) SELFTEST=1; shift; break;;
   --) shift; break;;
@@ -23,7 +24,7 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 
 run(){
-  local prompt=$1 err out rc
+  local prompt=$1 cmd err out rc status resp
   err=$(mktemp)
   cmd=("$AGY" -p "$prompt" --output-format json --print-timeout "$TIMEOUT")
   [ -n "$MODEL" ]  && cmd+=(--model "$MODEL")
@@ -37,7 +38,10 @@ run(){
   if [ $rc -ne 0 ]; then
     echo "agy-run: agy exited $rc" >&2; cat "$err" >&2; rm -f "$err"; return 1
   fi
-  local status resp
+  if [ -n "$out" ] && ! printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
+    echo "agy-run: non-JSON output from agy (not the empty-response quota case)" >&2
+    cat "$err" >&2; rm -f "$err"; return 1
+  fi
   status=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null)
   resp=$(printf '%s' "$out" | jq -r '.response // empty' 2>/dev/null)
   if [ "$status" != "SUCCESS" ] || [ -z "$resp" ]; then
@@ -53,7 +57,8 @@ run(){
 }
 
 selftest(){
-  local t; t=$(mktemp -d); trap 'rm -rf "$t"' RETURN
+  local t SELF; t=$(mktemp -d); trap 'rm -rf "$t"' RETURN
+  SELF=${BASH_SOURCE[0]}
   # stub agy with switchable behavior via AGY_STUB_MODE
   cat > "$t/agy" <<'STUB'
 #!/usr/bin/env bash
@@ -62,6 +67,7 @@ case "${AGY_STUB_MODE:-ok}" in
   empty)   echo '{"conversation_id":"c-2","status":"SUCCESS","response":""}';;
   autherr) echo "please sign in to continue" >&2; exit 1;;
   fail)    echo "boom" >&2; exit 7;;
+  nonjson) echo "plain text";;
 esac
 STUB
   chmod +x "$t/agy"; AGY="$t/agy"
@@ -69,9 +75,19 @@ STUB
   AGY_STUB_MODE=empty   run ping >/dev/null 2>&1; [ $? -eq 2 ] || { echo "FAIL empty->2"; return 1; }
   AGY_STUB_MODE=autherr run ping >/dev/null 2>&1; [ $? -eq 3 ] || { echo "FAIL auth->3"; return 1; }
   AGY_STUB_MODE=fail    run ping >/dev/null 2>&1; [ $? -eq 1 ] || { echo "FAIL err->1"; return 1; }
+  env AGY_BIN="$t/agy" AGY_STUB_MODE=ok bash "$SELF" --model >/dev/null 2>&1
+  [ $? -eq 64 ] || { echo "FAIL cli missing-value->64"; return 1; }
+  env AGY_BIN="$t/agy" AGY_STUB_MODE=ok bash "$SELF" --model --effort high ping >/dev/null 2>&1
+  [ $? -eq 64 ] || { echo "FAIL cli flag-eats-flag->64"; return 1; }
+  env AGY_BIN="$t/agy" AGY_STUB_MODE=ok bash "$SELF" hello there >/dev/null 2>&1
+  [ $? -eq 64 ] || { echo "FAIL cli extra-positional->64"; return 1; }
+  env AGY_BIN="$t/agy" AGY_STUB_MODE=nonjson bash "$SELF" ping >/dev/null 2>&1
+  [ $? -eq 1 ] || { echo "FAIL cli nonjson->1"; return 1; }
+  [ "$(env AGY_BIN="$t/agy" AGY_STUB_MODE=ok bash "$SELF" -- ping)" = "pong" ] || { echo "FAIL cli dashdash-prompt"; return 1; }
   echo "agy-run selftest OK"
 }
 
 if [ "${SELFTEST:-0}" = 1 ]; then selftest; exit $?; fi
 [ $# -ge 1 ] || { echo "usage: agy-run [--model M|--fast] [--effort E] [--timeout T] [--schema J] [--conversation ID] [--json] [--] PROMPT" >&2; exit 64; }
+[ $# -eq 1 ] || { echo "agy-run: exactly one PROMPT argument expected (quote it)" >&2; exit 64; }
 run "$1"
