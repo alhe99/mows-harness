@@ -58,9 +58,13 @@ Judge ONLY: does the diff satisfy the contract without bugs, security issues, or
   APPROVED=""
   if [ -n "$REVIEWER" ] && command -v claude >/dev/null 2>&1; then
     DIRSUFFIX=""; [ "$REVIEWER" = work ] && DIRSUFFIX="-work"
-    VERDICT=$(CLAUDE_CONFIG_DIR="$HOME/.claude$DIRSUFFIX" claude -p "$PROMPT
-Reply with exactly APPROVE or REJECT: <reason> as your final line." 2>>"$STATE/gate.log" | tail -5)
-    case "$VERDICT" in *APPROVE*) APPROVED=yes;; *REJECT*) APPROVED=no;; esac
+    VERDICT=$(CLAUDE_CONFIG_DIR="$HOME/.claude$DIRSUFFIX" timeout "${CLAUDE_REVIEW_TIMEOUT:-900}" claude -p "$PROMPT
+Reply with exactly APPROVE or REJECT: <reason> as your final line." 2>>"$STATE/gate.log")
+    VERDICT_LINE=$(printf '%s\n' "$VERDICT" | grep -E '^(APPROVE|REJECT)' | tail -1 || true)
+    case "$VERDICT_LINE" in
+      APPROVE*) APPROVED=yes;;
+      REJECT*)  APPROVED=no;;
+    esac
   fi
   if [ -z "$APPROVED" ]; then   # no Claude budget (or no verdict) -> agy self-review, smartest model
     RV_ARGS=(--effort high --timeout 15m --json \
