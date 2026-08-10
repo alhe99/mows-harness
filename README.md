@@ -16,13 +16,15 @@ cd mows-harness && ./install.sh --claude
 That's the laptop install — config, skills, and commands only. Add `--watchdogs` on a server
 you leave running, `--all` for the full web cockpit.
 
-**Four layers, install any subset:**
+**Five layers, install any subset:**
 
 - **claude** — `CLAUDE.md`, 9 commands, 12 skills, an agent, settings + MCP templates
 - **watchdogs** — 6 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, a session dashboard, a browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command
+- **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
+  `claude-quota` → `~/.local/bin`
 
 <br clear="right">
 
@@ -63,8 +65,9 @@ running anything.
 | **watchdogs** | `--watchdogs` | 6 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
+| **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
 
-All four are idempotent and independent. Re-running with a different flag set is safe.
+All five are idempotent and independent. Re-running with a different flag set is safe.
 
 ## Decide which layers to install
 
@@ -320,7 +323,8 @@ Deeper detail — port map, the profile-vs-agent model, watchdog rationale, know
 caveats — is in [`docs/architecture.md`](docs/architecture.md). Attributions:
 [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md). Per-module guides: [`infra/SETUP.md`](infra/SETUP.md),
 [`fleet/SETUP.md`](fleet/SETUP.md), [`watchdogs/SETUP.md`](watchdogs/SETUP.md),
-[`infra/os/SETUP.md`](infra/os/SETUP.md), [`infra/qa-watch/SETUP.md`](infra/qa-watch/SETUP.md).
+[`infra/os/SETUP.md`](infra/os/SETUP.md), [`infra/qa-watch/SETUP.md`](infra/qa-watch/SETUP.md),
+[`agy/SETUP.md`](agy/SETUP.md).
 
 ## The plugin route (skills/commands/agents only)
 

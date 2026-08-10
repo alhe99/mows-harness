@@ -12,7 +12,9 @@
 #                 ./rendered/ for review — NEVER installed, enabled, started, or touched live
 #                 by this script. Prints the exact sudo commands to do that yourself.
 #   --fleet       the profile-model CLIs (fleet/bin/*) into ~/.local/bin.
-#   --all         all four of the above.
+#   --agy         antigravity delegation CLIs (agy/bin/*: ag, agy-run, agy-handoff, agy-gate,
+#                 claude-quota) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
+#   --all         all five of the above.
 #   --non-interactive   never prompt: use env vars for every value, leave the rest as
 #                 sanctioned double-brace placeholders in rendered output and warn about it.
 #
@@ -27,7 +29,7 @@ cd "$(dirname "$0")"
 
 usage(){
   cat <<'EOF'
-usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--all] [--non-interactive]
+usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [--non-interactive]
 
   --claude          ~/.claude config (CLAUDE.md, rules, agents, commands, skills, settings,
                      mcp template) + plugin marketplace registration
@@ -36,17 +38,19 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--all] [--non-in
                      ./rendered/ for review; never installs/enables/starts anything itself
   --fleet           profile-model CLIs (cc, claude-rc, claude-status, reset-claude-env)
                      -> ~/.local/bin
-  --all             all four layers above
+  --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota) -> ~/.local/bin
+  --all             all five layers above
   --non-interactive never prompt; unset template vars are left as placeholders (+ warning)
 
 No layer flag and no --non-interactive: interactive picker.
 EOF
 }
 
-NI=0; L_CLAUDE=0; L_WATCH=0; L_INFRA=0; L_FLEET=0
+NI=0; L_CLAUDE=0; L_WATCH=0; L_INFRA=0; L_FLEET=0; L_AGY=0
 for a in "$@"; do case $a in
   --claude) L_CLAUDE=1;; --watchdogs) L_WATCH=1;; --infra) L_INFRA=1;;
-  --fleet) L_FLEET=1;; --all) L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1;;
+  --fleet) L_FLEET=1;; --agy) L_AGY=1;;
+  --all) L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1;;
   --non-interactive) NI=1;;
   -h|--help) usage; exit 0;;
   *) echo "unknown flag $a" >&2; usage >&2; exit 1;;
@@ -56,18 +60,19 @@ esac; done
 command -v apt-get >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
   || { echo "mows-harness targets Ubuntu/Debian with systemd." >&2; exit 1; }
 
-if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET)) = 0 ]; then
+if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY)) = 0 ]; then
   if [ "$NI" = 1 ]; then
     L_CLAUDE=1
   else
-    echo "Layers: 1) claude config  2) watchdogs  3) infra (VPS, staged only)  4) fleet"
+    echo "Layers: 1) claude config  2) watchdogs  3) infra (VPS, staged only)  4) fleet  5) agy"
     read -rp "install which? (e.g. 1 2 4, or 'all'): " ans
-    [[ $ans == *all* ]] && L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1
+    [[ $ans == *all* ]] && L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1
     [[ $ans == *1* ]] && L_CLAUDE=1
     [[ $ans == *2* ]] && L_WATCH=1
     [[ $ans == *3* ]] && L_INFRA=1
     [[ $ans == *4* ]] && L_FLEET=1
-    if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET)) = 0 ]; then
+    [[ $ans == *5* ]] && L_AGY=1
+    if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY)) = 0 ]; then
       echo "nothing selected, nothing to do." >&2; exit 1
     fi
   fi
@@ -382,10 +387,29 @@ layer_fleet(){
   echo "see fleet/SETUP.md for the profile-model-vs-agent-model overview and the full add-agent.sh walkthrough."
 }
 
+layer_agy(){
+  echo "== agy (antigravity delegation) =="
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agy" "$HOME/.local/state/agy-handoffs"
+  install -m755 agy/bin/ag agy/bin/agy-run agy/bin/agy-handoff agy/bin/agy-gate \
+    agy/bin/claude-quota "$HOME/.local/bin/"
+  # config is user-owned after first install: seed only if absent, never clobber
+  if [ ! -f "$HOME/.config/mows-agy/config" ]; then
+    install -m644 agy/config.example "$HOME/.config/mows-agy/config"
+    echo "seeded ~/.config/mows-agy/config — set model slugs there after running: agy models"
+  fi
+  echo "installed: ag agy-run agy-handoff agy-gate claude-quota -> ~/.local/bin"
+  if ! command -v agy >/dev/null 2>&1; then
+    echo "antigravity CLI (agy) not found — install it yourself when ready (never run by this script):"
+    echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash"
+    echo "then login once over SSH (agy prints a URL + one-time code) and see agy/SETUP.md"
+  fi
+}
+
 [ "$L_CLAUDE" = 1 ] && layer_claude
 [ "$L_WATCH"  = 1 ] && layer_watchdogs
 [ "$L_INFRA"  = 1 ] && layer_infra
 [ "$L_FLEET"  = 1 ] && layer_fleet
+[ "$L_AGY"    = 1 ] && layer_agy
 
 echo "done."
 [ -d "$BK" ] && echo "backups (if anything pre-existing got overwritten): $BK"
