@@ -200,10 +200,15 @@ selftest(){
   # 3. --check against a crafted cache: work over threshold, personal under
   CACHE="$t/c.json"
   jq -n '{personal:{five_hour_pct:10,weekly_pct:20},work:{five_hour_pct:80,weekly_pct:20}}' > "$CACHE"
-  (check_account personal); [ $? -eq 0 ] || { echo "FAIL check under"; return 1; }
-  (check_account work);     [ $? -eq 1 ] || { echo "FAIL check over"; return 1; }
+  # rc-capture: under `set -e` a bare subshell returning nonzero aborts the script
+  local rc
+  rc=0; (check_account personal) || rc=$?
+  [ "$rc" -eq 0 ] || { echo "FAIL check under"; return 1; }
+  rc=0; (check_account work) || rc=$?
+  [ "$rc" -eq 1 ] || { echo "FAIL check over"; return 1; }
   jq -n '{personal:{five_hour_pct:null,weekly_pct:null},work:{}}' > "$CACHE"
-  (check_account personal); [ $? -eq 2 ] || { echo "FAIL check unknown"; return 1; }
+  rc=0; (check_account personal) || rc=$?
+  [ "$rc" -eq 2 ] || { echo "FAIL check unknown"; return 1; }
   echo "claude-quota selftest OK"
 }
 
