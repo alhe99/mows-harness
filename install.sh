@@ -397,7 +397,7 @@ layer_agy(){
     install -m644 agy/config.example "$HOME/.config/mows-agy/config"
     echo "seeded ~/.config/mows-agy/config — set model slugs there after running: agy models"
   fi
-  echo "installed: ag agy-run agy-handoff agy-gate claude-quota -> ~/.local/bin"
+  echo "installed: ag agy-run agy-handoff agy-gate claude-quota agy-notify -> ~/.local/bin"
   if ! command -v agy >/dev/null 2>&1; then
     echo "antigravity CLI (agy) not found — install it yourself when ready (never run by this script):"
     echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash"
