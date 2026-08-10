@@ -118,6 +118,20 @@ claude-quota ──▶ Claude decides ──▶ agy-run   (sync, small/medium)
 5. Notifications: existing Discord gateway (openclaw); dashboard parked-list
    (`agy-handoff list`) as the always-available fallback.
 
+### Model selection
+
+Claude picks a **tier**; slugs live in one config table populated from
+`agy models` at setup (recorded in SETUP.md):
+
+| Tier | Used for | Mapping |
+|---|---|---|
+| `default` | Implementation handoffs | No `--model` flag — agy's own default; immune to slug renames |
+| `fast` | Cheap sync tasks (summaries, extraction, read-heavy) via `agy-run` | Flash-tier slug, low/medium effort — preserves AI Pro quota |
+| `review` | `big`-handoff review escalation | `REVIEW_MODEL`: smartest available slug, `--effort high` |
+
+agy fails fast on unknown model slugs; `agy-run` surfaces that as a loud
+"update the model table" error — nothing silently downgrades.
+
 ### Claude-side policy
 
 - Skill `claude/skills/agy-delegate/SKILL.md`: when to delegate, how to write
