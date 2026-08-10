@@ -39,7 +39,10 @@ run(){
     if grep -qiE 'unknown model|invalid model|model.*not (found|available)' "$err"; then
       echo "agy-run: model slug rejected by agy — update the model table in ~/.config/mows-agy/config (agy models)" >&2
     fi
-    echo "agy-run: agy exited $rc" >&2; cat "$err" >&2; rm -f "$err"; return 1
+    echo "agy-run: agy exited $rc" >&2; cat "$err" >&2
+    # agy sometimes reports the real reason only in the stdout envelope's .error
+    printf '%s' "$out" | jq -r '.error // empty' >&2 2>/dev/null || true
+    rm -f "$err"; return 1
   fi
   if [ -n "$out" ] && ! printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
     echo "agy-run: non-JSON output from agy (not the empty-response quota case)" >&2

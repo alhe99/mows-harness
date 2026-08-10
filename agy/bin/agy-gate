@@ -72,9 +72,11 @@ Reply with exactly APPROVE or REJECT: <reason> as your final line." 2>>"$STATE/g
     esac
   fi
   if [ -z "$APPROVED" ]; then   # no Claude budget (or no verdict) -> agy self-review, smartest model
-    RV_ARGS=(--effort high --timeout 15m --json \
+    RV_ARGS=(--timeout 15m --json \
       --schema '{"type":"object","properties":{"approve":{"type":"boolean"},"reason":{"type":"string"}},"required":["approve"]}')
-    [ -n "${AGY_REVIEW_MODEL:-}" ] && RV_ARGS+=(--model "$AGY_REVIEW_MODEL")
+    # explicit review slugs embed their own effort/thinking level — agy rejects
+    # --effort for those (live-verified); only agy's default model takes it
+    if [ -n "${AGY_REVIEW_MODEL:-}" ]; then RV_ARGS+=(--model "$AGY_REVIEW_MODEL"); else RV_ARGS+=(--effort high); fi
     V=$(agy-run "${RV_ARGS[@]}" -- "$PROMPT") || park "review run failed (agy-run exit $?)"
     if [ "$(printf '%s' "$V" | jq -r '.structured_output.approve')" = true ]; then APPROVED=yes
     else park "review rejected: $(printf '%s' "$V" | jq -r '.structured_output.reason // "no reason"')"; fi
