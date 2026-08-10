@@ -11,7 +11,7 @@ need2(){ [ -n "${VAL:-}" ] && [ "${VAL#-}" = "$VAL" ] || { echo "agy-run: $FLAG 
 MODEL="" EFFORT="" TIMEOUT="5m" SCHEMA="" CONV="" RAWJSON=0
 while [ $# -gt 0 ]; do case "$1" in
   --model) FLAG=$1 VAL=${2:-}; need2; MODEL=$VAL; shift 2;;
-  --fast)  MODEL=${AGY_FAST_MODEL:-}; shift;;
+  --fast)  MODEL=${AGY_FAST_MODEL:-}; [ -n "$MODEL" ] || echo "agy-run: AGY_FAST_MODEL unset — using agy default model" >&2; shift;;
   --effort) FLAG=$1 VAL=${2:-}; need2; EFFORT=$VAL; shift 2;;
   --timeout) FLAG=$1 VAL=${2:-}; need2; TIMEOUT=$VAL; shift 2;;
   --schema) FLAG=$1 VAL=${2:-}; need2; SCHEMA=$VAL; shift 2;;
@@ -36,6 +36,9 @@ run(){
     echo "agy-run: agy auth error — run \`ag\` once and re-login" >&2; cat "$err" >&2; rm -f "$err"; return 3
   fi
   if [ $rc -ne 0 ]; then
+    if grep -qiE 'unknown model|invalid model|model.*not (found|available)' "$err"; then
+      echo "agy-run: model slug rejected by agy — update the model table in ~/.config/mows-agy/config (agy models)" >&2
+    fi
     echo "agy-run: agy exited $rc" >&2; cat "$err" >&2; rm -f "$err"; return 1
   fi
   if [ -n "$out" ] && ! printf '%s' "$out" | jq -e . >/dev/null 2>&1; then

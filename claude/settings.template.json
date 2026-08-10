@@ -2,7 +2,7 @@
   "statusLine": {"type": "command", "command": "npx -y ccusage@latest statusline", "padding": 0},
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && claude-quota --line || true"}]}
+      {"hooks": [{"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && timeout 3 claude-quota --line || true"}]}
     ]
   },
   "remoteControlAtStartup": true,

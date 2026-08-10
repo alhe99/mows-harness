@@ -33,7 +33,12 @@ CID=$(grep -o '"conversation_id"[": ]*[a-zA-Z0-9-]*' "$STATE/run.ndjson" 2>/dev/
 
 # Gate 0: did agy commit anything at all? (catches the silent-quota empty run)
 COMMITS=$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || echo 0)
-[ "$COMMITS" -gt 0 ] || park "no commits on $BRANCH — agy produced nothing (quota exhausted? see run.err)"
+if [ "$COMMITS" -eq 0 ]; then
+  if grep -qiE 'auth|sign.?in|log.?in|unauthorized|credential' "$STATE/run.err" 2>/dev/null; then
+    park "agy auth error — run \`ag\` once and re-login (see run.err)"
+  fi
+  park "no commits on $BRANCH — agy produced nothing (quota exhausted? see run.err)"
+fi
 
 # Gate 1: re-run every verify command from HANDOFF.md
 mapfile -t VERIFY < <(awk '/^```verify/{f=1;next} /^```/{f=0} f&&NF' "$STATE/HANDOFF.md")

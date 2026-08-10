@@ -91,6 +91,7 @@ list(){
 resume(){
   local id=$1 state cid
   state="$ROOT/$id"; [ -f "$state/meta.json" ] || { echo "agy-handoff: no such handoff $id" >&2; exit 1; }
+  tmux has-session -t "=agyh-$id" 2>/dev/null && { echo "agy-handoff: agyh-$id is still running — attach with: tmux attach -t agyh-$id (resume only dead handoffs)" >&2; exit 1; }
   cid=$(grep -o '"conversation_id"[": ]*[a-zA-Z0-9-]*' "$state/run.ndjson" 2>/dev/null | head -1 | grep -oE '[a-zA-Z0-9-]+$' || true)
   local agybin=${AGY_BIN:-agy}
   cat > "$state/run.sh" <<RUN
