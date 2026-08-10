@@ -90,7 +90,9 @@ claude-quota ──▶ Claude decides ──▶ agy-run   (sync, small/medium)
 
 - `agy-handoff start [--repo <path>] [--size small|big] [--no-merge]
   <task-file|-- prompt>`:
-  1. Creates worktree `<repo>/.worktrees/agy-<id>` on new branch `agy/<id>`.
+  1. Creates worktree `~/.local/state/agy-handoffs/<id>/wt` on new branch
+     `agy/<id>` (state, log, and worktree live together; target repos stay
+     unpolluted).
   2. Writes `HANDOFF.md` into the worktree: task, acceptance criteria,
      **runnable verification commands**, constraints, size class, merge
      policy. This file is the contract every later gate checks against.
