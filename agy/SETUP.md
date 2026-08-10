@@ -120,6 +120,13 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
   usable key on the box makes agy's worktree commits fail → handoffs park as
   "no commits" (gpg errors visible in `run.err`). Either fix signing on the
   box or set `git config commit.gpgsign false` per target repo.
+  **Resolved on the reference box 2026-08-10** by switching global signing to
+  SSH format (`gpg.format ssh` + `user.signingkey ~/.ssh/id_ed25519.pub` +
+  `gpg.ssh.allowedSignersFile`) — the GPG secret key never migrated from the
+  old machine, but the box's own ed25519 key signs everything, verified via
+  `git log --show-signature`. For "Verified" badges on GitHub, additionally
+  register that public key as a *signing* key (Settings → SSH and GPG keys —
+  a separate entry from its authentication-key registration).
 
 ## Testing
 
