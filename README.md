@@ -273,6 +273,10 @@ flowchart TB
         AGENT["agent model:<br/>add-agent.sh (one Linux user per agent)"]
     end
 
+    subgraph Layer5["Layer 5: agy (delegation)"]
+        AGY["ag / agy-run / agy-handoff / agy-gate<br/>claude-quota (the 70% signal)"]
+    end
+
     subgraph RCUNITS["systemd: claude-remote@profile / claude-remote-control@profile"]
         RC["claude remote-control processes"]
     end
@@ -300,6 +304,8 @@ flowchart TB
     PROFILE --> RC
     AGENT --> RC
     TERM --> PROFILE
+    TERM --> AGY
+    AGY -.->|quota signal per profile| PROFILE
     DASH -.->|reads transcripts, drives tmux| RC
     WD -->|supervises, recovers| RC
 ```
@@ -318,6 +324,10 @@ flowchart TB
 - **`fleet/`** — several Claude identities on one box: named *profiles* under one account
   (`cc`, `claude-rc`, `claude-status`, `reset-claude-env`), or separate Linux-user *agent*
   accounts (`add-agent.sh`).
+- **`agy/`** — Antigravity (agy) delegation: the `ag` tmux launcher, `agy-run` sync wrapper,
+  `agy-handoff`/`agy-gate` worktree handoffs with a verify→review→auto-merge policy, and
+  `claude-quota`, the per-account usage signal behind the 70% delegation rule. See
+  [`agy/SETUP.md`](agy/SETUP.md).
 
 Deeper detail — port map, the profile-vs-agent model, watchdog rationale, known operational
 caveats — is in [`docs/architecture.md`](docs/architecture.md). Attributions:
