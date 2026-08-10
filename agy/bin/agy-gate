@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# agy-gate — the merge-policy engine for one handoff. Runs as the tail of the
+# handoff session's command chain (or manually). agy's own claims count for
+# nothing: verification commands are re-run HERE.
+# Exit: 0 merged/ready · 10 parked · 64 usage.
+set -uo pipefail
+CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
+ROOT="$HOME/.local/state/agy-handoffs"
+
+ID=${1:-}; [ -n "$ID" ] || { echo "usage: agy-gate <id>" >&2; exit 64; }
+STATE="$ROOT/$ID"; META="$STATE/meta.json"
+[ -f "$META" ] || { echo "agy-gate: no handoff $ID" >&2; exit 64; }
+
+REPO=$(jq -r .repo "$META"); BASE=$(jq -r .base "$META")
+BRANCH=$(jq -r .branch "$META"); SIZE=$(jq -r .size "$META")
+AUTOMERGE=$(jq -r .auto_merge "$META"); WT="$STATE/wt"
+
+meta_set(){ jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$META" > "$META.tmp" && mv "$META.tmp" "$META"; }
+
+notify(){
+  local msg="agy handoff $ID: $*"
+  echo "$(date -Is) $msg" >> "$ROOT/events.log"
+  [ -n "${AGY_NOTIFY_CMD:-}" ] && "$AGY_NOTIFY_CMD" "$msg" 2>/dev/null || true
+}
+
+park(){ meta_set status parked; meta_set reason "$1"; notify "PARKED — $1"; exit 10; }
+
+meta_set status gated
+
+# record conversation_id for resume, best-effort
+CID=$(grep -o '"conversation_id"[": ]*[a-zA-Z0-9-]*' "$STATE/run.ndjson" 2>/dev/null | head -1 | grep -oE '[a-zA-Z0-9-]+$' || true)
+[ -n "$CID" ] && meta_set conversation_id "$CID"
+
+# Gate 0: did agy commit anything at all? (catches the silent-quota empty run)
+COMMITS=$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || echo 0)
+[ "$COMMITS" -gt 0 ] || park "no commits on $BRANCH — agy produced nothing (quota exhausted? see run.err)"
+
+# Gate 1: re-run every verify command from HANDOFF.md
+mapfile -t VERIFY < <(awk '/^```verify/{f=1;next} /^```/{f=0} f&&NF' "$STATE/HANDOFF.md")
+[ ${#VERIFY[@]} -ge 1 ] || park "HANDOFF.md verify block is empty"
+for c in "${VERIFY[@]}"; do
+  if ! (cd "$WT" && timeout 900 bash -c "$c") >> "$STATE/gate.log" 2>&1; then
+    park "verification failed: $c (see gate.log)"
+  fi
+done
+
+# Gate 2: model review for big handoffs
+if [ "$SIZE" = big ]; then
+  DIFF=$(git -C "$WT" diff "$BASE...HEAD" | head -c 200000)
+  PROMPT="Review this diff against the handoff contract. Contract:
+$(cat "$STATE/HANDOFF.md")
+
+Diff:
+$DIFF
+
+Judge ONLY: does the diff satisfy the contract without bugs, security issues, or scope creep?"
+  REVIEWER=$(claude-quota --reviewer || true)
+  APPROVED=""
+  if [ -n "$REVIEWER" ] && command -v claude >/dev/null 2>&1; then
+    DIRSUFFIX=""; [ "$REVIEWER" = work ] && DIRSUFFIX="-work"
+    VERDICT=$(CLAUDE_CONFIG_DIR="$HOME/.claude$DIRSUFFIX" claude -p "$PROMPT
+Reply with exactly APPROVE or REJECT: <reason> as your final line." 2>>"$STATE/gate.log" | tail -5)
+    case "$VERDICT" in *APPROVE*) APPROVED=yes;; *REJECT*) APPROVED=no;; esac
+  fi
+  if [ -z "$APPROVED" ]; then   # no Claude budget (or no verdict) -> agy self-review, smartest model
+    V=$(agy-run --model "${AGY_REVIEW_MODEL:-}" --effort high --timeout 15m --json \
+        --schema '{"type":"object","properties":{"approve":{"type":"boolean"},"reason":{"type":"string"}},"required":["approve"]}' \
+        -- "$PROMPT") || park "review run failed (agy-run exit $?)"
+    if [ "$(printf '%s' "$V" | jq -r '.structured_output.approve')" = true ]; then APPROVED=yes
+    else park "review rejected: $(printf '%s' "$V" | jq -r '.structured_output.reason // "no reason"')"; fi
+  fi
+  [ "$APPROVED" = yes ] || park "review rejected (see gate.log)"
+fi
+
+# Gate 3: merge — never agy's job; ours, with a busy-repo guard
+[ "$AUTOMERGE" = true ] || { meta_set status ready; notify "green + reviewed — auto-merge disabled, branch $BRANCH ready"; exit 0; }
+CUR=$(git -C "$REPO" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)
+CLEAN=$(git -C "$REPO" status --porcelain)
+if [ "$CUR" != "$BASE" ] || [ -n "$CLEAN" ]; then
+  meta_set status ready
+  notify "green but repo busy (on $CUR, dirty=$([ -n "$CLEAN" ] && echo yes || echo no)) — branch $BRANCH ready to merge manually"
+  exit 0
+fi
+if git -C "$REPO" merge --no-ff -m "merge agy handoff $ID" "$BRANCH" >> "$STATE/gate.log" 2>&1; then
+  git -C "$REPO" worktree remove "$WT" --force >> "$STATE/gate.log" 2>&1 || true
+  git -C "$REPO" branch -d "$BRANCH" >> "$STATE/gate.log" 2>&1 || true
+  meta_set status merged; notify "MERGED into $BASE"
+  exit 0
+else
+  git -C "$REPO" merge --abort 2>/dev/null || true
+  park "merge conflict with $BASE — resolve from $WT"
+fi
