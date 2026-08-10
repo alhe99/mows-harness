@@ -7,6 +7,8 @@
 ATTRIBUTIONS.md
 LICENSE
 README.md
+agy/bin/claude-quota
+agy/config.example
 claude/.claude-plugin/plugin.json
 claude/agents/pr-summary-generator.md
 claude/commands/agent.md

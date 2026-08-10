@@ -1,0 +1,10 @@
+# mows-agy config — sourced by agy-run / agy-handoff / agy-gate.
+# Installed to ~/.config/mows-agy/config (only if absent; your edits are kept).
+# Populate model slugs from:  agy models
+AGY_BIN=agy
+AGY_FAST_MODEL=            # flash-tier slug for cheap sync tasks (empty = agy default)
+AGY_REVIEW_MODEL=          # smartest slug for big-handoff reviews (empty = agy default)
+AGY_HANDOFF_TIMEOUT=120m   # --print-timeout for detached handoff runs
+# Notification hook: a command that receives the message as its first argument
+# (wire your Discord/openclaw sender here). Empty = log-only.
+AGY_NOTIFY_CMD=
