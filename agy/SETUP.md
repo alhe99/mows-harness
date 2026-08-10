@@ -80,3 +80,27 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
    Acceptable today because handoff contracts are self-authored (see item 1,
    above); revisit if handoff inputs ever include third-party content (an
    external PR diff, a scraped issue, etc.).
+
+## Live deployment record (2026-08-10, reference box)
+
+- agy CLI **1.1.11** (official installer, aarch64) — installs to `~/.local/bin/agy`.
+- **Keyring/token persistence: issue NOT present** on this version/box — auth
+  survives fresh shells with no freedesktop-secrets daemon; no gnome-keyring
+  workaround needed.
+- Model table set from `agy models`:
+  `AGY_FAST_MODEL=gemini-3.6-flash-medium`,
+  `AGY_REVIEW_MODEL=gemini-3.1-pro-high`.
+  **Caveat found live:** claude-family slugs via agy (e.g.
+  `claude-opus-4-6-thinking`) work for plain prompts but silently exit 1 when
+  combined with `--json-schema` — the review tier must be a slug that supports
+  structured output (the Gemini Pro tier does; verified).
+- Notifications: log-only (`events.log` + `agy-handoff list`) — this box's
+  openclaw profile has no chat channels configured; wire `AGY_NOTIFY_CMD`
+  later if wanted.
+- Live smoke: small handoff → auto-merged; big handoff → real Claude review →
+  merged; provoked merge conflict → parked with intact worktree and clean
+  target repo; real `conversation_id` captured from stream-json.
+- **Box caveat:** a repo whose git config demands commit signing without a
+  usable key on the box makes agy's worktree commits fail → handoffs park as
+  "no commits" (gpg errors visible in `run.err`). Either fix signing on the
+  box or set `git config commit.gpgsign false` per target repo.
