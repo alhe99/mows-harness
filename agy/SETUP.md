@@ -26,6 +26,19 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
 5. `agy models` → copy your preferred slugs into
    `~/.config/mows-agy/config` (`AGY_FAST_MODEL`, `AGY_REVIEW_MODEL`).
    Record the agy version here when you deploy: `agy --version`.
+
+   **Deployed 2026-08-10:** agy `1.1.11` on aarch64. Auth persisted across
+   fresh shells with NO keyring workaround (issue #57 did not reproduce).
+   Tiers chosen: `AGY_FAST_MODEL=gemini-3.6-flash-medium`,
+   `AGY_REVIEW_MODEL=claude-opus-4-6-thinking` (cross-vendor review of
+   gemini-written handoffs). **Live-verified constraint:** agy rejects
+   `--effort` for slugs with an embedded effort/thinking level — the gate
+   therefore passes `--effort high` only when `AGY_REVIEW_MODEL` is empty
+   (agy's default model). Live smoke: small handoff and `--size big` handoff
+   both auto-merged end-to-end; a provoked merge conflict parked correctly;
+   `conversation_id` capture verified against real stream-json. Not yet
+   live-tested: resume-of-a-resume conversation-id stability; the real agy
+   auth-error stderr phrasing (classifier patterns are broad).
 6. Optional notifications: set `AGY_NOTIFY_CMD` in the config to any command
    taking the message as `$1` (e.g. a Discord/openclaw send wrapper).
    Fallback is always `~/.local/state/agy-handoffs/events.log` +

@@ -129,7 +129,7 @@ Claude picks a **tier**; slugs live in one config table populated from
 |---|---|---|
 | `default` | Implementation handoffs | No `--model` flag — agy's own default; immune to slug renames |
 | `fast` | Cheap sync tasks (summaries, extraction, read-heavy) via `agy-run` | Flash-tier slug, low/medium effort — preserves AI Pro quota |
-| `review` | `big`-handoff review escalation | `REVIEW_MODEL`: smartest available slug, `--effort high` |
+| `review` | `big`-handoff review escalation | `REVIEW_MODEL`: smartest available slug (`--effort high` only when no slug is set — agy rejects effort overrides for slugs with embedded effort/thinking) |
 
 agy fails fast on unknown model slugs; `agy-run` surfaces that as a loud
 "update the model table" error — nothing silently downgrades.
