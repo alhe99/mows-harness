@@ -1,6 +1,6 @@
 # Architecture
 
-Technical reference for the four layers this harness ships. Start with
+Technical reference for the five layers this harness ships. Start with
 [`README.md`](../README.md) for the "which layer do I need" overview; this document is the
 detail underneath it — port map, the profile-vs-agent model, why the dashboard runs as root,
 watchdog rationale, and the operational caveats worth knowing before you rely on any of it.
