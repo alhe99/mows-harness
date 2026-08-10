@@ -101,13 +101,19 @@ chk "agy: ag --help"        "ag --help | grep -q 'usage: ag'"
 chk "claude-quota selftest" "claude-quota --selftest"
 chk "agy-run selftest"      "agy-run --selftest"
 
-# full handoff chain against a stub agy that commits work then approves reviews
+# full handoff chain against a stub agy that commits work then approves reviews.
+# The stub writes a PID-suffixed filename (not the fixed "done.txt"): scenario 1's
+# done file gets merged into agyrepo's main, so scenario 3's worktree already starts
+# from a tree that has it — an identical-content overwrite would leave nothing for
+# `git commit` to stage (silent no-op, not an error, since this stub has no `set -e`),
+# which would make Gate 0 see zero new commits and park instead of merge. A unique
+# name per invocation sidesteps that regardless of merge order; --verify globs for it.
 mkdir -p "$HOME/stubagy"
 cat > "$HOME/stubagy/agy" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = "-p" ]; then case "$2" in
   *"executing handoff"*|*"Continue handoff"*)
-    echo ok > done.txt; git add -A; git commit -qm "stub work"
+    echo ok > "done-$$.txt"; git add -A; git commit -qm "stub work"
     echo '{"conversation_id":"c-9","status":"SUCCESS"}';;
   *) echo '{"status":"SUCCESS","response":"r","structured_output":{"approve":true}}';;
 esac; fi
@@ -115,13 +121,21 @@ STUB
 chmod +x "$HOME/stubagy/agy"
 git init -qb main "$HOME/agyrepo" && git -C "$HOME/agyrepo" -c user.email=t@t -c user.name=t commit -qm init --allow-empty
 hid=$(AGY_BIN="$HOME/stubagy/agy" agy-handoff start --repo "$HOME/agyrepo" --foreground \
-      --verify "test -f done.txt" "create done.txt" 2>/dev/null) || true
+      --verify "ls done*.txt" "create done.txt" 2>/dev/null) || true
 chk "handoff merged on green"  "jq -e '.status==\"merged\"' $HOME/.local/state/agy-handoffs/$hid/meta.json"
 chk "merge commit in repo"     "git -C $HOME/agyrepo log --oneline | grep -q 'agy handoff'"
 hid2=$(AGY_BIN="$HOME/stubagy/agy" agy-handoff start --repo "$HOME/agyrepo" --foreground \
        --verify "test -f nope.txt" "park me" 2>/dev/null) || true
 chk "handoff parks on red"     "jq -e '.status==\"parked\"' $HOME/.local/state/agy-handoffs/$hid2/meta.json"
 chk "handoff refuses no-verify" "! agy-handoff start --repo $HOME/agyrepo \"no verify\""
+# size=big drives Gate 2 (model review) — no `claude` binary and no quota history in
+# this container, so agy-gate falls through to its agy-self-review branch, which is
+# still the stub (AGY_BIN inherited): its non-handoff prompt reply always carries
+# structured_output.approve=true, so this exercises the approve->merge path.
+hid3=$(AGY_BIN="$HOME/stubagy/agy" agy-handoff start --repo "$HOME/agyrepo" --size big --foreground \
+      --verify "ls done*.txt" "big: create done.txt" 2>/dev/null) || true
+chk "big handoff review-approved + merged" "jq -e '.status==\"merged\"' $HOME/.local/state/agy-handoffs/$hid3/meta.json"
+# reject path covered by Task 5's isolated gate matrix; stub approves unconditionally
 
 echo "### reaper: agy- reaped, agyh- never"
 tmux new-session -d -s agy-e2e 'sleep 300'; tmux new-session -d -s agyh-e2e 'sleep 300'; sleep 2
