@@ -2,7 +2,16 @@
   "statusLine": {"type": "command", "command": "npx -y ccusage@latest statusline", "padding": 0},
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && timeout 3 claude-quota --line || true"}]}
+      {"hooks": [
+        {"type": "command", "command": "[ -s \"$HOME/.local/state/claude-mem-health.alert\" ] && cat \"$HOME/.local/state/claude-mem-health.alert\" || true"},
+        {"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && timeout 3 claude-quota --line || true"}
+      ]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/quota-gate.sh\"", "timeout": 10}]}
+    ],
+    "Notification": [
+      {"hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" input"}]}
     ]
   },
   "remoteControlAtStartup": true,

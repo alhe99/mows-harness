@@ -2,8 +2,9 @@
 # install.sh — layered installer for mows-harness.
 #
 # Layers (independent, combine any subset):
-#   --claude      claude/global/CLAUDE.md + claude/{rules,agents,commands,skills} + settings/mcp
-#                 templates into ~/.claude, plus plugin marketplace registration. (CLAUDE.md
+#   --claude      claude/global/CLAUDE.md + claude/{rules,agents,commands,skills,scripts} +
+#                 settings/mcp templates into ~/.claude, plus plugin marketplace registration,
+#                 plus a seeded ~/.claude/secrets/discord-webhook.env (placeholder). (CLAUDE.md
 #                 lives one level under global/, not at the plugin root, so `claude plugin
 #                 validate claude --strict` doesn't warn that it's dead weight there — see
 #                 layer_claude() below; the destination is still plain ~/.claude/CLAUDE.md.)
@@ -31,8 +32,8 @@ usage(){
   cat <<'EOF'
 usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [--non-interactive]
 
-  --claude          ~/.claude config (CLAUDE.md, rules, agents, commands, skills, settings,
-                     mcp template) + plugin marketplace registration
+  --claude          ~/.claude config (CLAUDE.md, rules, agents, commands, skills, scripts,
+                     settings, mcp template) + plugin marketplace registration
   --watchdogs       6 cron watchdog scripts -> ~/.local/bin (+ ~/bin for the limit shield)
   --infra           stage VPS/systemd/caddy/oauth2-proxy/qa-watch/dashboard templates into
                      ./rendered/ for review; never installs/enables/starts anything itself
@@ -191,11 +192,22 @@ layer_claude(){
   rm -f "$HOME/.claude/CLAUDE.md"
   cp "claude/global/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
   local f
-  for f in rules agents skills; do
+  for f in rules agents skills scripts; do
     backup "$HOME/.claude/$f"
     rm -rf "$HOME/.claude/$f"
     cp -r "claude/$f" "$HOME/.claude/"
   done
+  # scripts/ are the hook targets settings.template.json wires up (quota-gate on
+  # UserPromptSubmit, discord-notify on Notification) plus the discord send/bridge pair.
+  # The Discord ones stay inert until a real webhook URL replaces the placeholder below;
+  # seed only if absent, never clobber (same rule as agy's config).
+  if [ ! -f "$HOME/.claude/secrets/discord-webhook.env" ]; then
+    mkdir -p "$HOME/.claude/secrets"
+    chmod 700 "$HOME/.claude/secrets"
+    printf 'DISCORD_WEBHOOK_URL=PASTE_WEBHOOK_URL_HERE\n' > "$HOME/.claude/secrets/discord-webhook.env"
+    chmod 600 "$HOME/.claude/secrets/discord-webhook.env"
+    echo "seeded ~/.claude/secrets/discord-webhook.env — paste a Discord webhook URL there to enable notifications (see claude/skills/discord/SKILL.md)"
+  fi
   # commands/ DOES carry placeholders in 2 of its 9 files (open.md, work.md: {{PROJECTS_ROOT}}).
   # Route every file through render() uniformly rather than special-casing those two — render()
   # degrades to a plain copy when a file has no {{ VAR }} to substitute, so this is safe for all
@@ -364,6 +376,12 @@ layer_infra(){
   echo "  sudo install -m644 infra/dashboard/lite.mjs /opt/claude-dashboard/lite.mjs"
   echo "  sudo install -m644 infra/dashboard/claude-dash-lite.service.template /etc/systemd/system/claude-dash-lite.service && sudo systemctl daemon-reload"
   echo "  (runs as root by design — see the template's own header comment; restart after provisioning any new profile/agent)"
+
+  echo "-- Android web console (infra/droid/ — OPTIONAL; full walkthrough: infra/droid/SETUP.md) --"
+  render infra/droid/ws-scrcpy.service.template rendered/ws-scrcpy.service
+  echo "  everything else (binder modules, redroid container, ws-scrcpy clone+patch+build,"
+  echo "  the Caddyfile's droid.\$DOMAIN vhost) is manual by design — see infra/droid/SETUP.md;"
+  echo "  skip the whole layer and nothing else in this harness cares"
 
   echo "-- QA watch-stack (infra/qa-watch/ — full walkthrough: infra/qa-watch/SETUP.md) --"
   echo "  sudo apt install -y xvfb fluxbox x11vnc websockify novnc xdotool"

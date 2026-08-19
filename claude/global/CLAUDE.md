@@ -78,7 +78,7 @@ Claude will implement each checkbox in order.
 
 # Browser QA Journeys (VPS)
 
-On-demand, agent-driven end-to-end web QA. Works in any project.
+On-demand, agent-driven end-to-end web QA. Works in any project, in every account.
 
 - Run:   `/qa run <name>`   reads ./docs/qa/journeys/<name>.md in the current project
 - Init:  `/qa init`         scaffolds docs/qa/ + cookbook skeleton in a new project
@@ -101,8 +101,8 @@ without being asked:
   the `⏸ HUMAN` pause. Skip QA only when no URL can run (then say so explicitly).
 
 Journeys are markdown (NL steps) driven via the chrome-devtools / playwright MCP servers
-(registered at user scope, and in `mcp-interactive.json` for remote-control sessions) —
-present in every project, across phone/remote-control and interactive sessions alike.
+(registered at user scope AND in each account's `mcp-interactive.json`) — present in
+every project, in phone/remote-control sessions and `cc` interactive sessions alike.
 Reports land in <project>/docs/qa/. If browser tools are missing from a session, see
 Troubleshooting in ~/.claude/skills/qa/SKILL.md (npx exec-bit self-heal, *-watch reconnect).
 
