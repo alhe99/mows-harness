@@ -11,7 +11,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 |---|---|---|---|
 | 1. claude | `--claude` | `claude/{CLAUDE.md → global/,rules,agents,commands,skills}`, `claude/settings.template.json`, `claude/mcp.template.json` | The agentic config itself, copied into `~/.claude`; also loadable as a standalone plugin (`.claude-plugin/marketplace.json`, `claude/.claude-plugin/plugin.json`) |
 | 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Six cron scripts supervising the remote-control fleet |
-| 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
+| 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts) |
 | 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
 
@@ -26,6 +26,8 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |
 | 6080 | 127.0.0.1, **on-demand** | websockify → noVNC | Only up while `claude-qa-watch` is running; reached publicly only through Caddy's `/vnc/*` route, behind the same Google OAuth gate as everything else |
 | 9222 | 127.0.0.1, **on-demand** | Chrome remote debugging (CDP) | Only up while `claude-qa-watch` is running; never exposed outside loopback — agent MCP tools (`chrome-devtools-watch`, `playwright-watch`) attach here directly, a human never touches this port |
+| 8000 | 127.0.0.1, optional | ws-scrcpy (`infra/droid/`) | Android web console; reached publicly only through Caddy's `/droidview/*` route and the optional `droid.<domain>` vhost, behind the same Google OAuth gate — absent entirely unless the droid stack is installed |
+| 6555 | 127.0.0.1, optional | redroid's adb (Docker port map) | The Android container's adb endpoint, mapped outside adb's 5555+ emulator scan range so the device appears exactly once; loopback-only, adb/maestro/ws-scrcpy talk to it locally |
 
 ## Profile model vs. agent model
 

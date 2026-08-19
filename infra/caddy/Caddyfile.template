@@ -20,6 +20,9 @@
 #   127.0.0.1:6080   websockify/noVNC — only if the qa-watch stack (infra/qa-watch/, not
 #                    shipped by this task) is installed; harmless if vncproxy's route
 #                    never gets hit otherwise
+#   127.0.0.1:8000   ws-scrcpy, the Android web console — only if the droid stack
+#                    (infra/droid/) is installed; harmless if droidproxy's route never
+#                    gets hit otherwise
 #
 # Validate a rendered copy before reloading:
 #   caddy validate --config <rendered-file> --adapter caddyfile
@@ -59,6 +62,16 @@
     }
 }
 
+# --- ws-scrcpy proxy for the Android emulator (infra/droid/, optional), gated by gauth:
+# same-origin /droidview/* lets the dashboard's /droid page iframe the stream without a
+# cross-site auth dance (the gauth cookie and frame-ancestors 'self' both hold) ---
+(droidproxy) {
+    handle /droidview/* {
+        uri strip_prefix /droidview
+        reverse_proxy 127.0.0.1:8000
+    }
+}
+
 # --- PWA statics skip the auth gate: OS installers fetch manifest/icons/sw without
 # cookies; they contain nothing private (an app name + a drawn icon) ---
 (pwa) {
@@ -81,6 +94,7 @@
         import pwa
         import gauth
         import vncproxy
+        import droidproxy
         # web terminal (ttyd) — start/continue Claude Code sessions.
         # /term HTML is served by Caddy's own file_server (the same file ttyd -I uses):
         # ttyd itself sends no-store + no ETag, so relying on ttyd's headers alone means
@@ -114,7 +128,22 @@
         import pwa
         import gauth
         import vncproxy
+        import droidproxy
         reverse_proxy 127.0.0.1:3005
+    }
+}
+
+# --- Android web console (infra/droid/, OPTIONAL — delete this block if you don't
+# install that stack): the raw ws-scrcpy page on its own hostname, same Google gate.
+# The dashboard's /droid view works without this block (it rides the /droidview/*
+# route above); this vhost is the "⧉ console" full-page escape hatch — extra decoders,
+# web adb shell, file browser. Needs its own DNS A record, like every block here. ---
+droid.{{DOMAIN}} {
+    log
+    encode zstd gzip
+    route {
+        import gauth
+        reverse_proxy 127.0.0.1:8000
     }
 }
 

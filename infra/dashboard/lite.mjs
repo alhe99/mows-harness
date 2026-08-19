@@ -347,6 +347,102 @@ ${script}`;
   send(req, res, 200, page('watch · qa browser', body, up ? '' : '<meta http-equiv="refresh" content="4">', up ? 'watchlive' : '', 'watch'));
 }
 
+// ---------- /droid/touchtest: on-device touch diagnostic (iOS debugging) ----------
+const TOUCHTEST = `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark"><title>touch test</title><style>
+body{margin:0;background:#0a0a0a;color:#e4e4e7;font:13px/1.45 ui-monospace,Menlo,monospace;padding:10px}
+h1{font-size:15px;margin:0 0 8px}b{color:#34d399}
+.pad{width:100%;height:150px;border:2px solid #3f3f46;border-radius:8px;background:#18181b;display:block;margin:6px 0}
+#a{touch-action:none}
+pre{white-space:pre-wrap;word-break:break-all;background:#18181b;border:1px solid #27272a;border-radius:8px;padding:8px;font-size:12px;margin:6px 0}
+</style></head><body>
+<h1>touch diagnostic</h1>
+<pre id="env"></pre>
+<div><b>A</b> — touch-action:none (the fix)</div><canvas id="a" class="pad"></canvas>
+<div><b>B</b> — no touch-action (old behaviour)</div><canvas id="b" class="pad"></canvas>
+<pre id="log">tap and drag inside A, then B</pre>
+<script>
+var E=document.getElementById('env'),L=document.getElementById('log'),lines=[];
+var vv=window.visualViewport||{};
+E.textContent='viewport '+innerWidth+'x'+innerHeight+' dpr '+devicePixelRatio
+ +'\\nvisual '+Math.round(vv.width||0)+'x'+Math.round(vv.height||0)+' scale '+(vv.scale||'?')
+ +'\\nTouchEvent '+(typeof window.TouchEvent)+' maxTouchPoints '+navigator.maxTouchPoints
+ +'\\n'+navigator.userAgent;
+function hook(c,name){
+  ['touchstart','touchmove','touchend','touchcancel'].forEach(function(t){
+    c.addEventListener(t,function(e){
+      var x=e.changedTouches[0]||{},r=c.getBoundingClientRect();
+      if(e.cancelable)e.preventDefault();
+      lines.unshift(name+' '+t+' force='+x.force+' at '+Math.round(x.clientX-r.left)+','
+        +Math.round(x.clientY-r.top)+' cancelable='+e.cancelable+' prevented='+e.defaultPrevented
+        +' targetOk='+(x.target===c));
+      lines=lines.slice(0,10);L.textContent=lines.join('\\n');
+    },{passive:false});
+  });
+}
+hook(document.getElementById('a'),'A');hook(document.getElementById('b'),'B');
+</script></body></html>`;
+// ---------- /droid: Android emulator (redroid container + ws-scrcpy console) ----------
+// Optional stack — see infra/droid/SETUP.md. With it absent this page still renders,
+// reporting the emulator stopped (docker inspect on a missing container just fails).
+const DROID_UDID = '127.0.0.1:6555';
+async function droidState() {
+  const run = (await sh('docker', ['inspect', '-f', '{{.State.Running}}', 'redroid'])).trim() === 'true';
+  if (!run) return 'stopped';
+  const boot = (await sh('adb', ['-s', DROID_UDID, 'shell', 'getprop', 'sys.boot_completed'])).trim();
+  return boot === '1' ? 'live' : 'booting';
+}
+async function droidAction(req, res, p) {
+  const host = (req.headers.host || '').split(':')[0];
+  const origin = req.headers.origin || req.headers.referer || '';
+  if (origin && !origin.includes('://' + host)) { res.writeHead(403); return res.end('bad origin'); }
+  await readBody(req); // drain
+  const run = (cmd, args, t) => new Promise(r => execFile(cmd, args, { timeout: t }, () => r()));
+  if (p === '/droid/start') {
+    await run('docker', ['start', 'redroid'], 20000);
+    await run('adb', ['connect', DROID_UDID], 5000); // put the device on the adb server so ws-scrcpy's tracker sees it
+  } else {
+    await run('adb', ['disconnect', DROID_UDID], 5000);
+    await run('docker', ['stop', 'redroid'], 30000);
+  }
+  res.writeHead(303, { location: '/droid' }); res.end();
+}
+async function droidView(req, res) {
+  const st = await droidState();
+  const live = st === 'live';
+  const btn = st === 'stopped'
+    ? `<form class="af" method="post" action="/droid/start"><button class="ab ok">▶ start emulator</button></form>`
+    : `<form class="af" method="post" action="/droid/stop"><button class="ab danger">■ stop</button></form>`;
+  let view = '';
+  if (live) {
+    // stream via the same-origin /droidview/* proxy (Caddy strip_prefix -> ws-scrcpy :8000):
+    // gauth cookie + frame-ancestors 'self' both hold, no cross-site iframe auth. tinyh264 =
+    // wasm decoder, phone + desktop alike. ws endpoint rides the same proxy path (wss).
+    const ws = encodeURIComponent(`wss://${req.headers.host || ''}/droidview/?action=proxy-adb&remote=${encodeURIComponent('tcp:8886')}&udid=${encodeURIComponent(DROID_UDID)}`);
+    const streamUrl = `/droidview/#!action=stream&udid=${encodeURIComponent(DROID_UDID)}&player=tinyh264&fitToScreen=true&ws=${ws}`;
+    // iOS/Safari ignores an IFRAME's <meta viewport>: it lays the inner document out at a
+    // phantom 980px width and auto-expands the frame, so ws-scrcpy fits its canvas to a
+    // viewport that isn't there and taps never line up (verified with Playwright WebKit —
+    // 0 touch events in-frame, works top-level). Phones therefore get the stream full-page.
+    const mobile = /iPhone|iPad|iPod|Android|Mobile|Silk/i.test(req.headers['user-agent'] || '');
+    view = mobile
+      ? `<a class="ab ok" style="display:block;text-align:center;padding:16px;font-size:1.05rem;text-decoration:none" href="${streamUrl}">▶ open screen (full page)</a>
+<div class="note" style="border-color:#3f3f46;color:#a1a1aa">opens the device full-screen so touch maps correctly on iOS — use your browser's <b>back</b> to return here.</div>`
+      : `<iframe class="vnc" title="Android emulator (redroid remote view)" style="background:#000" src="${streamUrl}"></iframe>`;
+  } else if (st === 'booting') {
+    view = `<div class="wblank"><p>android is booting… (~15 s)</p><p class="muted">this page refreshes itself and the screen appears here.</p></div>`;
+  } else {
+    view = `<div class="wblank"><p>the emulator isn't running.</p><p class="muted">press start — a containerized Android 15 (redroid) boots in ~15 s and its screen shows up here. tap, swipe and type right in the frame.</p></div>`;
+  }
+  const dot = live ? '#34d399' : st === 'booting' ? '#f59e0b' : '#71717a';
+  const body = `<h1><a href="/">← sessions</a> <span class="muted">· 📱 Device emulator</span></h1>
+<div class="bar"><span class="chip${live ? ' on' : ''}"><span class="dot" style="background:${dot}"></span>emulator ${st}</span>${btn}<a class="chip" href="/droid">↻ refresh</a><a class="chip" href="/droidview/" target="_blank" rel="noopener">⧉ console</a></div>
+${view}
+<div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · an Android container (<b>redroid</b>, native-arch, no KVM) streams here through ws-scrcpy — interact directly in the frame; the slim toolbar inside it has power/volume/back/home and a keyboard toggle. install an apk from the <a href="/term/?v=3">terminal</a>: <b>adb -s ${DROID_UDID} install app.apk</b> · run a QA flow: <b>maestro --device ${DROID_UDID} test flow.yaml</b> · <b>⧉ console</b> opens the raw ws-scrcpy page (other video decoders, web adb shell, file browser).</div>`;
+  send(req, res, 200, page('Device emulator · android', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
+}
+
 // ---------- transcript parse (LRU 3 files; >25MB -> tail 8MB window) ----------
 const parseCache = new Map(); // path -> {mt, sz, msgs, meta}
 const BIG = 25 * 1048576, WINDOW = 8 * 1048576;
@@ -548,7 +644,8 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
 <a class="tb" href="/term/?v=3"><span class="ti">⌨</span>terminal</a>
-<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a></nav>`;
+<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
+<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>Device emulator</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
@@ -557,7 +654,7 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
-${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">Device emulator</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* attach / >_ open the session in its OWN window on a desktop or tablet BROWSER, so the
    dashboard stays put and pause/kill/the other sessions stay one click away. NOT in the
@@ -764,7 +861,7 @@ async function listView(req, res, url) {
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form>
-<a class="chip navdup" href="/term/?v=3">⌨ terminal</a><a class="chip navdup" href="/watch">🖥 watch</a></div>
+<a class="chip navdup" href="/term/?v=3">⌨ terminal</a><a class="chip navdup" href="/watch">🖥 watch</a><a class="chip navdup" href="/droid">📱 Device emulator</a></div>
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
@@ -858,6 +955,12 @@ const server = http.createServer(async (req, res) => {
       return await action(req, res, url);
     }
     if (p === '/watch') return await watchView(req, res);
+    if (p === '/droid') return await droidView(req, res);
+    if (p === '/droid/touchtest') return send(req, res, 200, TOUCHTEST);
+    if (p === '/droid/start' || p === '/droid/stop') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+      return await droidAction(req, res, p);
+    }
     if (p === '/watch/start' || p === '/watch/stop') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await watchAction(req, res, p);

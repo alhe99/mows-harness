@@ -247,14 +247,20 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    sudoers file goes in via `visudo -cf` validation, mode `0440`.
 6. **`sudo loginctl enable-linger <user>`** — `claude-rc`'s ad-hoc listeners use user-scope
    systemd and will fail fast without it.
-7. **Web terminal page** — run `infra/webconsole/make-term-index.sh` once. Without it, `/term`
+7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
    returns 404: ttyd's ~700KB generated index is deliberately not vendored here, so the
-   script fetches it locally and splices in the clipboard shim.
+   script fetches it locally and splices in the clipboard shim plus the
+   `infra/webconsole/blocks/` mobile UX (key bar, PWA geometry, home key, photo attach,
+   keyboard suggestions + reconnect, copy/paste overlay, restart-pane key). Re-run it
+   after a repo update to pick up new or changed blocks.
 8. **Verify** — `curl -sI https://<domain>` should redirect toward Google sign-in.
 
 Optional, on demand: the browser-QA watch stack (`infra/qa-watch/SETUP.md`) needs
 `xvfb fluxbox x11vnc websockify novnc xdotool` plus Chrome/Chromium. It ships **disabled** on
-purpose — the `qa` skill starts and stops it.
+purpose — the `qa` skill starts and stops it. Also optional: the Android web console
+(`infra/droid/SETUP.md`) — a containerized Android device (redroid + patched ws-scrcpy)
+streamed and touch-controllable from the dashboard's `/droid` page, for mobile QA over
+adb/maestro.
 
 ---
 

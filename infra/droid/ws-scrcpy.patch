@@ -1,0 +1,191 @@
+diff --git a/src/app/controlMessage/TouchControlMessage.ts b/src/app/controlMessage/TouchControlMessage.ts
+index 1e74165..097c8b4 100644
+--- a/src/app/controlMessage/TouchControlMessage.ts
++++ b/src/app/controlMessage/TouchControlMessage.ts
+@@ -53,7 +53,8 @@ export class TouchControlMessage extends ControlMessage {
+         offset = buffer.writeUInt32BE(this.position.point.y, offset);
+         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
+         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
+-        offset = buffer.writeUInt16BE(this.pressure * TouchControlMessage.MAX_PRESSURE_VALUE, offset);
++        const pressure = Math.max(0, Math.min(1, this.pressure || 0));
++        offset = buffer.writeUInt16BE(Math.round(pressure * TouchControlMessage.MAX_PRESSURE_VALUE), offset);
+         buffer.writeUInt32BE(this.buttons, offset);
+         return buffer;
+     }
+diff --git a/src/app/googDevice/client/StreamClientScrcpy.ts b/src/app/googDevice/client/StreamClientScrcpy.ts
+index 9ace784..3656b87 100644
+--- a/src/app/googDevice/client/StreamClientScrcpy.ts
++++ b/src/app/googDevice/client/StreamClientScrcpy.ts
+@@ -106,7 +106,7 @@ export class StreamClientScrcpy
+     ): StreamClientScrcpy {
+         if (query instanceof URLSearchParams) {
+             const params = StreamClientScrcpy.parseParameters(query);
+-            return new StreamClientScrcpy(params, streamReceiver, player, fitToScreen, videoSettings);
++            return new StreamClientScrcpy(params, streamReceiver, player, fitToScreen ?? params.fitToScreen, videoSettings);
+         } else {
+             return new StreamClientScrcpy(query, streamReceiver, player, fitToScreen, videoSettings);
+         }
+@@ -159,6 +159,7 @@ export class StreamClientScrcpy
+             udid: Util.parseString(params, 'udid', true),
+             ws: Util.parseString(params, 'ws', true),
+             captureKeyboard: Util.parseBoolean(params, 'captureKeyboard', false),
++            fitToScreen: Util.parseBoolean(params, 'fitToScreen', false),
+         };
+     }
+ 
+@@ -388,8 +389,13 @@ export class StreamClientScrcpy
+             return;
+         }
+         const body = document.body;
+-        const width = (body.clientWidth - this.controlButtons.clientWidth) & ~15;
+-        const height = body.clientHeight & ~15;
++        const tb = this.controlButtons;
++        // toolbar is a right-hand column on wide screens and a bottom bar on narrow ones
++        // (see app.css @media max-width:700px) — take it off the axis it really occupies
++        const sideBar = tb.clientHeight >= tb.clientWidth;
++        const width = (sideBar ? body.clientWidth - tb.clientWidth : body.clientWidth) & ~15;
++        // breathing room below the device navbar
++        const height = ((sideBar ? body.clientHeight : body.clientHeight - tb.clientHeight) - 24) & ~15;
+         return new Size(width, height);
+     }
+ 
+diff --git a/src/app/interactionHandler/InteractionHandler.ts b/src/app/interactionHandler/InteractionHandler.ts
+index 8a739b2..34d5ec6 100644
+--- a/src/app/interactionHandler/InteractionHandler.ts
++++ b/src/app/interactionHandler/InteractionHandler.ts
+@@ -472,7 +472,10 @@ export abstract class InteractionHandler {
+                     clientX: touch.clientX,
+                     clientY: touch.clientY,
+                     type: e.type,
+-                    buttons: MotionEvent.BUTTON_PRIMARY,
++                    // buttons must clear on finger lift: UP with BUTTON_PRIMARY still set makes
++                    // Android reject the whole gesture (mouse path sends 0 here and works)
++                    buttons:
++                        e.type === 'touchend' || e.type === 'touchcancel' ? 0 : MotionEvent.BUTTON_PRIMARY,
+                     target: e.target,
+                 };
+                 const event = InteractionHandler.buildTouchOnClient(item, screenInfo);
+@@ -481,8 +484,12 @@ export abstract class InteractionHandler {
+                     let pressure = 1;
+                     if (action === MotionEvent.ACTION_UP) {
+                         pressure = 0;
+-                    } else if (typeof touch.force === 'number') {
+-                        pressure = touch.force;
++                    } else if (typeof touch.force === 'number' && touch.force > 0) {
++                        // iOS Safari reports force off-spec: ~36.3 on touchstart and 0 on
++                        // touchmove/touchend, not the documented 0..1. Passing that through made
++                        // pressure*0xffff overflow writeUInt16BE, which THREW and killed the whole
++                        // gesture (DOWN never sent) -> the stream looked live but ignored touch.
++                        pressure = Math.min(touch.force, 1);
+                     }
+                     if (!invalid) {
+                         const message = new TouchControlMessage(action, pointerId, position, pressure, buttons);
+diff --git a/src/app/player/BasePlayer.ts b/src/app/player/BasePlayer.ts
+index ab881ce..edef44a 100644
+--- a/src/app/player/BasePlayer.ts
++++ b/src/app/player/BasePlayer.ts
+@@ -171,12 +171,12 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
+ 
+     private static getStorageKey(storageKeyPrefix: string, udid: string): string {
+         const { innerHeight, innerWidth } = window;
+-        return `${storageKeyPrefix}:${udid}:${innerWidth}x${innerHeight}`;
++        return `${storageKeyPrefix}:v2:${udid}:${innerWidth}x${innerHeight}`;
+     }
+ 
+     private static getFullStorageKey(storageKeyPrefix: string, udid: string, displayInfo?: DisplayInfo): string {
+         const { innerHeight, innerWidth } = window;
+-        let base = `${storageKeyPrefix}:${udid}:${innerWidth}x${innerHeight}`;
++        let base = `${storageKeyPrefix}:v2:${udid}:${innerWidth}x${innerHeight}`;
+         if (displayInfo) {
+             const { displayId, size } = displayInfo;
+             base = `${base}:${displayId}:${size.width}x${size.height}`;
+diff --git a/src/server/services/HttpServer.ts b/src/server/services/HttpServer.ts
+index f941dfc..f4fab4e 100644
+--- a/src/server/services/HttpServer.ts
++++ b/src/server/services/HttpServer.ts
+@@ -127,7 +127,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
+                 server = http.createServer(options, currentApp);
+             }
+             this.servers.push({ server, port });
+-            server.listen(port, () => {
++            // ponytail: hardcoded localhost bind — access via SSH tunnel like noVNC; add config option if ever needed
++            server.listen(port, '127.0.0.1', () => {
+                 Utils.printListeningMsg(proto, port, PATHNAME);
+             });
+         });
+diff --git a/src/style/app.css b/src/style/app.css
+index e13218c..4b0c2f6 100644
+--- a/src/style/app.css
++++ b/src/style/app.css
+@@ -103,8 +103,10 @@ body.stream {
+ 
+ .device-view {
+     z-index: 1;
+-    float: right;
+-    display: inline-block;
++    float: none;
++    display: flow-root;
++    width: fit-content;
++    margin: 0 auto;
+ }
+ 
+ .video-layer {
+@@ -117,6 +119,22 @@ body.stream {
+     z-index: 1;
+ }
+ 
++/* iOS Safari ignores user-scalable=no, so without touch-action it arbitrates taps/drags on
++   the canvas as page zoom/pan and cancels the sequence — the stream renders but nothing
++   responds. touch-action is engine-level, so a passive-forced listener can't undo it. */
++.video-layer,
++.touch-layer,
++.video {
++    touch-action: none;
++    -webkit-user-select: none;
++    user-select: none;
++    -webkit-touch-callout: none;
++}
++
++.control-buttons-list {
++    touch-action: manipulation;
++}
++
+ .video {
+     float: right;
+     max-height: 100%;
+@@ -131,6 +149,35 @@ body.stream {
+     background-color: var(--control-buttons-bg-color);
+ }
+ 
++/* Narrow screens: the side toolbar steals the *limiting* dimension (width), so move it under
++   the device as a bottom bar — the picture then scales to the full viewport width. */
++@media (max-width: 700px) {
++    .device-view {
++        display: flex;
++        flex-direction: column;
++        align-items: center;
++        width: 100%;
++        margin: 0;
++    }
++    .device-view .video {
++        order: 1;
++        float: none;
++    }
++    .device-view .control-buttons-list {
++        order: 2;
++        float: none;
++        width: 100%;
++        display: flex;
++        flex-direction: row;
++        justify-content: space-around;
++        align-items: center;
++    }
++    .device-view .control-button {
++        margin: .3rem .15rem;
++        flex: 0 0 auto;
++    }
++}
++
+ .control-button {
+     margin: .357rem .786rem;
+     padding: 0;

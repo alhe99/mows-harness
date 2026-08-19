@@ -1,0 +1,31 @@
+# ws-scrcpy.service — the Android web console (browser view + touch control of the
+# redroid container), loopback-only on :8000. Reached publicly ONLY through Caddy:
+# the dashboard's /droid page iframes it via the same-origin /droidview/* route, and
+# droid.{{DOMAIN}} serves the raw page — both behind the Google gate (see
+# infra/caddy/Caddyfile.template). The loopback bind itself comes from ws-scrcpy.patch
+# (HttpServer.ts hunk), not from anything here — this unit just runs what that build
+# produced. Full walkthrough: infra/droid/SETUP.md.
+#
+# The two ExecStartPre lines make the unit self-sufficient at boot: ws-scrcpy tracks
+# devices through the adb server, so start it (idempotent), then best-effort connect the
+# redroid device (the "-" prefix: the container is on-demand and usually stopped at boot —
+# a failed connect must not fail the unit; the dashboard's /droid start button re-connects
+# after it starts the container).
+#
+# install:
+#   sudo install -m644 rendered/ws-scrcpy.service /etc/systemd/system/ws-scrcpy.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ws-scrcpy
+[Unit]
+Description=ws-scrcpy Android web console (localhost:8000)
+After=network.target docker.service
+
+[Service]
+User={{ADMIN_USER}}
+ExecStartPre=/usr/bin/adb start-server
+ExecStartPre=-/usr/bin/adb connect 127.0.0.1:6555
+ExecStart=/usr/bin/node /home/{{ADMIN_USER}}/redroid/ws-scrcpy/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

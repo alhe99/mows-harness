@@ -25,6 +25,7 @@ literal `{{ }}` tokens where a real `sed`/`render()` call needs them verbatim �
 9. `/term`'s index page
 10. QA watch-stack (optional, ships disabled)
 11. Verify
+12. Android web console (optional)
 
 ### 1. DNS A records
 
@@ -193,7 +194,11 @@ claude-remote-<name>@default.service` run as an agent) actually reports permissi
 
 Caddy serves `/term` and `/term/` itself, from a static file — `ttyd`'s own `GET /` is
 never what a browser sees (see `infra/webconsole/claude-web-term.service.template`'s "Serving
-model" note). That file does not exist until you generate it, once:
+model" note). The generated page is ttyd's own bundle plus every self-authored addition
+spliced in: the clipboard shim and the `infra/webconsole/blocks/` mobile UX (key bar, PWA
+geometry, home key, photo attach, keyboard suggestions + reconnect, copy/paste overlay,
+restart-pane key — each block documents itself; runtime kill switches: `/term/?ime=off`,
+`?clip=off`, `?rst=off`). That file does not exist until you generate it:
 
 ```bash
 infra/webconsole/make-term-index.sh
@@ -208,9 +213,11 @@ spliced page at a temp path instead of losing it, and prints the exact follow-up
 sudo install -D -m644 <tmp-path-it-printed> /opt/claude-dashboard/term-index.html
 ```
 
-Idempotent either way (it checks for its own marker before doing anything, so re-running
-after the `sudo install` above is a safe no-op). Skip both steps and `/term` 404s for every
-visitor, indefinitely — it is not created by any of the `systemctl enable` steps above.
+Idempotent either way — the script regenerates the page from scratch on every run (same
+inputs, same output), so re-running after the `sudo install` above is safe, and re-running
+after a repo update is exactly how the page picks up new or changed blocks. Skip both
+steps and `/term` 404s for every visitor, indefinitely — it is not created by any of the
+`systemctl enable` steps above.
 
 ### 10. QA watch-stack (optional — ships disabled)
 
@@ -263,6 +270,16 @@ curl -s localhost:9222/json/version   # Chrome's own CDP handshake — a JSON bl
                                        # the whole watch-stack (Xvfb, Chrome, its debugging
                                        # port) came up; loopback-only, run this ON the box
 ```
+
+### 12. Android web console (optional)
+
+A containerized Android device (redroid) streamed and touch-controllable from the
+dashboard's `/droid` page, for mobile QA (adb + maestro + APK installs from `/term`).
+Fully optional — skip it and nothing else here cares. Full walkthrough, including the
+binder kernel modules, the container run command, and the patched ws-scrcpy build:
+[`infra/droid/SETUP.md`](droid/SETUP.md). The Caddy side (the `/droidview/*` route and the
+`droid.<domain>` vhost) is already in `infra/caddy/Caddyfile.template` — delete that vhost
+block if you skip this.
 
 ## What this file does not cover
 
