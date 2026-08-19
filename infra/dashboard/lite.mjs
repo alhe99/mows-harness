@@ -394,9 +394,8 @@ async function droidState() {
   return boot === '1' ? 'live' : 'booting';
 }
 async function droidAction(req, res, p) {
-  const host = (req.headers.host || '').split(':')[0];
-  const origin = req.headers.origin || req.headers.referer || '';
-  if (origin && !origin.includes('://' + host)) { res.writeHead(403); return res.end('bad origin'); }
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
   await readBody(req); // drain
   const run = (cmd, args, t) => new Promise(r => execFile(cmd, args, { timeout: t }, () => r()));
   if (p === '/droid/start') {
