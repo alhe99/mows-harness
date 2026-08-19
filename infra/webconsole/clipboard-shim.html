@@ -2,7 +2,10 @@
      terminal (ttyd), rescued from a live deployment that had it spliced into ttyd's own
      ~700KB bundled index.html. That bundle (ttyd's vendored xterm.js + its own client JS,
      inlined into one file) is a ttyd build/version artifact this repo does NOT vendor —
-     only the small, self-authored shim below ships here.
+     only the self-authored additions ship here: this shim, plus the mobile-UX blocks in
+     the sibling blocks/ directory (key bar, PWA geometry, home key, photo attach, keyboard
+     suggestions + reconnect, copy/paste overlay, restart-pane key — each self-documented
+     in its own top-of-block comment; make-term-index.sh splices all of them).
      Two places reference this exact file path (see infra/webconsole/claude-web-term.
      service.template's own header for the full explanation):
        1. ttyd's own -I/--index flag — moot in normal operation, since Caddy's file_server

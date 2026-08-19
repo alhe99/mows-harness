@@ -1,0 +1,33 @@
+<style id="ccpwa-css">/*ccpwa-v5: standalone-app geometry. the page behind the
+terminal must be black (UA-default white showed as a strip under the key bar), and
+the coarse-pointer container math in cckb-css above assumes 0 safe-area insets —
+true in a browser tab, false in the installed PWA (viewport-fit=cover), where the
+bottom inset pushed the terminal's last rows (claude's input box) out of view.
+v3: insets are MARGINS. (v2 tried border-box padding so the keyboard handler
+needed no change, but ttyd 1.7.4's FitAddon measures parent clientHeight, which
+INCLUDES padding -> it fitted ~4 extra rows that overflowed behind the key bar.
+Margins keep clientHeight honest; the keyboard branch in cckb-js compensates by
+subtracting the container's real top offset — see the ccpwa note there.) */
+/* canvas bg = key-bar chrome: iOS 26 paints its reserved bottom gesture zone
+   (the ~60pt the viewport never gets on this non-scrollable page) with the page
+   canvas color — #161b22 fuses that zone with the key bar into one bar. the
+   terminal region itself keeps its own #000 via .xterm-viewport. */
+html,body{background:#161b22}
+body{overscroll-behavior:none}
+/* v5: full-bleed top — the terminal runs under the status bar/island (the
+   user chose full screen over a reserved chrome strip). bottom keeps the key
+   bar + home-indicator inset: taps there would fight the system gesture. */
+@media(pointer:coarse){
+#cckb{box-sizing:border-box;height:auto;min-height:46px;
+ padding-left:calc(6px + env(safe-area-inset-left,0px));
+ padding-right:calc(6px + env(safe-area-inset-right,0px))}
+#terminal-container{box-sizing:border-box;
+ height:calc(100% - 48px - env(safe-area-inset-bottom,0px));
+ margin:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px)}
+/* iOS 26 reserved bottom zone active (viewport pinned short of the screen):
+   the home indicator sits in the zone, not over the bar — env(sab) padding
+   would double-reserve. JS sets .nozone when it measures the pinned viewport. */
+body.nozone #cckb{padding-bottom:5px}
+body.nozone #terminal-container{height:calc(100% - 48px)}
+}
+</style>

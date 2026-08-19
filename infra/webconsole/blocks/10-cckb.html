@@ -1,0 +1,88 @@
+<style id="cckb-css">
+#cckb{display:none;position:fixed;left:0;right:0;bottom:0;height:46px;z-index:50;
+background:#161b22;border-top:1px solid #30363d;padding:5px 6px calc(5px + env(safe-area-inset-bottom));
+gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+#cckb button{flex:0 0 auto;min-width:44px;height:36px;background:#21262d;color:#e6edf3;
+border:1px solid #30363d;border-radius:6px;font:13px ui-monospace,monospace;padding:0 10px}
+#cckb button:active{background:#238636}
+@media(pointer:coarse){#cckb{display:flex}#terminal-container{height:calc(100% - 46px)}}
+</style>
+<script id="cckb-js">/*cckb-v5*/(function(){
+function ta(){return document.querySelector('.xterm-helper-textarea')}
+function kd(o){var t=ta();if(!t)return;t.focus();
+ t.dispatchEvent(new KeyboardEvent('keydown',{key:o.k,keyCode:o.kc,which:o.kc,
+  ctrlKey:!!o.ctrl,shiftKey:!!o.shift,bubbles:true,cancelable:true}))}
+function typ(ch){kd({k:ch,kc:ch.toUpperCase().charCodeAt(0)})}
+function scr(){return document.querySelector('.xterm-screen')||document.querySelector('.xterm')}
+function wh(dir,n){var s=scr();if(!s)return;for(var i=0;i<(n||1);i++)
+ s.dispatchEvent(new WheelEvent('wheel',{deltaY:dir*57,deltaMode:0,bubbles:true,cancelable:true}))}
+function pst(x){var t=ta();if(!t)return;t.focus();var d=new DataTransfer();d.setData('text/plain',x);
+ t.dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}))}
+var B=[['Esc',{k:'Escape',kc:27}],['NL',null],['IND',null],['Tab',{k:'Tab',kc:9}],['S-Tab',{k:'Tab',kc:9,shift:1}],
+['UP',{k:'ArrowUp',kc:38}],['DN',{k:'ArrowDown',kc:40}],['LT',{k:'ArrowLeft',kc:37}],['RT',{k:'ArrowRight',kc:39}],
+['PgUp',null],['PgDn',null],['^C',{k:'c',kc:67,ctrl:1}],['^Bd',null],['KB',null]];
+var L={Esc:'Esc',NL:'\\\u23ce',IND:'\u2423\u2423',Tab:'Tab','S-Tab':'\u21e7\u21e5',UP:'\u2191',DN:'\u2193',LT:'\u2190',RT:'\u2192',
+PgUp:'\u21de',PgDn:'\u21df','^C':'^C','^Bd':'^Q d',KB:'\u2328'};
+var bar=document.createElement('div');bar.id='cckb';
+B.forEach(function(b){var el=document.createElement('button');el.type='button';
+ el.textContent=L[b[0]]||b[0];
+ el.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();
+  if(b[0]==='NL'){pst('\n');return}
+  if(b[0]==='IND'){pst('  ');return}
+  if(b[0]==='PgUp'){wh(-1,6);return}
+  if(b[0]==='PgDn'){wh(1,6);return}
+  if(b[0]==='^Bd'){var T=window.term;if(!T)return;var f=function(d){T.input?T.input(d):T._core.coreService.triggerDataEvent(d,!0)};f('\x11');setTimeout(function(){f('d')},100);return}/*prefix C-q per ~/.tmux.conf (C-b is unbound there). raw bytes; this xterm build (ttyd 1.7.4 / xterm 4.x) has no term.input, hence the fallback*/
+  if(b[0]==='KB'){var t=ta();t&&t.focus();return}
+  kd(b[1])});
+ bar.appendChild(el)});
+document.body.appendChild(bar);
+/* touch scroll -> wheel notches for Claude Code's mouse reporting. 14px/notch for
+   a direct 1:1 feel + iOS-style flick inertia (tau 300ms, v capped 2.5px/ms,
+   max 3 notches per frame so slow links don't get flooded with repaints). */
+var tY=null,tacc=0,tV=0,tT=0,inr=0;
+function notch(a){var n=0;
+ while(a>=14&&n<3){wh(1,1);a-=14;n++}
+ while(a<=-14&&n<3){wh(-1,1);a+=14;n++}
+ if(a>42)a=42;if(a<-42)a=-42;return a}
+document.addEventListener('touchstart',function(e){var s=scr();
+ cancelAnimationFrame(inr);
+ if(!s||!s.contains(e.target)){tY=null;return}
+ tY=e.touches[0].clientY;tacc=0;tV=0;tT=e.timeStamp},{passive:true});
+document.addEventListener('touchmove',function(e){if(tY===null)return;
+ var y=e.touches[0].clientY,dy=tY-y;tY=y;
+ var dt=e.timeStamp-tT;tT=e.timeStamp;
+ if(dt>0&&dt<120){var v=dy/dt;if(v>2.5)v=2.5;if(v<-2.5)v=-2.5;tV=0.6*tV+0.4*v}
+ tacc=notch(tacc+dy);
+ e.preventDefault()},{passive:false});
+document.addEventListener('touchend',function(){if(tY===null)return;tY=null;
+ if(Math.abs(tV)<0.25)return;
+ var v=tV,carry=tacc,last=performance.now();
+ function step(t){var dt=t-last;last=t;
+  carry=notch(carry+v*dt);v*=Math.exp(-dt/300);
+  if(Math.abs(v)>0.06)inr=requestAnimationFrame(step)}
+ inr=requestAnimationFrame(step)},{passive:true});
+document.addEventListener('touchcancel',function(){tY=null;tV=0},{passive:true});
+/* OS-keyboard aware: iOS keeps the layout viewport full-size under the keyboard,
+   hiding the input line and this bar. Pin both to the visual viewport and refit
+   (ttyd fits the terminal on window resize). Android resizes the layout itself
+   via interactive-widget=resizes-content, so the else-branch just refits. */
+var vv=window.visualViewport,vt=0;
+function vfit(){try{
+ if(!matchMedia('(pointer:coarse)').matches)return;
+ var tc=document.getElementById('terminal-container');if(!tc)return;
+ var open=vv&&(window.innerHeight-vv.height>60||vv.offsetTop>2);
+ if(open){
+  bar.style.paddingBottom='5px';
+  var bh=bar.offsetHeight||46;
+  tc.style.height=(vv.height-bh-tc.getBoundingClientRect().top/*ccpwa: clear the safe-area top offset, or the box overshoots the pinned bar*/)+'px';
+  bar.style.bottom='auto';bar.style.top=(vv.offsetTop+vv.height-bh)+'px';
+  window.scrollTo(0,0);
+ }else{
+  tc.style.height='';bar.style.top='';bar.style.bottom='0';bar.style.paddingBottom='';
+  window.scrollTo(0,0);/*ccpwa: iOS can leave a stale viewport offset after the keyboard hides*/
+ }
+ window.dispatchEvent(new Event('resize'));
+}catch(e){}}
+if(vv){var vt2=0;var dv=function(){clearTimeout(vt);vt=setTimeout(vfit,120);clearTimeout(vt2);vt2=setTimeout(vfit,520)/*ccpwa: settle pass — the last viewport event fires mid keyboard-dismiss animation, so one early pass sees transitional geometry and the layout stayed wrong until a manual scroll*/};
+ vv.addEventListener('resize',dv);vv.addEventListener('scroll',dv)}
+})()</script>

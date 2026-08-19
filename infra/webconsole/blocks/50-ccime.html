@@ -1,0 +1,90 @@
+<script id="ccime-js">/*ccime-v3: mobile keyboard word suggestions that track the typed
+line + reconnect that survives it. Shadow-line mode (touch only, needs window.term): the
+hidden textarea RETAINS the current line so the IME has real prediction context; trusted
+key/input/composition events are stopped at document-capture before xterm sees them, and
+the value diff is replayed to the pty via term.input() (\x7f backspaces + retyped tail).
+Untrusted events (cckb/ccimg synthetic) still flow to xterm untouched.
+v3: Enter is dispatched as a synthetic keydown instead of term.input('\r') -- ttyd's
+"Press Enter to Reconnect" listens on terminal.onKey (keyboard path), which raw data
+injection never reaches, so v2 made a dead session unrecoverable from the phone keyboard.
+Also auto-kicks that reconnect on return-to-foreground / tap while the socket is closed
+(ttyd sets doReconnect=false after a socket error, so backgrounded phones always land in
+the press-Enter branch). Kill switch: /term/?ime=off
+ponytail: diff counts code points, not grapheme clusters -- a ZWJ emoji sequence may need
+extra backspaces; per-cluster segmentation if it ever matters.*/(function(){
+if(!matchMedia('(pointer:coarse)').matches)return;
+if(/[?&]ime=off\b/.test(location.search))return;
+var CCWS=null,_WS=window.WebSocket;
+function WSW(u,q){var w=q===undefined?new _WS(u):new _WS(u,q);
+ if(String(u).indexOf('/ws')>=0)CCWS=w;return w}
+WSW.prototype=_WS.prototype;
+['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(function(k){WSW[k]=_WS[k]});
+window.WebSocket=WSW;window.__ccimeWS=function(){return CCWS};
+function ta(){return document.querySelector('.xterm-helper-textarea')}
+function isTA(e){var t=e.target;return t&&t.classList&&t.classList.contains('xterm-helper-textarea')}
+function send(d){var t=window.term;if(!t)return;
+ t.input?t.input(d):t._core.coreService.triggerDataEvent(d,!0)}
+function pst(x){var t=ta();if(!t)return;t.focus();var d=new DataTransfer();d.setData('text/plain',x);
+ t.dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}))}
+function enterKey(){var t=ta();if(!t)return;
+ t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))}
+function kick(){if(CCWS&&CCWS.readyState>1)enterKey()}/*dead socket: trip ttyd's Enter-to-reconnect*/
+function fix(t){if(!t||t.getAttribute('autocorrect')==='on')return;
+ [['autocomplete','on'],['autocorrect','on'],['spellcheck','true'],['enterkeyhint','send']]
+ .forEach(function(a){t.setAttribute(a[0],a[1])});
+ if(document.activeElement===t){t.blur();t.focus()}/*force the IME to re-read flags*/}
+var prev='',saved='',rs;
+function resync(){clearTimeout(rs);rs=setTimeout(function(){var t=ta();
+ if(t){prev=t.value;saved=t.value}},50)}
+function submit(t){t.value='';prev='';saved='';enterKey()}/*synthetic Enter runs xterm's full
+ keydown path: connected -> one \r; disconnected -> onKey fires and ttyd reconnects*/
+function diff(t){var a=Array.from(prev),b=Array.from(t.value),p=0;
+ while(p<a.length&&p<b.length&&a[p]===b[p])p++;
+ var out=new Array(a.length-p+1).join('\x7f')+b.slice(p).join('');
+ prev=t.value;saved=prev;if(out)send(out)}
+function engage(){window.__ccime=3;
+['keydown','keyup','keypress'].forEach(function(ty){
+ document.addEventListener(ty,function(e){
+  if(!isTA(e))return;
+  if(!e.isTrusted){resync();return}/*cckb keys: xterm handles; it may clear the field (^C etc)*/
+  var k=e.key;
+  if(ty==='keydown'){
+   if(k==='Enter'&&!e.shiftKey){e.preventDefault();e.stopPropagation();submit(e.target);return}
+   if(k==='Backspace'&&e.target.selectionStart===0&&e.target.selectionEnd===0){
+    e.stopPropagation();send('\x7f');return}/*shadow empty at caret 0: delete into older terminal text*/
+   if(e.ctrlKey||e.altKey||e.metaKey||(k.length>1&&k!=='Backspace'&&k!=='Delete'&&
+    k!=='Process'&&k!=='Unidentified')){e.preventDefault();resync();return}/*terminal key: falls through to xterm*/
+  }
+  e.stopPropagation()/*editing key: native textarea edit proceeds, the input diff mirrors it*/
+ },true)});
+document.addEventListener('beforeinput',function(e){
+ if(!isTA(e)||!e.isTrusted)return;
+ if(e.inputType==='insertLineBreak'){e.preventDefault();e.stopPropagation();submit(e.target);return}
+ if(e.inputType==='insertFromPaste'){var d=e.data||(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
+  if(d.indexOf('\n')>=0){e.preventDefault();e.stopPropagation();pst(d);return}}/*multiline paste -> bracketed paste, never raw newlines*/
+},true);
+document.addEventListener('input',function(e){
+ if(!isTA(e))return;
+ if(!e.isTrusted){resync();return}
+ e.stopPropagation();
+ if(e.inputType==='insertLineBreak'){e.target.value=prev;return}
+ diff(e.target)
+},true);
+['compositionstart','compositionupdate','compositionend'].forEach(function(ty){
+ document.addEventListener(ty,function(e){if(isTA(e)&&e.isTrusted)e.stopPropagation()},true)});
+document.addEventListener('paste',function(e){if(isTA(e))resync()},true);/*xterm handles + clears; track it*/
+document.addEventListener('focusin',function(e){
+ if(!isTA(e))return;var t=e.target;fix(t);kick();
+ if(t.value===''&&saved){t.value=saved;t.setSelectionRange(saved.length,saved.length)}/*xterm clears on blur; restore so the IME keeps context*/
+ prev=t.value
+},true);
+['visibilitychange','pageshow','online'].forEach(function(ty){
+ (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
+  if(document.visibilityState!=='visible')return;
+  setTimeout(kick,300);setTimeout(kick,1500)/*close event often lands only after foregrounding*/})})}
+var n=0,iv=setInterval(function(){var t=ta();
+ if(t)fix(t);/*idempotent; keep re-applying until term is up*/
+ if(t&&window.term){engage();clearInterval(iv)}
+ else if(++n>66)clearInterval(iv)},300);/*xterm opens async after the token fetch; textarea
+ can exist a tick before window.term is assigned -- don't stop polling until BOTH are up*/
+})()</script>

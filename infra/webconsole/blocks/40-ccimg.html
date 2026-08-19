@@ -1,0 +1,34 @@
+<script id="ccimg-js">/*ccimg-v1: attach an image to the claude session WITHOUT leaving the
+terminal. three ways in — the 📸 key (iOS photo library / camera picker), pasting a
+copied image, or desktop drag-drop. all POST to /shot (same-origin through caddy -> lite,
+auth cookie rides along); the server answers with the saved path and pst() types it into
+the prompt, mirroring how dropping a file on a native terminal types its path. claude then
+reads the image from that path.*/(function(){
+function ta(){return document.querySelector('.xterm-helper-textarea')}
+function pst(x){var t=ta();if(!t)return;t.focus();var d=new DataTransfer();d.setData('text/plain',x);
+ t.dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}))}
+var kb=document.getElementById('cckb'),btn=null,busy=false;
+function mark(s,revert){if(!btn)return;btn.textContent=s;
+ if(revert)setTimeout(function(){btn.textContent='\ud83d\udcf8'},1800)}
+function up(f){if(!f||busy)return;busy=true;mark('\u231b');
+ fetch('/shot',{method:'POST',body:f,headers:{'content-type':f.type||'image/jpeg'}})
+ .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+ .then(function(j){busy=false;mark('\ud83d\udcf8');pst(j.path+' ')})
+ .catch(function(){busy=false;mark('\u2717',1)})}
+if(kb){var inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+ inp.style.cssText='position:fixed;left:-9999px;width:1px;height:1px';
+ inp.addEventListener('change',function(){up(inp.files[0]);inp.value=''});
+ document.body.appendChild(inp);
+ btn=document.createElement('button');btn.type='button';btn.textContent='\ud83d\udcf8';
+ /* click, not pointerdown like the other keys: the file picker needs a full user
+    activation, and losing textarea focus doesn't matter — the picker takes over anyway */
+ btn.addEventListener('click',function(){inp.click()});
+ kb.insertBefore(btn,kb.children[1]||null)}
+document.addEventListener('paste',function(e){var it=e.clipboardData&&e.clipboardData.items;if(!it)return;
+ for(var i=0;i<it.length;i++)if(it[i].kind==='file'&&it[i].type.indexOf('image/')===0){
+  e.preventDefault();e.stopImmediatePropagation();up(it[i].getAsFile());return}},true);
+document.addEventListener('dragover',function(e){e.preventDefault()});
+document.addEventListener('drop',function(e){e.preventDefault();
+ var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+ if(f&&f.type.indexOf('image/')===0)up(f)});
+})()</script>

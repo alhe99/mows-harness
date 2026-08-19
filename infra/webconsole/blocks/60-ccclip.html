@@ -1,0 +1,61 @@
+<style id="ccclip-css">/*ccclip-v1*/
+#ccclip{display:none;position:fixed;inset:0;z-index:60;background:#0d1117;flex-direction:column}
+#ccclip.on{display:flex}
+#ccclip-bar{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+padding:calc(8px + env(safe-area-inset-top,0px)) 10px 8px;
+background:#161b22;border-bottom:1px solid #30363d}
+#ccclip-bar button{height:40px;padding:0 16px;background:#21262d;color:#e6edf3;
+border:1px solid #30363d;border-radius:6px;font:14px ui-monospace,monospace}
+#ccclip-bar button:active{background:#238636}
+#ccclip-hint{color:#8b949e;font:11px/1.3 ui-monospace,monospace;margin-left:auto;text-align:right}
+#ccclip-txt{flex:1;overflow:auto;margin:0;padding:10px;color:#e6edf3;
+font:12px/1.45 ui-monospace,monospace;white-space:pre;
+-webkit-user-select:text;user-select:text;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+</style>
+<script id="ccclip-js">/*ccclip-v1: mobile copy/paste for the terminal. COPY: xterm paints to a
+canvas, so long-press selection can never work on the terminal itself -- the copy key
+snapshots the current screen text (wrapped rows re-joined so long commands/URLs copy as one
+line) into a plain <pre> overlay where the OS selection handles + Copy menu just work, plus
+a copy-all button. tmux history: scroll up first, then snapshot -- it copies whatever the
+screen shows. PASTE: reads the device clipboard (navigator.clipboard on pointerup -- the
+gesture that grants user activation on touch; pointerdown does not) and replays it through
+a synthetic paste event -> xterm bracketed paste, the same proven path as the NL/photo keys.
+Nothing auto-executes: pasted text lands in the prompt, Enter stays yours.
+Kill switch: /term/?clip=off
+ponytail: copy view = one screen snapshot, no live tail and no server-side tmux
+capture-pane endpoint for full history; add if screen-at-a-time copying ever hurts.*/(function(){
+if(/[?&]clip=off\b/.test(location.search))return;
+var kb=document.getElementById('cckb');if(!kb)return;
+function ta(){return document.querySelector('.xterm-helper-textarea')}
+function pst(x){var t=ta();if(!t)return;t.focus();var d=new DataTransfer();d.setData('text/plain',x);
+ t.dispatchEvent(new ClipboardEvent('paste',{clipboardData:d,bubbles:true,cancelable:true}))}
+function flash(b,s){if(!b.dataset.l)b.dataset.l=b.textContent;b.textContent=s;
+ clearTimeout(b._fl);b._fl=setTimeout(function(){b.textContent=b.dataset.l},1400)}
+function grab(){var t=window.term;if(!t)return'';
+ var b=t.buffer.active,out=[],i,l,s;
+ for(i=0;i<b.length;i++){l=b.getLine(i);if(!l)continue;s=l.translateToString(true);
+  if(l.isWrapped&&out.length)out[out.length-1]+=s;else out.push(s)}
+ return out.join('\n').replace(/\n+$/,'')}
+var ov=document.createElement('div');ov.id='ccclip';
+ov.innerHTML='<div id="ccclip-bar"><button type="button" id="ccclip-all">copy all</button>'+
+'<button type="button" id="ccclip-x">close</button>'+
+'<span id="ccclip-hint">long-press to select<br>scroll up first for history</span></div>'+
+'<pre id="ccclip-txt"></pre>';
+document.body.appendChild(ov);
+var txt=document.getElementById('ccclip-txt');
+document.getElementById('ccclip-x').addEventListener('click',function(){ov.classList.remove('on')});
+document.getElementById('ccclip-all').addEventListener('click',function(){var b=this;
+ (navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(txt.textContent)
+  :Promise.reject()).then(function(){flash(b,'copied ✓')},function(){flash(b,'✗ select manually')})});
+function mk(label,fn,at){var el=document.createElement('button');el.type='button';el.textContent=label;
+ el.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation()});/*keep textarea focus*/
+ el.addEventListener('pointerup',fn);
+ kb.insertBefore(el,at);return el}
+var at=kb.children[2]||null;/*after home + photo keys*/
+mk('⧉',function(){txt.textContent=grab();ov.classList.add('on');
+ var t=ta();t&&t.blur()/*drop the keyboard so the whole snapshot is visible*/},at);
+mk('📋',function(e){var b=e.currentTarget;
+ if(!(navigator.clipboard&&navigator.clipboard.readText))return flash(b,'✗');
+ navigator.clipboard.readText().then(function(x){x?pst(x):flash(b,'empty')},
+  function(){flash(b,'✗ blocked')})},at);
+})()</script>

@@ -1,0 +1,28 @@
+<script id="ccrst-js">/*ccrst-v1.1: restart-the-pane key. Adding an MCP server (or any
+config change) needs a Claude Code restart, which meant /exit -> picker -> resume by hand
+from the phone. This key drives tmux over the pty instead: prefix, ':', 'respawn-pane -k',
+CR -- kills the pane program and re-runs the pane's ORIGINAL command in the same cwd.
+Picker-resumed sessions (web-*) re-run `web-term.sh run <acct> <cwd> <sid>` -> same
+conversation, same path, fresh MCP. cc/ccw panes re-run the wrapper command: started with
+-c/-r they resume too; started bare they open a fresh chat in the same dir (/resume inside
+claude pulls the old one back). On the picker itself (no tmux attached) the bytes are
+harmless prompt noise. Kill switch: /term/?rst=off
+v1.1: the keys are sent STAGED, not as one burst -- tmux assume-paste-time (default 1ms)
+treats burst input as a paste and skips key bindings, so a single input() shipped the
+whole string literally into the pane (that is also why the ^Bd key waits 80ms).
+ponytail: no pane-type detection from the browser -- tmux re-runs what the pane was born
+with, which is the right default everywhere it can be.*/(function(){
+if(/[?&]rst=off\b/.test(location.search))return;
+var kb=document.getElementById('cckb');if(!kb)return;
+function snd(d){window.term.input?window.term.input(d):window.term._core.coreService.triggerDataEvent(d,!0)}
+var b=document.createElement('button');b.type='button';b.textContent='\u27f3';
+b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation()});
+b.addEventListener('pointerup',function(){
+ if(!window.term)return;
+ if(!confirm('Restart this pane? Claude reloads (picks up new MCP/config). Whatever is running right now is killed.'))return;
+ snd('\x11');/*prefix is C-q per ~/.tmux.conf (rebound 2026-08-08), not the default C-b*/
+ setTimeout(function(){snd(':')},120);
+ setTimeout(function(){snd('respawn-pane -k')},260);
+ setTimeout(function(){snd('\r')},420);});
+kb.insertBefore(b,kb.children[4]||null);/*after home, photo, copy, paste*/
+})()</script>

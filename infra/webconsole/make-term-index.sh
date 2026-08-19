@@ -5,28 +5,41 @@
 # Why this exists: ttyd's own index.html is a ~700KB generated bundle (its vendored
 # xterm.js + its own client JS, all inlined into one file) — a build/version artifact of
 # ttyd itself that this repo deliberately does not vendor (see clipboard-shim.html's own
-# header for the full "why"; this repo ships only the small, self-authored clipboard shim
-# in that file). infra/caddy/Caddyfile.template's @termhtml route serves this exact file,
-# by path, for both /term and /term/ (Caddy's own file_server, ahead of the reverse_proxy
-# to ttyd — see that template's own comment). Caddy cannot serve a file that doesn't
-# exist: skip this step and every fresh adopter's /term 404s. Before this script existed,
-# producing the file was a manual splice — still documented, as a fallback, in
+# header for the full "why"). infra/caddy/Caddyfile.template's @termhtml route serves this
+# exact file, by path, for both /term and /term/ (Caddy's own file_server, ahead of the
+# reverse_proxy to ttyd — see that template's own comment). Caddy cannot serve a file that
+# doesn't exist: skip this step and every fresh adopter's /term 404s. Before this script
+# existed, producing the file was a manual splice — still documented, as a fallback, in
 # clipboard-shim.html's and claude-web-term.service.template's own header comments — this
 # script automates those exact steps: start ttyd once, fetch the page it serves, splice
-# this directory's clipboard-shim.html into it, write the result.
+# this directory's self-authored additions into it, write the result.
+#
+# What gets spliced in, immediately before </body>, in this order:
+#   1. clipboard-shim.html's <script> block (OSC 52 -> browser clipboard; its own header
+#      comment is stripped — see the splice step below)
+#   2. every blocks/*.html file, verbatim, in filename order (10-cckb.html, 20-ccpwa.html,
+#      ...) — the mobile UX for /term: key bar (cckb), PWA geometry (ccpwa), home key
+#      (cchome), photo attach (ccimg), keyboard suggestions + reconnect (ccime), copy/paste
+#      overlay (ccclip), restart-pane key (ccrst). Each block documents itself in its own
+#      top-of-block comment. Runtime kill switches, as /term URL params, for the three
+#      that intercept input: ?ime=off ?clip=off ?rst=off.
 #
 # usage: make-term-index.sh [output-path]
 #   output-path   default: /opt/claude-dashboard/term-index.html — the exact path
 #                 Caddyfile.template's @termhtml route hardcodes. Pass a different path
 #                 only if you've also changed that route to match.
 #
-# Idempotent: if output-path already contains the marker below, this script says so and
-# exits 0 without touching the file — safe to run from a provisioning script every time,
-# not just the first time.
+# Idempotent by construction: the page is REGENERATED from scratch on every run (fresh
+# ttyd page + full splice), never patched in place — same inputs, same output, safe to run
+# from a provisioning script every time. Re-run it after a repo update and the page picks
+# up new or changed blocks. (An earlier version instead exited early when a marker was
+# already present in the output file — which also meant it could never add a NEW block to
+# an existing page; regeneration is what fixed that.)
 #   marker: the literal string "mows clipboard shim v2" — the opening words of
-#   clipboard-shim.html's own top-of-<script> comment (see that file). Picked because it
-#   lives inside the shim itself, so "marker present" and "shim actually spliced in" can
-#   never disagree. Keep this constant in sync if that file's version comment ever changes.
+#   clipboard-shim.html's own top-of-<script> comment (see that file) — is verified to be
+#   present in the RESULT before anything is written, as a splice sanity check, alongside
+#   one id check per block. Keep this constant in sync if that file's version comment ever
+#   changes.
 set -euo pipefail
 
 DEFAULT_OUT="/opt/claude-dashboard/term-index.html"
@@ -35,14 +48,10 @@ MARKER='mows clipboard shim v2'
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SHIM="$HERE/clipboard-shim.html"
-
-# --- idempotency check, before starting anything else ---
-if [ -f "$OUT" ] && grep -qF "$MARKER" "$OUT" 2>/dev/null; then
-  echo "make-term-index.sh: $OUT already has the clipboard shim spliced in (marker: \"$MARKER\") — nothing to do."
-  exit 0
-fi
+BLOCKS_DIR="$HERE/blocks"
 
 [ -f "$SHIM" ] || { echo "make-term-index.sh: sibling clipboard-shim.html not found at $SHIM" >&2; exit 1; }
+[ -d "$BLOCKS_DIR" ] || { echo "make-term-index.sh: sibling blocks/ directory not found at $BLOCKS_DIR" >&2; exit 1; }
 
 # --- 1. ttyd on PATH? ---
 if ! command -v ttyd >/dev/null 2>&1; then
@@ -63,6 +72,7 @@ done
 
 TTYD_PID=""
 TMP_PAGE=""
+TMP_INSERT=""
 TMP_SPLICED=""
 KEEP_SPLICED=""
 cleanup() {
@@ -71,6 +81,7 @@ cleanup() {
     wait "$TTYD_PID" 2>/dev/null || true
   fi
   [ -n "$TMP_PAGE" ] && rm -f "$TMP_PAGE"
+  [ -n "$TMP_INSERT" ] && rm -f "$TMP_INSERT"
   [ -n "$TMP_SPLICED" ] && [ -z "$KEEP_SPLICED" ] && rm -f "$TMP_SPLICED"
 }
 trap cleanup EXIT
@@ -106,45 +117,52 @@ if ! grep -qi '</body>' "$TMP_PAGE"; then
   exit 1
 fi
 
-# --- 6. splice: shim's <script>...</script> block goes immediately before </body> ---
-# awk, not sed: the shim is HTML+JS full of &, /, and backslashes — sed's `r file` command
-# only ever APPENDS after a matched line and can't hold another file's raw bytes in its
-# pattern space, and any sed s/// form would need every one of those special characters
-# escaped first anyway. awk reads the shim as its own input file (first of the two ARGV
-# files below), so none of its bytes are ever interpreted as a sed/regex special char.
-# Only from clipboard-shim.html's own <script> tag onward is captured — its ~19-line
-# header comment (maintainer-facing: why this file exists, the manual fallback recipe)
-# is deliberately left out of the shim variable, matching that header's own documented
-# convention ("paste the <script>...</script> block below") instead of leaking repo
-# maintenance prose into the page real browsers load. Split point: the header's closing
-# "-->" (its own last line) — NOT a search for a literal "<script" substring, because
-# the header's prose itself mentions "<script>" twice while explaining what it is and
-# how to paste it, which would trip a naive substring match on the very first line.
+# --- 6. build the insert: shim's <script> block first, then every blocks/*.html ---
+# The shim's ~19-line header comment (maintainer-facing: why the file exists, the manual
+# fallback recipe) is stripped — matching that header's own documented convention ("paste
+# the <script>...</script> block below") instead of leaking repo maintenance prose into
+# the page real browsers load. Split point: the header's closing "-->" (its own last
+# line) — NOT a search for a literal "<script" substring, because the header's prose
+# itself mentions "<script>" twice, which would trip a naive substring match on line 1.
+# Block files carry no such wrapper — they splice in verbatim, in filename order (the
+# order matters: every later block finds the #cckb key bar that 10-cckb.html creates).
+TMP_INSERT=$(mktemp)
+awk '!s { if (/-->/) s = 1; next } { print }' "$SHIM" > "$TMP_INSERT"
+cat "$BLOCKS_DIR"/*.html >> "$TMP_INSERT"
+
+# --- 7. splice: the whole insert goes immediately before </body> ---
+# awk, not sed: the insert is HTML+JS full of &, /, and backslashes — sed's `r file`
+# command only ever APPENDS after a matched line and can't hold another file's raw bytes
+# in its pattern space, and any sed s/// form would need every one of those special
+# characters escaped first anyway. awk reads the insert as its own input file (first of
+# the two ARGV files below), so none of its bytes are ever interpreted as a regex special.
 TMP_SPLICED=$(mktemp)
 awk '
-  FNR==NR {
-    if (!started) {
-      if ($0 ~ /-->/) started = 1
-      next
-    }
-    shim = shim $0 ORS
-    next
-  }
-  tolower($0) ~ /<\/body>/ { printf "%s", shim }
+  FNR==NR { ins = ins $0 ORS; next }
+  tolower($0) ~ /<\/body>/ { printf "%s", ins }
   { print }
-' "$SHIM" "$TMP_PAGE" > "$TMP_SPLICED"
+' "$TMP_INSERT" "$TMP_PAGE" > "$TMP_SPLICED"
 
 if ! grep -qF "$MARKER" "$TMP_SPLICED"; then
   echo "make-term-index.sh: splice ran but marker \"$MARKER\" is missing from the result — aborting before writing $OUT" >&2
   exit 1
 fi
+for b in "$BLOCKS_DIR"/*.html; do
+  id=$(grep -oE 'id="cc[a-z0-9-]+"' "$b" | head -1)
+  [ -n "$id" ] || continue
+  if ! grep -qF "$id" "$TMP_SPLICED"; then
+    echo "make-term-index.sh: block $(basename "$b") ($id) missing from the result — aborting before writing $OUT" >&2
+    exit 1
+  fi
+done
 
-# --- 7. write to the output path ---
+# --- 8. write to the output path ---
 OUT_DIR=$(dirname "$OUT")
 if mkdir -p "$OUT_DIR" 2>/dev/null && cp "$TMP_SPLICED" "$OUT" 2>/dev/null; then
-  # --- 8. success ---
+  # --- 9. success ---
   BYTES=$(wc -c <"$OUT" | tr -d ' ')
-  echo "make-term-index.sh: wrote $OUT (${BYTES} bytes; marker \"$MARKER\" present)"
+  NBLOCKS=$(ls "$BLOCKS_DIR"/*.html 2>/dev/null | wc -l | tr -d ' ')
+  echo "make-term-index.sh: wrote $OUT (${BYTES} bytes; shim + ${NBLOCKS} blocks spliced, marker \"$MARKER\" present)"
 else
   KEEP_SPLICED=1
   echo "make-term-index.sh: cannot write $OUT (permission denied)." >&2

@@ -1,0 +1,33 @@
+<script id="cchome-js">/*cchome-v1: home button in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console*/(function(){
+var kb=document.getElementById('cckb');if(!kb)return;
+var b=document.createElement('button');b.type='button';b.textContent='\u2302';
+b.style.color='#3fb950';b.style.fontWeight='700';
+b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();location.href='/';});
+kb.insertBefore(b,kb.firstChild);
+/*ccpwa: one-shot geometry beacon -> shows in the server access log as /z?t=...
+   deferred 900ms: iOS reports env()/innerHeight wrong until layout settles */
+setTimeout(function(){requestAnimationFrame(function(){
+try{var pr=document.createElement('div');
+pr.style.cssText='position:fixed;visibility:hidden;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)';
+document.body.appendChild(pr);var cs=getComputedStyle(pr);
+var vv2=window.visualViewport;
+/* large/dynamic/small viewport units: if 100lvh > innerHeight, WebKit exposes
+   the iOS-reserved bottom strip and page-level sizing can claim it */
+var u=document.createElement('div');
+u.style.cssText='position:fixed;visibility:hidden;pointer-events:none;top:0;left:0;width:1px;height:100lvh';
+document.body.appendChild(u);var lvh=u.getBoundingClientRect().height|0;
+u.style.height='100dvh';var dvh=u.getBoundingClientRect().height|0;
+u.style.height='100svh';var svh=u.getBoundingClientRect().height|0;u.remove();
+var kbb=document.getElementById('cckb');kbb=kbb?Math.round(kbb.getBoundingClientRect().bottom):-1;
+var q='t=term-v8&m='+(matchMedia('(display-mode: standalone)').matches?'app':'tab')+
+'&sat='+(parseFloat(cs.paddingTop)|0)+'&sab='+(parseFloat(cs.paddingBottom)|0)+
+'&ih='+window.innerHeight+'&sh='+screen.height+
+'&oh='+window.outerHeight+'&sy='+(window.screenY|0)+
+'&vh='+(vv2?vv2.height|0:0)+'&dh='+document.documentElement.clientHeight+
+'&lvh='+lvh+'&dvh='+dvh+'&svh='+svh+'&kbb='+kbb;
+pr.remove();fetch('/z?'+q).catch(function(){})
+if(screen.height-window.innerHeight>40&&matchMedia('(display-mode: standalone)').matches){
+ document.body.classList.add('nozone');window.dispatchEvent(new Event('resize'))}
+}catch(e){}
+})},900)
+})()</script>
