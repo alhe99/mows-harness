@@ -6,7 +6,7 @@ Your coding agent lives on a box you control: it survives dropped SSH and closed
 restarts itself when it wedges, and waits behind your Google login on a dashboard and web
 terminal you can open from anywhere.
 
-<img src="docs/assets/phone.png" alt="The mows-harness dashboard on a phone: three Claude Code sessions across two profiles, each showing the prompt that started it, with sessions / terminal / watch tabs along the bottom." width="300" align="right">
+<img src="docs/assets/phone.png" alt="The mows-harness dashboard on a phone: three Claude Code sessions across two profiles, each showing the prompt that started it, with collapsible filter and system strips and sessions / terminal / watch / android tabs along the bottom." width="300" align="right">
 
 ```bash
 git clone https://github.com/alhe99/mows-harness.git
