@@ -725,6 +725,7 @@ button:hover{background:var(--pop);border-color:var(--bd2)}
 .lr{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;min-height:36px}
 .ln a,.ln span{color:var(--ok);font:600 13px var(--mono)}
 .la{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.lt{flex-basis:100%;margin:-2px 0 0 18px;font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .af{display:inline;margin:0}
 .ab{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--bd);border-radius:var(--r);padding:5px 12px;min-height:34px;background:var(--card2);color:var(--fg2);font:13px var(--sans);cursor:pointer;list-style:none}
 .ab:hover{background:var(--pop);border-color:var(--bd2)}
@@ -1021,15 +1022,20 @@ async function listView(req, res, url) {
     + chip({ s: s === 'live' ? '' : 'live' },
       `<span class="dot" style="background:#34d399"></span>live <b>${live.filter(l => l.name.startsWith('web-')).length}</b>`, s === 'live');
 
-  const liveHtml = live.length ? `<div class="lp">` + live.map(l => {
+  const liveHtml = live.length ? `<div class="lp">` + (await Promise.all(live.map(async l => {
     const sid8 = l.name.startsWith('web-') ? l.name.slice(4, 12) : '';
     const row = sid8 ? index.find(e => TERM_IDS.has(e.a) && e.sid.startsWith(sid8)) : null;
     const nm = row ? `<a href="/s/${row.a}/${row.sid}">${esc(l.name)}</a>` : `<span style="color:#34d399">${esc(l.name)}</span>`;
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
+    // what it's working on: web-* joins its transcript by sid (row above); named
+    // panes get a best guess — freshest transcript in the pane's cwd since it began
+    const tsrc = row || (l.cwd ? index.filter(e => e.proj === l.cwd.replace(/[/.]/g, '-') && e.mt >= l.created)
+      .reduce((a, e) => (!a || e.mt > a.mt ? e : a), null) : null);
+    const title = tsrc ? (await titleOf(tsrc)).title : '';
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
 <span class="ln">${nm}</span><span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
-<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span></div>`;
-  }).join('') + `</div>` : '';
+<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
+  }))).join('') + `</div>` : '';
 
   let lastDay = '', items = '';
   slice.forEach((e, i) => {
