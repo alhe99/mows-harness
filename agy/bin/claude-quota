@@ -27,15 +27,62 @@ parse_usage(){
 
 UNKNOWN='{"five_hour_pct":null,"weekly_pct":null,"five_hour_resets_at":null,"weekly_resets_at":null,"source":"unknown"}'
 
+TOKEN_URL="https://console.anthropic.com/v1/oauth/token"
+# Claude Code's own public OAuth client id (baked into every CLI install — not a secret).
+OAUTH_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+# refresh_oauth <cfg-dir>: the access token on disk is EXPIRED — mint a fresh one with
+# the stored refresh token and write it back to .credentials.json the same way claude
+# itself does (atomic tmp+mv, mode 600, unrelated fields kept), then print the new
+# access token. Guards:
+#   - only ever called for an expired token; a healthy chain is never rotated early
+#   - per-account flock in ~/.local/state so concurrent sessions can't race the grant
+#   - re-checks the file after taking the lock (another session may have refreshed)
+#   - any failure prints nothing -> caller yields "unknown", exactly the old behavior
+# This exists because an account that runs no sessions for a day or two (typically
+# "personal" while work is busy) let its token lapse, and the quota line showed "?"
+# forever until a human opened a session there.
+refresh_oauth(){
+  local dir=$1 rtok resp at nrt ein tmp cd
+  mkdir -p "$HOME/.local/state"
+  # cooldown: the token endpoint rate-limits per IP (a busy box hits it from every
+  # session), so after any failed grant, don't try again for 30 min — the quota line
+  # just stays "unknown" meanwhile, exactly the pre-refresh behavior.
+  cd="$HOME/.local/state/claude-quota-$(basename "$dir").cooldown"
+  if [ -f "$cd" ] && [ $(( $(date +%s) - $(stat -c %Y "$cd") )) -lt 1800 ]; then return 1; fi
+  exec 9>"$HOME/.local/state/claude-quota-$(basename "$dir").lock" || return 1
+  flock -w 15 9 || return 1
+  at=$(jq -r '.claudeAiOauth.accessToken // empty' "$dir/.credentials.json" 2>/dev/null) || at=""
+  ein=$(jq -r '.claudeAiOauth.expiresAt // 0' "$dir/.credentials.json" 2>/dev/null) || ein=0
+  if [ -n "$at" ] && [ "$ein" -gt $(( $(date +%s) * 1000 )) ]; then printf '%s' "$at"; return 0; fi
+  rtok=$(jq -r '.claudeAiOauth.refreshToken // empty' "$dir/.credentials.json" 2>/dev/null) || rtok=""
+  [ -n "$rtok" ] || return 1
+  resp=$(jq -n --arg rt "$rtok" --arg cid "$OAUTH_CLIENT_ID" \
+           '{grant_type:"refresh_token",refresh_token:$rt,client_id:$cid}' \
+         | curl -sf --max-time 15 "$TOKEN_URL" -H 'Content-Type: application/json' -d @-) || { touch "$cd"; return 1; }
+  at=$(jq -r '.access_token // empty' <<<"$resp"); [ -n "$at" ] || { touch "$cd"; return 1; }
+  rm -f "$cd"
+  nrt=$(jq -r '.refresh_token // empty' <<<"$resp")
+  ein=$(jq -r '.expires_in // 3600' <<<"$resp")
+  tmp=$(mktemp "$dir/.credentials.json.XXXXXX") || return 1
+  if jq --arg at "$at" --arg rt "${nrt:-$rtok}" --argjson exp "$(( ( $(date +%s) + ein ) * 1000 ))" \
+       '.claudeAiOauth.accessToken=$at | .claudeAiOauth.refreshToken=$rt | .claudeAiOauth.expiresAt=$exp' \
+       "$dir/.credentials.json" > "$tmp" 2>/dev/null; then
+    chmod 600 "$tmp" && mv "$tmp" "$dir/.credentials.json"
+  else rm -f "$tmp"; return 1; fi
+  printf '%s' "$at"
+}
+
 fetch_account(){ # -> normalized json on stdout, never fails
   local dir tok exp now raw
   dir=$(cfg_dir "$1")
   tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$dir/.credentials.json" 2>/dev/null) || tok=""
   exp=$(jq -r '.claudeAiOauth.expiresAt // 0' "$dir/.credentials.json" 2>/dev/null) || exp=0
   now=$(( $(date +%s) * 1000 ))
-  if [ -z "$tok" ] || [ "$exp" -le "$now" ]; then echo "$UNKNOWN"; return 0; fi
-  # ponytail: no refresh-token flow — claude itself refreshes creds constantly;
-  # a stale token just yields "unknown" (fail-safe: no auto-delegation).
+  if [ -z "$tok" ] || [ "$exp" -le "$now" ]; then
+    tok=$(refresh_oauth "$dir") || tok=""
+    [ -n "$tok" ] || { echo "$UNKNOWN"; return 0; }
+  fi
   raw=$(curl -sf --max-time 10 "$USAGE_URL" \
         -H "Authorization: Bearer $tok" \
         -H "anthropic-beta: oauth-2025-04-20" 2>/dev/null) || { echo "$UNKNOWN"; return 0; }
