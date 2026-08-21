@@ -1074,7 +1074,8 @@ ${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
-  send(req, res, 200, page('mows sessions', body, '', '', 'sessions'));
+  send(req, res, 200, page('mows sessions', body,
+    sysOpen && usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', '', 'sessions'));
 }
 
 async function detailView(req, res, a, sid) {
@@ -1176,8 +1177,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/' ) {
       if (url.searchParams.get('fresh')) { // ↻ button: force usage re-collect, then bounce back (PRG)
-        usage(true);
-        if (usageCache.p) await Promise.race([usageCache.p, new Promise(r => setTimeout(r, 25000))]);
+        usage(true); // runs in background — the sys=1 page below auto-reloads until it lands
         url.searchParams.delete('fresh'); url.searchParams.set('sys', '1');
         res.writeHead(303, { location: '/?' + url.searchParams }); return res.end();
       }
