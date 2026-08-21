@@ -823,7 +823,10 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 .ubd summary::-webkit-details-marker{display:none}
 .ubd summary::before{content:'▸';color:var(--dim);margin-right:6px}
 .ubd[open] summary::before{content:'▾'}
-@media(max-width:700px){.sys > summary{font-size:12px;padding:8px 30px 8px 10px}.sysbody{padding:0 8px 8px}}
+.flt form{flex:1;min-width:150px}
+.flt input[type=search]{width:100%}
+summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-radius:6px}
+@media(max-width:700px){.sys > summary{font-size:12px;padding:8px 30px 8px 10px}.sysbody{padding:0 8px 8px}input[type=search]{font-size:16px}}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
@@ -1041,12 +1044,19 @@ async function listView(req, res, url) {
   });
 
   const label = HOST_ACCT[sub] ? sub : '';
+  // filters are power-user controls — folded away by default; auto-open (and
+  // summarized) whenever the URL carries one so active state is never hidden
+  const fOn = !!(url.searchParams.get('acct') || d || s || q);
+  const fState = [acct && BY_ID[acct] ? BY_ID[acct].label : 'all',
+    ({ today: 'today', '7d': '7 days', '30d': '30 days' })[d] || 'all time']
+    .concat(s === 'live' ? ['live'] : [], q ? ['“' + esc(q) + '”'] : []).join(' · ');
   const body = `<h1><a href="/">mows sessions</a>${label ? ` <span class="muted">· ${esc(label)}</span>` : ''}</h1>
-<div class="bar">${chips}</div>
+<details class="sys flt"${fOn ? ' open' : ''}><summary><span class="syst">🔍 filter</span><span class="syss">${fState} · <b>${rows.length}</b>${fOn ? ` of ${index.length}` : ''} sessions</span></summary>
+<div class="sysbody"><div class="bar">${chips}</div>
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
-<input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form>
-<a class="chip navdup" href="/term/?v=3">⌨ terminal</a><a class="chip navdup" href="/watch">🖥 watch</a><a class="chip navdup" href="/droid">📱 android</a></div>
+<input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
+<div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a></div>
 ${sysPanel()}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
