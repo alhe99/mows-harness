@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// lite.mjs — claude session dashboard, rebuilt for slow connections.
+// lite.mjs — mows sessions dashboard, rebuilt for slow connections.
 // Zero dependencies, zero client JS: every page is one small server-rendered
 // HTML response (~4-12KB gzipped). Replaces the React claude-session-dashboard
 // (5 node processes, ~500MB RSS, MB-scale hydration bundle) with one process.
@@ -17,7 +17,7 @@
 // the app works identically on 2G, with JS disabled, and in text browsers.
 // (sole exception: a one-line service-worker registration; pure enhancement.)
 import http from 'node:http';
-import { promises as fsp, readdirSync, existsSync } from 'node:fs';
+import { promises as fsp, readdirSync, existsSync, readFileSync, statfsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
@@ -435,11 +435,142 @@ async function droidView(req, res) {
     view = `<div class="wblank"><p>the emulator isn't running.</p><p class="muted">press start — a containerized Android 15 (redroid) boots in ~15 s and its screen shows up here. tap, swipe and type right in the frame.</p></div>`;
   }
   const dot = live ? '#34d399' : st === 'booting' ? '#f59e0b' : '#71717a';
-  const body = `<h1><a href="/">← sessions</a> <span class="muted">· 📱 Device emulator</span></h1>
+  const body = `<h1><a href="/">← sessions</a> <span class="muted">· 📱 android</span></h1>
 <div class="bar"><span class="chip${live ? ' on' : ''}"><span class="dot" style="background:${dot}"></span>emulator ${st}</span>${btn}<a class="chip" href="/droid">↻ refresh</a><a class="chip" href="/droidview/" target="_blank" rel="noopener">⧉ console</a></div>
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · an Android container (<b>redroid</b>, native-arch, no KVM) streams here through ws-scrcpy — interact directly in the frame; the slim toolbar inside it has power/volume/back/home and a keyboard toggle. install an apk from the <a href="/term/?v=3">terminal</a>: <b>adb -s ${DROID_UDID} install app.apk</b> · run a QA flow: <b>maestro --device ${DROID_UDID} test flow.yaml</b> · <b>⧉ console</b> opens the raw ws-scrcpy page (other video decoders, web adb shell, file browser).</div>`;
-  send(req, res, 200, page('Device emulator · android', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
+  send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
+}
+
+// ---------- system + usage panel (host metrics, claude/agy limits, spend) ----------
+// One-step visibility of the box the harness runs on. Host numbers are sync reads
+// (/proc, statfs) cached 5s; usage numbers shell out (claude-quota, ccusage per
+// account, agy handoff state) so they're collected in the background and cached
+// 5 min — a page load NEVER waits on them (first load shows "collecting…").
+// Optional dependencies, each degrading gracefully when absent: claude-quota
+// (agy layer) -> limits render "?", ccusage (`sudo npm i -g ccusage`) -> spend
+// cards say so, agy handoff state -> "no handoffs".
+const GB = n => (n / 1073741824).toFixed(1);
+let hostCache = { t: 0, h: null };
+function hostInfo() {
+  if (hostCache.h && Date.now() - hostCache.t < 5000) return hostCache.h;
+  let mt = 0, ma = 0, st = 0, sf = 0;
+  for (const ln of readFileSync('/proc/meminfo', 'utf8').split('\n')) {
+    const [k, v] = ln.split(':'); const kb = parseInt(v, 10) * 1024;
+    if (k === 'MemTotal') mt = kb; else if (k === 'MemAvailable') ma = kb;
+    else if (k === 'SwapTotal') st = kb; else if (k === 'SwapFree') sf = kb;
+  }
+  const d = statfsSync('/');
+  const h = { load: os.loadavg()[0], cores: os.cpus().length,
+    memUsed: mt - ma, memTot: mt, swapUsed: st - sf, swapTot: st,
+    dskUsed: (d.blocks - d.bavail) * d.bsize, dskTot: d.blocks * d.bsize, up: os.uptime() };
+  hostCache = { t: Date.now(), h };
+  return h;
+}
+// Priced usage is tracked for the tmux user's interactive profiles (term: true) —
+// the human subscription accounts; agent identities ride those same subscriptions.
+// claude-quota names the tmux user's default profile "personal" — map that label.
+const UACCTS = ACCTS.filter(a => a.term).map(a =>
+  ({ id: a.id, label: a.label, qkey: a.label === TMUX_USER ? 'personal' : a.label, dir: a.home }));
+const TMUX_HOME = `/home/${TMUX_USER}`;
+const RUN_PATH = `${TMUX_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin`;
+const runAs = (envs, cmd, args, t = 30000) => new Promise(r =>
+  execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
+    { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out)));
+const jp = s => { try { return JSON.parse(s); } catch { return null; } };
+async function collectUsage() {
+  const today = new Date().toISOString().slice(0, 10);
+  const ymd = today.replace(/-/g, ''), ym1 = ymd.slice(0, 6) + '01';
+  const qline = await runAs([], 'claude-quota', ['--line'], 15000);
+  const quota = {}; // "personal 5h 8.0% wk 18.0% | work 5h 11.0% wk 44.0% (threshold 70%)"
+  for (const m of qline.matchAll(/(\w+) 5h ([\d.?]+)% wk ([\d.?]+)%/g))
+    quota[m[1]] = { h5: isNaN(parseFloat(m[2])) ? null : parseFloat(m[2]), wk: isNaN(parseFloat(m[3])) ? null : parseFloat(m[3]) };
+  const thr = +(qline.match(/threshold (\d+)/) || [])[1] || 70;
+  const accts = {}, top = [];
+  await Promise.all(UACCTS.map(async a => {
+    const env = ['CLAUDE_CONFIG_DIR=' + a.dir];
+    const [dj, mj, sj, bj] = await Promise.all([
+      runAs(env, 'ccusage', ['daily', '--json', '--since', ymd, '--breakdown']),
+      runAs(env, 'ccusage', ['monthly', '--json', '--since', ym1]),
+      runAs(env, 'ccusage', ['session', '--json'], 60000),
+      runAs(env, 'ccusage', ['blocks', '--json', '--active']),
+    ].map(p => p.then(jp)));
+    const d0 = (dj && dj.daily && dj.daily[0]) || null;
+    const models = (d0 && d0.modelBreakdowns || []).map(m => ({ name: m.modelName, cost: m.cost || 0 }))
+      .sort((x, y) => y.cost - x.cost);
+    const blk = (bj && bj.blocks && bj.blocks[0]) || null;
+    accts[a.id] = { label: a.label, qkey: a.qkey,
+      cc: !!(dj || mj), // ccusage answered at all?
+      today: (d0 && d0.totalCost) || 0,
+      month: (mj && mj.monthly && mj.monthly[0] && mj.monthly[0].totalCost) || 0,
+      models,
+      block: blk ? { cost: blk.costUSD || 0, rate: (blk.burnRate && blk.burnRate.costPerHour) || 0 } : null };
+    for (const s of (sj && sj.session) || [])
+      if (((s.metadata && s.metadata.lastActivity) || '').slice(0, 10) === today)
+        top.push({ a: a.id, sid: s.period || '', cost: s.totalCost || 0, models: s.modelsUsed || [] });
+  }));
+  top.sort((x, y) => y.cost - x.cost);
+  const agy = {};
+  try {
+    const hdir = TMUX_HOME + '/.local/state/agy-handoffs';
+    for (const id of readdirSync(hdir)) {
+      try {
+        const st = JSON.parse(readFileSync(hdir + '/' + id + '/meta.json', 'utf8')).status;
+        agy[st] = (agy[st] || 0) + 1;
+      } catch { /* not a handoff dir */ }
+    }
+  } catch { /* no agy state on this box */ }
+  return { quota, thr, accts, top: top.slice(0, 4), agy };
+}
+let usageCache = { t: 0, d: null, busy: false };
+function usage() {
+  if (!usageCache.busy && Date.now() - usageCache.t > 300e3) {
+    usageCache.busy = true;
+    collectUsage().then(d => { usageCache = { t: Date.now(), d, busy: false }; })
+      .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 240e3; }); // retry in 1 min
+  }
+  return usageCache.d;
+}
+usage(); // warm the cache at boot so the first visitor already sees numbers
+function sysPanel() {
+  const h = hostInfo(), u = usage();
+  const pct = (x, t) => t ? Math.min(100, Math.round(x / t * 100)) : 0;
+  const meter = (p, hot) => `<span class="meter"><i style="width:${Math.min(100, Math.max(0, p))}%${p >= (hot == null ? 101 : hot) ? ';background:var(--bad)' : p >= 50 ? ';background:var(--warn)' : ''}"></i></span>`;
+  const money = n => '$' + (n >= 100 ? Math.round(n).toLocaleString('en-US') : n.toFixed(2));
+  const days = Math.floor(h.up / 86400), hrs = Math.floor(h.up % 86400 / 3600);
+  const cards = `<div class="statgrid">
+<div class="stat"><span class="sl">load</span><b class="sv">${h.load.toFixed(2)}</b> <span class="muted">/ ${h.cores} cores</span>${meter(pct(h.load, h.cores), 90)}</div>
+<div class="stat"><span class="sl">memory</span><b class="sv">${GB(h.memUsed)}</b> <span class="muted">/ ${GB(h.memTot)} G</span>${meter(pct(h.memUsed, h.memTot), 90)}</div>
+<div class="stat"><span class="sl">swap</span><b class="sv">${GB(h.swapUsed)}</b> <span class="muted">/ ${GB(h.swapTot)} G</span>${meter(pct(h.swapUsed, h.swapTot), 90)}</div>
+<div class="stat"><span class="sl">disk /</span><b class="sv">${GB(h.dskUsed)}</b> <span class="muted">/ ${GB(h.dskTot)} G</span>${meter(pct(h.dskUsed, h.dskTot), 90)}</div>
+<div class="stat"><span class="sl">uptime</span><b class="sv">${days}d ${hrs}h</b></div></div>`;
+  let ubody;
+  if (!u) ubody = `<p class="muted" style="padding:4px 0 8px">collecting usage — first pass takes ~15 s, refresh in a moment…</p>`;
+  else {
+    const acards = Object.values(u.accts).map(a => {
+      const q = u.quota[a.qkey] || u.quota[a.label] || {};
+      const qrow = (lbl, v) => `<div class="qrow"><span>${lbl}</span>${meter(v == null ? 0 : v, u.thr)}<b>${v == null ? '?' : v + '%'}</b></div>`;
+      const spend = a.cc
+        ? `<div class="qrow"><span>today</span><b>${money(a.today)}</b><span class="muted">· month ${money(a.month)}</span></div>
+${a.block ? `<div class="qrow"><span>5h block</span><b>${money(a.block.cost)}</b><span class="muted">· ${money(a.block.rate)}/h burn</span></div>` : ''}
+<div class="mlist${a.models.length ? '' : ' muted'}">${a.models.length ? a.models.map(m => `${esc(m.name.replace(/^claude-/, ''))} ${money(m.cost)}`).join(' · ') : 'no usage today'}</div>`
+        : `<div class="mlist muted">ccusage not installed — sudo npm i -g ccusage</div>`;
+      return `<div class="stat"><span class="sl">${esc(a.label)} · limits</span>${qrow('5h', q.h5)}${qrow('week', q.wk)}
+<div class="mlist muted">delegate to agy at ${u.thr}%</div></div>
+<div class="stat"><span class="sl">${esc(a.label)} · spend</span>${spend}</div>`;
+    }).join('');
+    const tops = u.top.length ? `<div class="stat wide"><span class="sl">today's sessions · lifetime spend</span>${u.top.map(t => {
+      const acct = BY_ID[t.a];
+      return `<div class="qrow"><span style="color:${acct ? acct.color : 'inherit'}">${acct ? esc(acct.label) : esc(t.a)}</span><a class="sid8" href="/s/${t.a}/${esc(t.sid)}">${esc(t.sid.slice(0, 8))}</a><b>${money(t.cost)}</b><span class="muted mlist" style="padding:0">${t.models.map(m => esc(m.replace(/^claude-/, ''))).join(', ')}</span></div>`;
+    }).join('')}</div>` : '';
+    const ag = Object.keys(u.agy).length
+      ? Object.entries(u.agy).map(([k, v]) => `${esc(k)} <b>${v}</b>`).join(' · ') : 'no handoffs';
+    ubody = `<div class="statgrid u">${acards}${tops}
+<div class="stat wide"><span class="sl">agy · antigravity handoffs</span><div class="qrow"><span class="mlist" style="padding:0">${ag}</span></div></div></div>`;
+  }
+  const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
+  return `<details class="sys"><summary><span class="syst">📊 system</span><span class="syss">load <b>${h.load.toFixed(2)}</b> · mem <b>${GB(h.memUsed)}/${GB(h.memTot)}G</b> · disk <b>${GB(h.dskUsed)}/${GB(h.dskTot)}G</b> · up <b>${days}d</b>${sumToday == null ? '' : ` · today <b>${money(sumToday)}</b>`}</span></summary>
+<div class="sysbody">${cards}${ubody}</div></details>`;
 }
 
 // ---------- transcript parse (LRU 3 files; >25MB -> tail 8MB window) ----------
@@ -638,13 +769,38 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 .wbar button{flex:0 0 auto;min-width:56px;min-height:46px;padding:6px 10px}
 .wbar .kbd{background:#059669;border-color:#059669;color:#fff;font-weight:600}}
 @media(max-width:700px) and (orientation:landscape){body.watchlive h1,body.watchlive>.bar,body.watchlive>.note,body.watchlive footer,body.watchlive .tabs{display:none}body.watchlive{padding:4px}.watchwrap .vnc{aspect-ratio:auto;height:calc(100dvh - 74px)}}
+/* system + usage panel */
+.sys{margin:2px 0 12px;border:1px solid var(--bd);border-radius:var(--r-lg);background:var(--card)}
+.sys summary{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:9px 12px;cursor:pointer;list-style:none;font-size:13px;color:var(--mut);min-height:40px}
+.sys summary::-webkit-details-marker{display:none}
+.sys summary::after{content:'▾';margin-left:auto;color:var(--dim)}
+.sys[open] summary::after{content:'▴'}
+.sys summary:hover{color:var(--fg2)}
+.syst{color:var(--fg2);font-weight:600}
+.syss{overflow-wrap:anywhere}
+.syss b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.sysbody{padding:0 12px 12px;border-top:1px solid var(--hair)}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;padding-top:10px}
+.statgrid.u{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.stat{background:var(--card2);border:1px solid var(--bd);border-radius:var(--r);padding:8px 10px;min-width:0}
+.stat.wide{grid-column:1/-1}
+.sl{display:block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding-bottom:4px;white-space:nowrap}
+.sv{font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
+.meter{display:block;height:4px;border-radius:2px;background:rgba(255,255,255,.07);margin-top:7px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--ok);border-radius:2px}
+.qrow{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mut);padding:2px 0;min-width:0}
+.qrow .meter{flex:1;margin:0}
+.qrow b{color:var(--fg);font-variant-numeric:tabular-nums;flex-shrink:0}
+.qrow>span:first-child{width:52px;flex-shrink:0}
+.qrow .sid8{font-family:var(--mono);font-size:11px;color:var(--fg2);text-decoration:underline;text-decoration-color:var(--bd2)}
+.mlist{font-size:11px;color:var(--mut);padding-top:4px;overflow-wrap:anywhere;min-width:0}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
 <a class="tb" href="/term/?v=3"><span class="ti">⌨</span>terminal</a>
 <a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
-<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>Device emulator</a></nav>`;
+<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
@@ -653,7 +809,7 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
-${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">Device emulator</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* attach / >_ open the session in its OWN window on a desktop or tablet BROWSER, so the
    dashboard stays put and pause/kill/the other sessions stay one click away. NOT in the
@@ -763,11 +919,11 @@ const hostAcct = req => BY_ID[HOST_ACCT[(req.headers.host || '').split('.')[0]]]
 function manifest(req, res) {
   const a = hostAcct(req);
   send(req, res, 200, JSON.stringify({
-    id: '/', name: a ? `claude · ${a.label}` : 'claude console',
-    short_name: a ? a.label : 'claude',
+    id: '/', name: a ? `mows · ${a.label}` : 'mows sessions',
+    short_name: a ? a.label : 'mows',
     start_url: '/', scope: '/', display: 'standalone',
     background_color: '#0a0a0a', theme_color: '#0a0a0a',
-    description: 'claude code sessions, web terminal and QA watch',
+    description: 'mows harness: agent sessions, web terminal, QA watch, android console',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -832,7 +988,7 @@ async function listView(req, res, url) {
     const nm = row ? `<a href="/s/${row.a}/${row.sid}">${esc(l.name)}</a>` : `<span style="color:#34d399">${esc(l.name)}</span>`;
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
-<span class="ln">${nm}</span><span class="muted">${esc(proj)} · ${l.paused ? 'PAUSED' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
+<span class="ln">${nm}</span><span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
 <span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span></div>`;
   }).join('') + `</div>` : '';
 
@@ -855,16 +1011,17 @@ async function listView(req, res, url) {
   });
 
   const label = HOST_ACCT[sub] ? sub : os.hostname();
-  const body = `<h1><a href="/">claude sessions</a> <span class="muted">· ${esc(label)}</span></h1>
+  const body = `<h1><a href="/">mows sessions</a> <span class="muted">· ${esc(label)}</span></h1>
 <div class="bar">${chips}</div>
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form>
-<a class="chip navdup" href="/term/?v=3">⌨ terminal</a><a class="chip navdup" href="/watch">🖥 watch</a><a class="chip navdup" href="/droid">📱 Device emulator</a></div>
+<a class="chip navdup" href="/term/?v=3">⌨ terminal</a><a class="chip navdup" href="/watch">🖥 watch</a><a class="chip navdup" href="/droid">📱 android</a></div>
+${sysPanel()}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
-  send(req, res, 200, page('claude sessions', body, '', '', 'sessions'));
+  send(req, res, 200, page('mows sessions', body, '', '', 'sessions'));
 }
 
 async function detailView(req, res, a, sid) {
@@ -896,7 +1053,7 @@ async function detailView(req, res, a, sid) {
 
   const term = acct.term
     ? (canResume(e.mt, live)
-      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3">&gt;_ ${live ? (lv.paused ? 'attach — PAUSED' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
+      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
       : `<p class="muted" style="margin:8px 0">resume disabled — idle ${rel(e.mt)} (cutoff ${RESUME_DAYS}d). transcript stays readable; resume manually with <span style="font-family:var(--mono)">cc -r</span> if you really need it.</p>`)
     : '';
   const pgr = pager(`/s/${a}/${sid}`, {}, cur, max,

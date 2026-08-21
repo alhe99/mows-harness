@@ -376,6 +376,8 @@ layer_infra(){
   echo "  sudo install -m644 infra/dashboard/lite.mjs /opt/claude-dashboard/lite.mjs"
   echo "  sudo install -m644 infra/dashboard/claude-dash-lite.service.template /etc/systemd/system/claude-dash-lite.service && sudo systemctl daemon-reload"
   echo "  (runs as root by design — see the template's own header comment; restart after provisioning any new profile/agent)"
+  echo "  optional, for the dashboard system panel's spend metrics: sudo npm i -g ccusage"
+  echo "  (limits come from the agy layer's claude-quota; both degrade gracefully when absent)"
 
   echo "-- Android web console (infra/droid/ — OPTIONAL; full walkthrough: infra/droid/SETUP.md) --"
   render infra/droid/ws-scrcpy.service.template rendered/ws-scrcpy.service
