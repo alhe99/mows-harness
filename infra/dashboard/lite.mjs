@@ -478,38 +478,45 @@ const runAs = (envs, cmd, args, t = 30000) => new Promise(r =>
   execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
     { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out)));
 const jp = s => { try { return JSON.parse(s); } catch { return null; } };
+const mshort = m => String(m).replace(/^claude-/, '');
 async function collectUsage() {
   const today = new Date().toISOString().slice(0, 10);
-  const ymd = today.replace(/-/g, ''), ym1 = ymd.slice(0, 6) + '01';
+  const wk0iso = new Date(Date.now() - 6 * 86400e3).toISOString().slice(0, 10);
+  const ymd = wk0iso.replace(/-/g, ''), ym1 = today.replace(/-/g, '').slice(0, 6) + '01';
   const qline = await runAs([], 'claude-quota', ['--line'], 15000);
   const quota = {}; // "personal 5h 8.0% wk 18.0% | work 5h 11.0% wk 44.0% (threshold 70%)"
   for (const m of qline.matchAll(/(\w+) 5h ([\d.?]+)% wk ([\d.?]+)%/g))
     quota[m[1]] = { h5: isNaN(parseFloat(m[2])) ? null : parseFloat(m[2]), wk: isNaN(parseFloat(m[3])) ? null : parseFloat(m[3]) };
   const thr = +(qline.match(/threshold (\d+)/) || [])[1] || 70;
-  const accts = {}, top = [];
+  const accts = {};
   await Promise.all(UACCTS.map(async a => {
     const env = ['CLAUDE_CONFIG_DIR=' + a.dir];
+    // one daily call covers today AND the week: per-day rows since 7 days ago + totals
     const [dj, mj, sj, bj] = await Promise.all([
       runAs(env, 'ccusage', ['daily', '--json', '--since', ymd, '--breakdown']),
       runAs(env, 'ccusage', ['monthly', '--json', '--since', ym1]),
       runAs(env, 'ccusage', ['session', '--json'], 60000),
       runAs(env, 'ccusage', ['blocks', '--json', '--active']),
     ].map(p => p.then(jp)));
-    const d0 = (dj && dj.daily && dj.daily[0]) || null;
+    const rows = (dj && dj.daily) || [];
+    const d0 = rows.find(r => r.period === today) || null;
     const models = (d0 && d0.modelBreakdowns || []).map(m => ({ name: m.modelName, cost: m.cost || 0 }))
       .sort((x, y) => y.cost - x.cost);
     const blk = (bj && bj.blocks && bj.blocks[0]) || null;
-    accts[a.id] = { label: a.label, qkey: a.qkey,
+    const sess = (((sj && sj.session) || [])
+      .filter(s => ((s.metadata && s.metadata.lastActivity) || '') >= wk0iso)
+      .map(s => ({ sid: s.period || '', cost: s.totalCost || 0, models: (s.modelsUsed || []).map(mshort) }))
+      .sort((x, y) => y.cost - x.cost).slice(0, 6));
+    accts[a.id] = { id: a.id, label: a.label, qkey: a.qkey,
       cc: !!(dj || mj), // ccusage answered at all?
       today: (d0 && d0.totalCost) || 0,
+      week: (dj && dj.totals && dj.totals.totalCost) || 0,
       month: (mj && mj.monthly && mj.monthly[0] && mj.monthly[0].totalCost) || 0,
       models,
+      days: rows.map(r => ({ d: r.period || '', cost: r.totalCost || 0, models: (r.modelsUsed || []).map(mshort) })).reverse(),
+      sess,
       block: blk ? { cost: blk.costUSD || 0, rate: (blk.burnRate && blk.burnRate.costPerHour) || 0 } : null };
-    for (const s of (sj && sj.session) || [])
-      if (((s.metadata && s.metadata.lastActivity) || '').slice(0, 10) === today)
-        top.push({ a: a.id, sid: s.period || '', cost: s.totalCost || 0, models: s.modelsUsed || [] });
   }));
-  top.sort((x, y) => y.cost - x.cost);
   const agy = {};
   try {
     const hdir = TMUX_HOME + '/.local/state/agy-handoffs';
@@ -520,7 +527,7 @@ async function collectUsage() {
       } catch { /* not a handoff dir */ }
     }
   } catch { /* no agy state on this box */ }
-  return { quota, thr, accts, top: top.slice(0, 4), agy };
+  return { quota, thr, accts, agy };
 }
 let usageCache = { t: 0, d: null, busy: false };
 function usage() {
@@ -550,22 +557,26 @@ function sysPanel() {
     const acards = Object.values(u.accts).map(a => {
       const q = u.quota[a.qkey] || u.quota[a.label] || {};
       const qrow = (lbl, v) => `<div class="qrow"><span>${lbl}</span>${meter(v == null ? 0 : v, u.thr)}<b>${v == null ? '?' : v + '%'}</b></div>`;
-      const spend = a.cc
-        ? `<div class="qrow"><span>today</span><b>${money(a.today)}</b><span class="muted">· month ${money(a.month)}</span></div>
+      let spend, breakdown = '';
+      if (!a.cc) spend = `<div class="mlist muted">ccusage not installed — sudo npm i -g ccusage</div>`;
+      else {
+        spend = `<div class="qrow"><span>today</span><b>${money(a.today)}</b><span class="muted">· week ${money(a.week)} · month ${money(a.month)}</span></div>
 ${a.block ? `<div class="qrow"><span>5h block</span><b>${money(a.block.cost)}</b><span class="muted">· ${money(a.block.rate)}/h burn</span></div>` : ''}
-<div class="mlist${a.models.length ? '' : ' muted'}">${a.models.length ? a.models.map(m => `${esc(m.name.replace(/^claude-/, ''))} ${money(m.cost)}`).join(' · ') : 'no usage today'}</div>`
-        : `<div class="mlist muted">ccusage not installed — sudo npm i -g ccusage</div>`;
+<div class="mlist${a.models.length ? '' : ' muted'}">${a.models.length ? a.models.map(m => `${esc(mshort(m.name))} ${money(m.cost)}`).join(' · ') : 'no usage today'}</div>`;
+        breakdown = `<details class="ubd"><summary>full breakdown · 7 days</summary>
+<span class="sl" style="padding-top:8px">per day</span>
+${a.days.length ? a.days.map(r => `<div class="qrow"><span>${esc(r.d.slice(5))}</span><b>${money(r.cost)}</b><span class="muted mlist" style="padding:0">${r.models.map(esc).join(', ')}</span></div>`).join('') : '<div class="mlist muted">no usage this week</div>'}
+<span class="sl" style="padding-top:8px">sessions · lifetime spend</span>
+${a.sess.length ? a.sess.map(t => `<div class="qrow"><a class="sid8" href="/s/${a.id}/${esc(t.sid)}">${esc(t.sid.slice(0, 8))}</a><b>${money(t.cost)}</b><span class="muted mlist" style="padding:0">${t.models.map(esc).join(', ')}</span></div>`).join('') : '<div class="mlist muted">none this week</div>'}
+</details>`;
+      }
       return `<div class="stat"><span class="sl">${esc(a.label)} · limits</span>${qrow('5h', q.h5)}${qrow('week', q.wk)}
 <div class="mlist muted">delegate to agy at ${u.thr}%</div></div>
-<div class="stat"><span class="sl">${esc(a.label)} · spend</span>${spend}</div>`;
+<div class="stat"><span class="sl">${esc(a.label)} · spend</span>${spend}${breakdown}</div>`;
     }).join('');
-    const tops = u.top.length ? `<div class="stat wide"><span class="sl">today's sessions · lifetime spend</span>${u.top.map(t => {
-      const acct = BY_ID[t.a];
-      return `<div class="qrow"><span style="color:${acct ? acct.color : 'inherit'}">${acct ? esc(acct.label) : esc(t.a)}</span><a class="sid8" href="/s/${t.a}/${esc(t.sid)}">${esc(t.sid.slice(0, 8))}</a><b>${money(t.cost)}</b><span class="muted mlist" style="padding:0">${t.models.map(m => esc(m.replace(/^claude-/, ''))).join(', ')}</span></div>`;
-    }).join('')}</div>` : '';
     const ag = Object.keys(u.agy).length
       ? Object.entries(u.agy).map(([k, v]) => `${esc(k)} <b>${v}</b>`).join(' · ') : 'no handoffs';
-    ubody = `<div class="statgrid u">${acards}${tops}
+    ubody = `<div class="statgrid u">${acards}
 <div class="stat wide"><span class="sl">agy · antigravity handoffs</span><div class="qrow"><span class="mlist" style="padding:0">${ag}</span></div></div></div>`;
   }
   const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
@@ -771,13 +782,13 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 @media(max-width:700px) and (orientation:landscape){body.watchlive h1,body.watchlive>.bar,body.watchlive>.note,body.watchlive footer,body.watchlive .tabs{display:none}body.watchlive{padding:4px}.watchwrap .vnc{aspect-ratio:auto;height:calc(100dvh - 74px)}}
 /* system + usage panel */
 .sys{margin:2px 0 12px;border:1px solid var(--bd);border-radius:var(--r-lg);background:var(--card)}
-.sys summary{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:9px 12px;cursor:pointer;list-style:none;font-size:13px;color:var(--mut);min-height:40px}
+.sys > summary{position:relative;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;padding:9px 34px 9px 12px;cursor:pointer;list-style:none;font-size:13px;color:var(--mut)}
 .sys summary::-webkit-details-marker{display:none}
-.sys summary::after{content:'▾';margin-left:auto;color:var(--dim)}
-.sys[open] summary::after{content:'▴'}
-.sys summary:hover{color:var(--fg2)}
+.sys > summary::after{content:'▾';position:absolute;right:13px;top:9px;color:var(--dim)}
+.sys[open] > summary::after{content:'▴'}
+.sys > summary:hover{color:var(--fg2)}
 .syst{color:var(--fg2);font-weight:600}
-.syss{overflow-wrap:anywhere}
+.syss{overflow-wrap:anywhere;min-width:0}
 .syss b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
 .sysbody{padding:0 12px 12px;border-top:1px solid var(--hair)}
 .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;padding-top:10px}
@@ -794,6 +805,12 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 .qrow>span:first-child{width:52px;flex-shrink:0}
 .qrow .sid8{font-family:var(--mono);font-size:11px;color:var(--fg2);text-decoration:underline;text-decoration-color:var(--bd2)}
 .mlist{font-size:11px;color:var(--mut);padding-top:4px;overflow-wrap:anywhere;min-width:0}
+.ubd{margin-top:8px;border-top:1px solid var(--hair);padding-top:6px}
+.ubd summary{cursor:pointer;list-style:none;font-size:11px;color:var(--fg2);min-height:26px;display:flex;align-items:center}
+.ubd summary::-webkit-details-marker{display:none}
+.ubd summary::before{content:'▸';color:var(--dim);margin-right:6px}
+.ubd[open] summary::before{content:'▾'}
+@media(max-width:700px){.sys > summary{font-size:12px;padding:8px 30px 8px 10px}.sysbody{padding:0 8px 8px}}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
@@ -1010,8 +1027,8 @@ async function listView(req, res, url) {
 <span class="sz">${fmtSz(e.sz)}</span><span class="sid">${sid8}</span></a>${go}${del}</div>`;
   });
 
-  const label = HOST_ACCT[sub] ? sub : os.hostname();
-  const body = `<h1><a href="/">mows sessions</a> <span class="muted">· ${esc(label)}</span></h1>
+  const label = HOST_ACCT[sub] ? sub : '';
+  const body = `<h1><a href="/">mows sessions</a>${label ? ` <span class="muted">· ${esc(label)}</span>` : ''}</h1>
 <div class="bar">${chips}</div>
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
