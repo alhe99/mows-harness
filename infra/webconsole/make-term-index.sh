@@ -14,7 +14,15 @@
 # script automates those exact steps: start ttyd once, fetch the page it serves, splice
 # this directory's self-authored additions into it, write the result.
 #
-# What gets spliced in, immediately before </body>, in this order:
+# What gets spliced in:
+#   0. into <head>, right after the opening tag: the mobile head set — the tuned viewport
+#      meta (ttyd's stock page ships NO viewport meta at all, so without this iPhones lay
+#      the page out at ~980px and the terminal renders desktop-tiny) plus the <!--cc-pwa-->
+#      manifest/apple-touch-icon/web-app metas that make /term installable full-screen from
+#      the home screen (lite.mjs serves both referenced URLs). This set once lived as a
+#      hand patch on the deployed page — which a regen silently wiped, breaking every
+#      phone. Anything the page needs MUST be encoded here, never patched on the output.
+#   Immediately before </body>, in this order:
 #   1. clipboard-shim.html's <script> block (OSC 52 -> browser clipboard; its own header
 #      comment is stripped — see the splice step below)
 #   2. every blocks/*.html file, verbatim, in filename order (10-cckb.html, 20-ccpwa.html,
@@ -74,6 +82,7 @@ done
 TTYD_PID=""
 TMP_PAGE=""
 TMP_INSERT=""
+TMP_HEAD=""
 TMP_SPLICED=""
 KEEP_SPLICED=""
 cleanup() {
@@ -83,6 +92,7 @@ cleanup() {
   fi
   [ -n "$TMP_PAGE" ] && rm -f "$TMP_PAGE"
   [ -n "$TMP_INSERT" ] && rm -f "$TMP_INSERT"
+  [ -n "$TMP_HEAD" ] && rm -f "$TMP_HEAD" "$TMP_HEAD.out"
   [ -n "$TMP_SPLICED" ] && [ -z "$KEEP_SPLICED" ] && rm -f "$TMP_SPLICED"
 }
 trap cleanup EXIT
@@ -137,15 +147,49 @@ cat "$BLOCKS_DIR"/*.html >> "$TMP_INSERT"
 # in its pattern space, and any sed s/// form would need every one of those special
 # characters escaped first anyway. awk reads the insert as its own input file (first of
 # the two ARGV files below), so none of its bytes are ever interpreted as a regex special.
+# index()/substr(), not a line-level match: ttyd's page arrives as ONE giant line, so an
+# earlier "print the insert before the line that contains </body>" rule dropped the whole
+# insert before the doctype — quirks mode, and step 0's head set never applied. Splitting
+# the matched line AT the tag is what "immediately before </body>" actually requires.
 TMP_SPLICED=$(mktemp)
 awk '
   FNR==NR { ins = ins $0 ORS; next }
-  tolower($0) ~ /<\/body>/ { printf "%s", ins }
+  !done { i = index($0, "</body>");
+    if (i) { printf "%s%s", substr($0, 1, i - 1), ins; print substr($0, i); done = 1; next } }
   { print }
 ' "$TMP_INSERT" "$TMP_PAGE" > "$TMP_SPLICED"
 
+# --- 7b. head splice: mobile viewport + cc-pwa metas, right after <head> (see step 0) ---
+TMP_HEAD=$(mktemp)
+cat > "$TMP_HEAD" <<'EOF'
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+<!--cc-pwa--><link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"><meta name="theme-color" content="#161b22"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!--/cc-pwa-->
+EOF
+awk '
+  FNR==NR { ins = ins $0 ORS; next }
+  !done { i = index($0, "<head>");
+    if (i) { printf "%s%s", substr($0, 1, i + 5), ins; print substr($0, i + 6); done = 1; next } }
+  { print }
+' "$TMP_HEAD" "$TMP_SPLICED" > "$TMP_HEAD.out" && mv "$TMP_HEAD.out" "$TMP_SPLICED"
+
 if ! grep -qF "$MARKER" "$TMP_SPLICED"; then
   echo "make-term-index.sh: splice ran but marker \"$MARKER\" is missing from the result — aborting before writing $OUT" >&2
+  exit 1
+fi
+# Order proof: the shim must sit inside the body, i.e. AFTER <head> — catches the
+# insert-landed-before-the-doctype failure that a bare "is the marker present" check let
+# through. Byte offsets via grep -b: cheap and immune to the single-line layout.
+MARKER_AT=$(grep -abom1 -F "$MARKER" "$TMP_SPLICED" | cut -d: -f1)
+HEAD_AT=$(grep -abom1 -F '<head>' "$TMP_SPLICED" | cut -d: -f1)
+if [ -z "$MARKER_AT" ] || [ -z "$HEAD_AT" ] || [ "$MARKER_AT" -le "$HEAD_AT" ]; then
+  echo "make-term-index.sh: splice landed outside <body> (marker@${MARKER_AT:-?} <head>@${HEAD_AT:-?}) — aborting before writing $OUT" >&2
+  exit 1
+fi
+# Head-set proof: exactly one viewport meta (a second one means ttyd started shipping its
+# own — revisit step 7b before trusting the result) and the PWA metas made it in.
+NVIEW=$(grep -c 'name="viewport"' "$TMP_SPLICED")
+if [ "$NVIEW" != 1 ] || ! grep -qF 'apple-mobile-web-app-capable' "$TMP_SPLICED"; then
+  echo "make-term-index.sh: head splice failed (viewport metas: $NVIEW, want exactly 1) — aborting before writing $OUT" >&2
   exit 1
 fi
 for b in "$BLOCKS_DIR"/*.html; do
@@ -163,7 +207,7 @@ if mkdir -p "$OUT_DIR" 2>/dev/null && cp "$TMP_SPLICED" "$OUT" 2>/dev/null; then
   # --- 9. success ---
   BYTES=$(wc -c <"$OUT" | tr -d ' ')
   NBLOCKS=$(ls "$BLOCKS_DIR"/*.html 2>/dev/null | wc -l | tr -d ' ')
-  echo "make-term-index.sh: wrote $OUT (${BYTES} bytes; shim + ${NBLOCKS} blocks spliced, marker \"$MARKER\" present)"
+  echo "make-term-index.sh: wrote $OUT (${BYTES} bytes; mobile head + shim + ${NBLOCKS} blocks spliced, marker \"$MARKER\" present)"
 else
   KEEP_SPLICED=1
   echo "make-term-index.sh: cannot write $OUT (permission denied)." >&2
