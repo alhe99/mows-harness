@@ -29,7 +29,7 @@ UNKNOWN='{"five_hour_pct":null,"weekly_pct":null,"five_hour_resets_at":null,"wee
 
 TOKEN_URL="https://console.anthropic.com/v1/oauth/token"
 # Claude Code's own public OAuth client id (baked into every CLI install — not a secret).
-OAUTH_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+OAUTH_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e" # gitleaks:allow — public client id, not a credential
 
 # refresh_oauth <cfg-dir>: the access token on disk is EXPIRED — mint a fresh one with
 # the stored refresh token and write it back to .credentials.json the same way claude
