@@ -507,7 +507,9 @@ async function collectUsage() {
       .filter(s => ((s.metadata && s.metadata.lastActivity) || '') >= wk0iso)
       .map(s => ({ sid: s.period || '', cost: s.totalCost || 0, models: (s.modelsUsed || []).map(mshort) }))
       .sort((x, y) => y.cost - x.cost).slice(0, 6));
-    accts[a.id] = { id: a.id, label: a.label, qkey: a.qkey,
+    let tokExp = 0; // oauth expiry only — used to explain a "?" honestly; token itself never read
+    try { tokExp = (JSON.parse(readFileSync(a.dir + '/.credentials.json', 'utf8')).claudeAiOauth || {}).expiresAt || 0; } catch { /* no creds file */ }
+    accts[a.id] = { id: a.id, label: a.label, qkey: a.qkey, tokExp,
       cc: !!(dj || mj), // ccusage answered at all?
       today: (d0 && d0.totalCost) || 0,
       week: (dj && dj.totals && dj.totals.totalCost) || 0,
@@ -527,7 +529,14 @@ async function collectUsage() {
       } catch { /* not a handoff dir */ }
     }
   } catch { /* no agy state on this box */ }
-  return { quota, thr, accts, agy };
+  let agyEv = null;
+  try {
+    const lines = readFileSync(TMUX_HOME + '/.local/state/agy-handoffs/events.log', 'utf8').trim().split('\n');
+    const last = lines[lines.length - 1] || '';
+    const sp = last.indexOf(' ');
+    if (sp > 0) agyEv = { t: Date.parse(last.slice(0, sp)) || 0, msg: last.slice(sp + 1) };
+  } catch { /* no events yet */ }
+  return { quota, thr, accts, agy, agyEv };
 }
 let usageCache = { t: 0, d: null, busy: false };
 function usage() {
@@ -571,13 +580,17 @@ ${a.sess.length ? a.sess.map(t => `<div class="qrow"><a class="sid8" href="/s/${
 </details>`;
       }
       return `<div class="stat"><span class="sl">${esc(a.label)} · limits</span>${qrow('5h', q.h5)}${qrow('week', q.wk)}
-<div class="mlist muted">delegate to agy at ${u.thr}%</div></div>
+<div class="mlist muted">${a.tokExp && a.tokExp < Date.now() && q.h5 == null ? `oauth token expired ${rel(a.tokExp)} ago — open any ${esc(a.label)} session and it refreshes` : `delegate to agy at ${u.thr}%`}</div></div>
 <div class="stat"><span class="sl">${esc(a.label)} · spend</span>${spend}${breakdown}</div>`;
     }).join('');
     const ag = Object.keys(u.agy).length
       ? Object.entries(u.agy).map(([k, v]) => `${esc(k)} <b>${v}</b>`).join(' · ') : 'no handoffs';
     ubody = `<div class="statgrid u">${acards}
-<div class="stat wide"><span class="sl">agy · antigravity handoffs</span><div class="qrow"><span class="mlist" style="padding:0">${ag}</span></div></div></div>`;
+<div class="stat wide"><span class="sl">agy · antigravity</span>
+<div class="qrow"><span style="width:72px">limits</span><span class="mlist" style="padding:0">antigravity's cli exposes no usage/quota api — delegation is gated by the claude limit bars above (${u.thr}%)</span></div>
+<div class="qrow"><span style="width:72px">handoffs</span><span class="mlist" style="padding:0">${ag}</span></div>
+${u.agyEv ? `<div class="qrow"><span style="width:72px">last event</span><span class="mlist" style="padding:0">${esc(u.agyEv.msg)} <span class="muted">· ${rel(u.agyEv.t)} ago</span></span></div>` : ''}
+</div></div>`;
   }
   const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
   return `<details class="sys"><summary><span class="syst">📊 system</span><span class="syss">load <b>${h.load.toFixed(2)}</b> · mem <b>${GB(h.memUsed)}/${GB(h.memTot)}G</b> · disk <b>${GB(h.dskUsed)}/${GB(h.dskTot)}G</b> · up <b>${days}d</b>${sumToday == null ? '' : ` · today <b>${money(sumToday)}</b>`}</span></summary>
