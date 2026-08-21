@@ -18,11 +18,12 @@
 #   1. clipboard-shim.html's <script> block (OSC 52 -> browser clipboard; its own header
 #      comment is stripped — see the splice step below)
 #   2. every blocks/*.html file, verbatim, in filename order (10-cckb.html, 20-ccpwa.html,
-#      ...) — the mobile UX for /term: key bar (cckb), PWA geometry (ccpwa), home key
-#      (cchome), photo attach (ccimg), keyboard suggestions + reconnect (ccime), copy/paste
-#      overlay (ccclip), restart-pane key (ccrst). Each block documents itself in its own
-#      top-of-block comment. Runtime kill switches, as /term URL params, for the three
-#      that intercept input: ?ime=off ?clip=off ?rst=off.
+#      ...) — /term's own UX: unicode-11 char widths (ccu11), key bar (cckb), PWA geometry
+#      (ccpwa), home key (cchome), photo attach (ccimg), keyboard suggestions + reconnect
+#      (ccime), copy/paste overlay (ccclip), restart-pane key (ccrst). Each block documents
+#      itself in its own top-of-block comment. Runtime kill switches, as /term URL params:
+#      ?ime=off ?clip=off ?rst=off for the three that intercept input, ?u11=off for the
+#      width shim.
 #
 # usage: make-term-index.sh [output-path]
 #   output-path   default: /opt/claude-dashboard/term-index.html — the exact path

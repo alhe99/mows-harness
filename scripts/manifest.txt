@@ -145,6 +145,7 @@ watchdogs/logrotate.d/claude-harness
 scripts/e2e-agy.sh
 scripts/live-agy.sh
 infra/webconsole/blocks/10-cckb.html
+infra/webconsole/blocks/15-ccu11.html
 infra/webconsole/blocks/20-ccpwa.html
 infra/webconsole/blocks/30-cchome.html
 infra/webconsole/blocks/40-ccimg.html
