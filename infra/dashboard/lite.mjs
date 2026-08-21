@@ -479,7 +479,10 @@ const runAs = (envs, cmd, args, t = 30000) => new Promise(r =>
     { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out)));
 const jp = s => { try { return JSON.parse(s); } catch { return null; } };
 const mshort = m => String(m).replace(/^claude-/, '');
-async function collectUsage() {
+async function collectUsage(force) {
+  // force: the panel's ↻ button — bust claude-quota's own 5-min cache too, so
+  // the limit bars re-fetch from the API instead of echoing its cached numbers
+  if (force) await runAs([], 'claude-quota', ['--refresh'], 20000);
   const today = new Date().toISOString().slice(0, 10);
   const wk0iso = new Date(Date.now() - 6 * 86400e3).toISOString().slice(0, 10);
   const ymd = wk0iso.replace(/-/g, ''), ym1 = today.replace(/-/g, '').slice(0, 6) + '01';
@@ -538,17 +541,18 @@ async function collectUsage() {
   } catch { /* no events yet */ }
   return { quota, thr, accts, agy, agyEv };
 }
-let usageCache = { t: 0, d: null, busy: false };
-function usage() {
-  if (!usageCache.busy && Date.now() - usageCache.t > 300e3) {
+let usageCache = { t: 0, d: null, busy: false, p: null };
+function usage(force) {
+  if (!usageCache.busy && (force || Date.now() - usageCache.t > 300e3)) {
     usageCache.busy = true;
-    collectUsage().then(d => { usageCache = { t: Date.now(), d, busy: false }; })
+    usageCache.p = collectUsage(force)
+      .then(d => { usageCache = { t: Date.now(), d, busy: false, p: null }; })
       .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 240e3; }); // retry in 1 min
   }
   return usageCache.d;
 }
 usage(); // warm the cache at boot so the first visitor already sees numbers
-function sysPanel() {
+function sysPanel(fhref, open) {
   const h = hostInfo(), u = usage();
   const pct = (x, t) => t ? Math.min(100, Math.round(x / t * 100)) : 0;
   const meter = (p, hot) => `<span class="meter"><i style="width:${Math.min(100, Math.max(0, p))}%${p >= (hot == null ? 101 : hot) ? ';background:var(--bad)' : p >= 50 ? ';background:var(--warn)' : ''}"></i></span>`;
@@ -593,8 +597,10 @@ ${u.agyEv ? `<div class="qrow"><span style="width:72px">last event</span><span c
 </div></div>`;
   }
   const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
-  return `<details class="sys"><summary><span class="syst">📊 system</span><span class="syss">load <b>${h.load.toFixed(2)}</b> · mem <b>${GB(h.memUsed)}/${GB(h.memTot)}G</b> · disk <b>${GB(h.dskUsed)}/${GB(h.dskTot)}G</b> · up <b>${days}d</b>${sumToday == null ? '' : ` · today <b>${money(sumToday)}</b>`}</span></summary>
-<div class="sysbody">${cards}${ubody}</div></details>`;
+  const age = usageCache.t ? (rel(usageCache.t) === 'now' ? 'now' : rel(usageCache.t) + ' ago') : '—';
+  const urow = `<div class="bar"><span class="chip">usage updated <b>${age}</b>${usageCache.busy ? ' · refreshing…' : ''}</span><a class="chip" href="${fhref || '/?fresh=1'}">↻ refresh</a></div>`;
+  return `<details class="sys"${open ? ' open' : ''}><summary><span class="syst">📊 system</span><span class="syss">load <b>${h.load.toFixed(2)}</b> · mem <b>${GB(h.memUsed)}/${GB(h.memTot)}G</b> · disk <b>${GB(h.dskUsed)}/${GB(h.dskTot)}G</b> · up <b>${days}d</b>${sumToday == null ? '' : ` · today <b>${money(sumToday)}</b>`}</span></summary>
+<div class="sysbody">${cards}${urow}${ubody}</div></details>`;
 }
 
 // ---------- transcript parse (LRU 3 files; >25MB -> tail 8MB window) ----------
@@ -1047,6 +1053,7 @@ async function listView(req, res, url) {
   // filters are power-user controls — folded away by default; auto-open (and
   // summarized) whenever the URL carries one so active state is never hidden
   const fOn = !!(url.searchParams.get('acct') || d || s || q);
+  const sysOpen = !!url.searchParams.get('sys'); // set by the ↻ usage-refresh bounce
   const fState = [acct && BY_ID[acct] ? BY_ID[acct].label : 'all',
     ({ today: 'today', '7d': '7 days', '30d': '30 days' })[d] || 'all time']
     .concat(s === 'live' ? ['live'] : [], q ? ['“' + esc(q) + '”'] : []).join(' · ');
@@ -1057,7 +1064,7 @@ async function listView(req, res, url) {
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
 <div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a></div>
-${sysPanel()}
+${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
@@ -1161,7 +1168,15 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await watchAction(req, res, p);
     }
-    if (p === '/' ) return await listView(req, res, url);
+    if (p === '/' ) {
+      if (url.searchParams.get('fresh')) { // ↻ button: force usage re-collect, then bounce back (PRG)
+        usage(true);
+        if (usageCache.p) await Promise.race([usageCache.p, new Promise(r => setTimeout(r, 25000))]);
+        url.searchParams.delete('fresh'); url.searchParams.set('sys', '1');
+        res.writeHead(303, { location: '/?' + url.searchParams }); return res.end();
+      }
+      return await listView(req, res, url);
+    }
     if (p === '/sessions' || p === '/projects') { res.writeHead(302, { location: '/' }); return res.end(); }
     const m = p.match(SESSION_PATH_RE);
     if (m) return await detailView(req, res, m[1], m[2]);
