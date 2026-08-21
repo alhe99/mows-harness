@@ -4,6 +4,7 @@
 .claude-plugin/marketplace.json
 .github/workflows/ci.yml
 .gitignore
+.gitleaksignore
 ATTRIBUTIONS.md
 LICENSE
 README.md
