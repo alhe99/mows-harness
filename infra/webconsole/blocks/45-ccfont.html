@@ -1,0 +1,62 @@
+<script id="ccfont-js">/*ccfont-v1: font size A-/A+ keys, persisted per device in localStorage; xterm 5 options API*/(function(){
+  var tries = 0;
+  var iv = setInterval(function(){
+    var bar = document.getElementById("cckb");
+    var T = window.term;
+    if (bar && T && T.options) {
+      clearInterval(iv);
+      init(bar, T);
+    } else if (++tries >= 200) {
+      clearInterval(iv);
+    }
+  }, 50);
+
+  function init(bar, T) {
+    var KEY = "ccfontsize";
+    var lastTap = 0;
+    var span = document.createElement("span");
+    span.style.cssText = "font:11px ui-monospace,monospace;color:#8b949e;align-self:center;min-width:18px;text-align:center;";
+
+    function apply(v) {
+      v = v < 8 ? 8 : (v > 22 ? 22 : v);
+      T.options.fontSize = v;
+      window.dispatchEvent(new Event("resize"));
+      span.textContent = T.options.fontSize;
+      return v;
+    }
+
+    span.textContent = T.options.fontSize;
+
+    /* ttyd applies its server-sent fontSize pref when the websocket preamble lands —
+       after this block runs — and re-applies it on every reconnect, stomping any
+       restored size. A one-shot restore therefore can't win; this guardian re-asserts
+       the stored size whenever the terminal drifts from it, except right after a manual
+       tap (which is busy updating the store itself). */
+    setInterval(function () {
+      try {
+        var s = parseInt(localStorage.getItem(KEY), 10);
+        if (s >= 8 && s <= 22 && s !== T.options.fontSize && Date.now() - lastTap > 2000) apply(s);
+      } catch (e) {}
+    }, 1000);
+
+    function makeBtn(txt, delta) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = txt;
+      b.addEventListener("pointerdown", function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        lastTap = Date.now();
+        var v = apply((T.options.fontSize || 14) + delta);
+        try {
+          localStorage.setItem(KEY, v);
+        } catch (e) {}
+      });
+      return b;
+    }
+
+    bar.appendChild(makeBtn("A−", -1));
+    bar.appendChild(span);
+    bar.appendChild(makeBtn("A+", 1));
+  }
+})()</script>
