@@ -218,6 +218,12 @@ exist until you generate it:
 infra/webconsole/make-term-index.sh
 ```
 
+The unit runs ttyd with `-t rendererType=canvas`, which is load-bearing on phones: ttyd's
+default WebGL renderer loses its GPU context whenever iOS backgrounds the PWA, and ttyd
+1.7.4 never re-enables it for that page load, so the terminal comes back garbled and then
+blank. The canvas renderer has no context to lose. See that flag's note in
+`claude-web-term.service.template` before changing it.
+
 `/opt/claude-dashboard` was created `root:root 0755` by `install.sh --infra`'s own printed
 `sudo mkdir -p /opt/claude-dashboard` command back in step 5, so a plain non-root run of the
 script above **cannot** write the result there directly — it detects that itself, keeps the

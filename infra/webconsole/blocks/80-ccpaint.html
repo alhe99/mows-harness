@@ -9,6 +9,12 @@ ttyd 1.7.4 only half-handles this: its onContextLoss does `webglAddon?.dispose()
 clears the reference, and its re-enable path is `if(!this.webglAddon)` -- so once lost,
 WebGL never comes back for that page load either.
 Fix: on foreground, drop the atlas and repaint the viewport. One atlas rebuild per resume.
+This block alone was NOT enough: clearTextureAtlas() on a context that is actually lost (not
+merely stale) is a no-op, so the screen decayed from garbled to fully blank -- background
+rectangles still painting, no glyph anywhere. WebGL is therefore off entirely now, via
+`-t rendererType=canvas` on ttyd (see claude-web-term.service.template). The canvas renderer
+has no context to lose; this block stays as the belt, because iOS can still purge a canvas
+backing store on background and a repaint DOES recover that.
 Kill switch: /term/?paint=off
 ponytail: no renderer swap and no patch to the 700KB ttyd bundle -- a forced repaint is the
 whole bug. Self-check: /term/?paintdbg=1 logs each repaint to the console.*/(function(){

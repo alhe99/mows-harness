@@ -39,6 +39,18 @@
 # /term windows all named alike. Without it the tab reads
 # "<session> · <dir> | <command> (<host>)" — the session name first, where the tab strip
 # can show it. (Removed from a live deployment 2026-08-08 for exactly this reason.)
+#
+# `-t rendererType=canvas` turns OFF ttyd's default WebGL renderer, on purpose. Backgrounding
+# the iOS PWA loses the GPU context, and ttyd 1.7.4 cannot come back from that: its
+# onContextLoss handler calls `webglAddon.dispose()` but never clears `this.webglAddon`,
+# while the re-enable path is guarded by `if(!this.webglAddon)` — so WebGL is gone for the
+# rest of that page load. What you see on the phone is a garbled screen (rows drawn against
+# a stale glyph atlas) decaying into a blank one where only background rectangles paint —
+# tmux's green status bar with no text in it was the giveaway. Not recoverable from JS
+# either: clearTextureAtlas() on a dead context is a no-op, which is why the ccpaint repaint
+# block alone wasn't enough. The canvas renderer has no context to lose, and a purged canvas
+# IS recoverable by a repaint, which ccpaint already does on foreground. Upgrade path is one
+# word: rendererType=webgl restores the old behaviour, =dom drops canvas too (slowest).
 [Unit]
 Description=Web terminal (ttyd) for Claude Code sessions — /term behind Caddy auth
 After=network.target
@@ -47,7 +59,7 @@ After=network.target
 Type=simple
 User={{ADMIN_USER}}
 Environment=LANG=C.UTF-8
-ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
+ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -t rendererType=canvas -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
 Restart=on-failure
 RestartSec=3
 
