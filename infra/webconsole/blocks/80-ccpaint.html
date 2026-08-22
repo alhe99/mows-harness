@@ -1,34 +1,51 @@
-<script id="ccpaint-js">/*ccpaint-v1: garbled/stale screen when the PWA comes back from
-background, cleared by any tap. Not corrupt content -- a WebGL render artifact. While the
-tab is hidden requestAnimationFrame stops firing AND mobile browsers reclaim the GPU
-context, so xterm's glyph texture atlas is dead by the time rAF resumes. The next partial
-repaint draws only the dirty rows against that stale atlas, so rows come out with glyphs
-belonging to other lines -- fused words, one line repeated down the screen. A tap forced a
-full refresh, which is why touching the screen "fixed" it.
-ttyd 1.7.4 only half-handles this: its onContextLoss does `webglAddon?.dispose()` but never
-clears the reference, and its re-enable path is `if(!this.webglAddon)` -- so once lost,
-WebGL never comes back for that page load either.
-Fix: on foreground, drop the atlas and repaint the viewport. One atlas rebuild per resume.
-This block alone was NOT enough: clearTextureAtlas() on a context that is actually lost (not
-merely stale) is a no-op, so the screen decayed from garbled to fully blank -- background
-rectangles still painting, no glyph anywhere. WebGL is therefore off entirely now, via
-`-t rendererType=canvas` on ttyd (see claude-web-term.service.template). The canvas renderer
-has no context to lose; this block stays as the belt, because iOS can still purge a canvas
-backing store on background and a repaint DOES recover that.
-Kill switch: /term/?paint=off
-ponytail: no renderer swap and no patch to the 700KB ttyd bundle -- a forced repaint is the
-whole bug. Self-check: /term/?paintdbg=1 logs each repaint to the console.*/(function(){
+<script id="ccpaint-js">/*ccpaint-v2: blank or garbled screen when the phone comes back to a
+live session, cleared by any tap. Not corrupt content -- nothing repainted while we were away.
+Two renderer generations of this bug, same shape: on WebGL, rows drew against a stale glyph
+atlas (fused words) and then only background rectangles painted -- a green tmux bar with no
+text in it. ttyd 1.7.4 cannot recover a lost WebGL context (its onContextLoss disposes the
+addon but never clears the reference, and the re-enable path is `if(!this.webglAddon)`), so
+WebGL is now off entirely: `-t rendererType=canvas` on the unit. The canvas renderer has no
+context to lose, but iOS still purges canvas backing stores while the app is away, which
+leaves the whole grid empty with only the cursor layer repainting on blink.
+v1 hung the recovery on visibilitychange/pageshow/focus. That covers app-switching and NOTHING
+else: locking the iPhone screen in a standalone PWA fires none of those three, yet still
+freezes the page -- the same iOS gap 50-ccime.html works around for its reconnect kick. So v1
+simply never ran on the screen-off path, which is the path that kept reproducing.
+v2 stops trusting events for this and watches for evidence we were away instead:
+  1. the events, still, for app-switch (they do fire there)
+  2. a time gap -- a 1s timer that comes back >2.5s late means the page was frozen
+  3. a NEW websocket -- ttyd kills the child process on socket close and starts a fresh one on
+     reconnect, so a new socket is proof both that we were away and that output is coming
+repaint() also dispatches a resize, which makes the APPLICATION redraw (tmux/claude repaint on
+SIGWINCH) rather than only re-blitting whatever the renderer still holds -- the belt for output
+lost across a reconnect. Idempotent, once per resume.
+Kill switch: /term/?paint=off   Self-check: /term/?paintdbg=1 logs every repaint + its trigger.
+ponytail: polling a 1s timer instead of chasing the per-iOS-version event matrix -- one
+subtraction per second, and it cannot be wrong about whether the page stopped running.*/(function(){
 if(/[?&]paint=off\b/.test(location.search))return;
-var dbg=/[?&]paintdbg=1\b/.test(location.search);
-function repaint(){var t=window.term;if(!t)return;
+var dbg=/[?&]paintdbg=1\b/.test(location.search),n=0;
+function repaint(why){var t=window.term;if(!t)return;
  try{t.clearTextureAtlas&&t.clearTextureAtlas()}catch(e){}
  try{t.refresh(0,t.rows-1)}catch(e){}
- if(dbg)console.log('[ccpaint] repaint',t.rows+'r')}
+ try{window.dispatchEvent(new Event('resize'))}catch(e){}/*fit+SIGWINCH: the app redraws too*/
+ if(dbg)console.log('[ccpaint] repaint',++n,why)}
+function resume(why){requestAnimationFrame(function(){repaint(why)});
+ setTimeout(function(){repaint(why+'/late')},300)}/*rAF can beat the GPU/canvas actually coming back*/
 ['visibilitychange','pageshow','focus'].forEach(function(ty){
  (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
-  if(document.visibilityState!=='visible')return;
-  requestAnimationFrame(repaint);
-  setTimeout(repaint,300)/*rAF can run before the GPU context is actually back*/})});
-/*capture on document -- this fires on the canvas and does not bubble*/
-document.addEventListener('webglcontextrestored',function(){requestAnimationFrame(repaint)},true);
+  if(document.visibilityState!=='visible')return;resume(ty)})});
+/*fires on the canvas and does not bubble -- capture on document*/
+document.addEventListener('webglcontextrestored',function(){resume('ctxrestored')},true);
+var last=Date.now(),ws=null,first=true;
+setInterval(function(){
+ var now=Date.now();
+ if(now-last>2500)resume('frozen-'+(now-last)+'ms');/*screen lock: no event, but time moved*/
+ last=now;
+ var f=window.__ccimeWS,w=f&&f();/*exported by 50-ccime.html; absent on desktop, fine*/
+ if(!w||w===ws)return;
+ ws=w;
+ if(first){first=false;return}/*the page's own first socket is not a reconnect*/
+ if(w.readyState===1)resume('ws-new');
+ else w.addEventListener('open',function(){resume('ws-open')})
+},1000);
 })()</script>
