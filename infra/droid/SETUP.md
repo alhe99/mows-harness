@@ -11,7 +11,7 @@ This layer is optional. Skip it entirely and nothing else in the harness cares: 
 Caddyfile's droid routes just never get hit, and the dashboard's `/droid` page reports
 the emulator stopped.
 
-Prerequisites: Docker and Node (both already required elsewhere — see
+Prerequisites: Docker (`sudo apt-get install -y docker.io`), Node (see
 [`infra/SETUP.md`](../SETUP.md)), plus `sudo apt-get install -y adb`.
 
 ## 1. binder kernel modules (once, persisted)

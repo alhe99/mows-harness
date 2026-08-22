@@ -6,6 +6,7 @@ argument-hint: <model|-> [effort]  ·  e.g. fable max · opus[1m] xhigh · - hig
 You are handling `/switch`. The user's argument string (may be empty) is: "$ARGUMENTS"
 
 `/model` and `/effort` do not work over remote control, and model/effort are only read at session start. `claude-rc switch` fixes this: it rewrites the defaults, then re-hosts THIS session in place — same conversation, new model/effort, effective immediately.
+Requires `claude-rc` from the fleet layer (`./install.sh --fleet`).
 
 **If "$ARGUMENTS" is EMPTY** — print EXACTLY the menu below, then STOP. Do not call any tools.
 

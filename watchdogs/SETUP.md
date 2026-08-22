@@ -51,6 +51,9 @@ config files don't expand it either. Render it to an absolute path before instal
   `claude-remote@*` units — see `infra/os/sudoers.d` (installed separately). Without it,
   recovery attempts just fail loudly into `claude-health.log`; the rest of the watchdog
   keeps running normally either way.
+- **ss (iproute2)**: needed by `claude-health` to query established connections. If `ss` is
+  absent, established connection count (`est`) is always evaluated as 0, which triggers false
+  `WEDGED` states and unwarranted recovery restarts. Install via `sudo apt-get install -y iproute2`.
 - **claude-mem**: no systemd service to install or start — claude-mem's own plugin hooks
   spawn its worker on `:37777` the first time a Claude Code session starts. `claude-mem-health`
   only *checks* that the worker is up and that every profile's plugin scope is still
@@ -67,7 +70,7 @@ config files don't expand it either. Render it to an absolute path before instal
 |---|---|---|
 | `claude-health` | `*/5 * * * *` | Per profile: is `claude-remote@<profile>` active? Any established backend connection? Sustained-WEDGED >=8min triggers `reset-claude-env` + a unit restart (rate-limited to once per 2h; disable entirely by touching `~/.local/state/claude-health.norecover`). |
 | `claude-mem-health` | `*/10 * * * *` | Per profile: self-heals `installed_plugins.json` scope back to `user`; checks the shared memory worker on `:37777`; flags any transcript with real user turns that never produced a `sdk_sessions` row. |
-| `reap-idle-claude` | `17 * * * *` | Kills detached `cc-<profile>-*` tmux sessions idle beyond `$IDLE` seconds (24h default) — spares any pane showing a usage-limit banner, since the shield will revive it once the reset passes. |
+| `reap-idle-claude` | `17 * * * *` | Kills detached tmux sessions (matching `cc-*`, `ccw-*`, `web-*`, `agy-*`) idle beyond `$IDLE` seconds (24h default) — spares any pane showing a usage-limit banner, since the shield will revive it once the reset passes. |
 | `reap-mcp-orphans` | `*/15 * * * *` | Kills MCP server processes reparented to init (ppid==1, age>5min) — excludes tmux/claude/remote-control processes so a daemonized tmux server hosting a live session is never mistaken for an orphan. |
 | `claude-limit-shield.sh` | `*/5 * * * *` | Scans tmux panes for a stalled usage-limit banner past its parsed reset time and types a continue-nudge. Run `claude-limit-shield.sh selftest` any time to verify end-to-end behavior in a disposable throwaway session. |
 | `log-boot` | `@reboot` | Appends one line per boot (kernel version + uptime) to `~/.local/state/boot-log.txt`. |

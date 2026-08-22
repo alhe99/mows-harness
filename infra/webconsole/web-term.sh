@@ -6,8 +6,7 @@
 # and attach again.
 # Self-check: /opt/claude-dashboard/web-term.sh list
 #
-# Delta vs. the live reference script (full reconciliation in
-# .superpowers/sdd/task-12-report.md): live hardcoded exactly 2 accounts (single-letter
+# Delta vs. the live reference script: live hardcoded exactly 2 accounts (single-letter
 # codes, both fixed under one specific /home/<user>) via two literal config-dir
 # variables and a single-letter-code branch at every call site. This version discovers
 # profiles dynamically — profiles()/cfg_for() below are BYTE-IDENTICAL to

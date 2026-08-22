@@ -8,7 +8,7 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
 
 ## One-time setup on a box
 
-1. `./install.sh --agy` (plus `--claude` for the skill/rule/hook).
+1. `./install.sh --agy` (plus `--claude` for the skill/rule/hook). Ensure `~/.local/bin` is on your `PATH` (especially when installing `--agy` alone).
 2. Install the antigravity CLI (the installer never does this for you):
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`
 3. Login once: run `agy` in a terminal — over SSH it prints a URL + one-time
@@ -16,8 +16,16 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
    `agy -p "ping" --output-format json` — if it demands login again, the box
    lacks a freedesktop-secrets keyring (headless-Linux issue
    google-antigravity/antigravity-cli#57): install `gnome-keyring` + `dbus`
-   and enable a user-session keyring, then re-login and re-verify.
-4. Placeholder — populate baseline permission allow-rules in
+   and enable a user-session keyring, then re-login and re-verify:
+   ```bash
+   sudo apt-get install -y gnome-keyring dbus-x11
+   # Start a session keyring:
+   eval $(dbus-launch --sh-syntax)
+   eval $(echo -n "" | gnome-keyring-daemon --daemonize --login)
+   # Or run commands wrapped in dbus-run-session:
+   # dbus-run-session -- agy ...
+   ```
+4. (Optional/best-effort — expect interactive permission prompts until tuned) Populate baseline permission allow-rules in
    `~/.gemini/antigravity-cli/settings.json` (git commands + common
    build/test commands; no blanket write outside worktrees) once the live
    agy's rule schema is confirmed on this box. Until then, interactive `ag`
@@ -70,9 +78,10 @@ review → auto-merge policy), `claude-quota` (per-account usage signal; the
   on big handoffs; when Claude has no quota left, or the review times out,
   `agy-gate` falls back to agy self-review (`agy-run --effort high`, the
   smartest configured model) instead of blocking forever.
-- Additional Claude profiles (e.g. a work profile at `~/.claude-<suffix>`) are
-  hand-managed: `install.sh --claude` only ever writes `~/.claude`. If you
-  want delegation available in another profile too, mirror the CLAUDE.md
+- Additional Claude profiles: Note that `claude-quota` and `agy-gate` only discover
+  and support the two profiles `~/.claude` (default) and `~/.claude-work` (work).
+  Additional profiles are hand-managed: `install.sh --claude` only ever writes `~/.claude`.
+  If you want delegation available in another profile too, mirror the CLAUDE.md
   delegation section, the SessionStart quota hook, and the `agy-delegate`
   skill into that profile's own config dir yourself.
 

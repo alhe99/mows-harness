@@ -6,6 +6,7 @@ argument-hint: "[low|medium|high|xhigh|max|auto]   (for THIS session use /switch
 You are handling `/efforts`. The user's argument (may be empty) is: "$ARGUMENTS"
 
 The native `/effort` command does NOT work over remote control. This command is the working substitute: it rewrites the DEFAULT effort in `settings.json` via the `claude-rc set-effort` helper.
+Requires `claude-rc` from the fleet layer (`./install.sh --fleet`).
 
 **If "$ARGUMENTS" is EMPTY** — print EXACTLY the menu below, then STOP. Do not call any tools.
 

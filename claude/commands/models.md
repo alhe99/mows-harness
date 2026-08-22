@@ -6,6 +6,7 @@ argument-hint: "[fable[1m]|fable|opus[1m]|opus|sonnet[1m]|sonnet|haiku|opusplan|
 You are handling `/models`. The user's argument (may be empty) is: "$ARGUMENTS"
 
 The native `/model` command does NOT work over remote control. This command is the working substitute: it rewrites the DEFAULT model in `settings.json` via the `claude-rc set-model` helper.
+Requires `claude-rc` from the fleet layer (`./install.sh --fleet`).
 
 **If "$ARGUMENTS" is EMPTY** — print EXACTLY the menu below, then STOP. Do not call any tools.
 

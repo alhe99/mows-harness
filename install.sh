@@ -14,7 +14,7 @@
 #                 by this script. Prints the exact sudo commands to do that yourself.
 #   --fleet       the profile-model CLIs (fleet/bin/*) into ~/.local/bin.
 #   --agy         antigravity delegation CLIs (agy/bin/*: ag, agy-run, agy-handoff, agy-gate,
-#                 claude-quota) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
+#                 claude-quota, agy-notify) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
 #   --all         all five of the above.
 #   --non-interactive   never prompt: use env vars for every value, leave the rest as
 #                 sanctioned double-brace placeholders in rendered output and warn about it.
@@ -39,7 +39,7 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [
                      ./rendered/ for review; never installs/enables/starts anything itself
   --fleet           profile-model CLIs (cc, claude-rc, claude-status, reset-claude-env)
                      -> ~/.local/bin
-  --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota) -> ~/.local/bin
+  --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota, agy-notify) -> ~/.local/bin
   --all             all five layers above
   --non-interactive never prompt; unset template vars are left as placeholders (+ warning)
 
@@ -254,17 +254,6 @@ layer_claude(){
   while IFS= read -r pl; do
     echo "  /plugin install $pl"
   done < <(plugins_from_settings)
-
-  if [ "$NI" = 0 ]; then
-    local p
-    read -rp "append ~/.local/bin to PATH in ~/.bashrc? [y/N] " p
-    if [[ $p == y* ]]; then
-      # shellcheck disable=SC2016  # $HOME must stay literal — it's meant to expand later,
-      # each time .bashrc is sourced, not once now at install time.
-      printf '\n# mows-harness\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.bashrc"
-      echo "appended to $HOME/.bashrc"
-    fi
-  fi
 }
 
 layer_watchdogs(){
@@ -402,6 +391,9 @@ layer_fleet(){
   mkdir -p "$HOME/.local/bin"
   install -m755 fleet/bin/cc fleet/bin/claude-rc fleet/bin/reset-claude-env fleet/bin/claude-status "$HOME/.local/bin/"
   echo "installed: cc claude-rc reset-claude-env claude-status -> ~/.local/bin"
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARN: jq not found — fleet commands (claude-rc set-effort/set-model/resume) require jq: sudo apt-get install -y jq"
+  fi
   echo "add-agent.sh stays in-repo (the agent model is a separate, per-account tool):"
   echo "  sudo fleet/add-agent.sh <name> [--remote-control] [--vhost[=<domain>]]"
   echo "see fleet/SETUP.md for the profile-model-vs-agent-model overview and the full add-agent.sh walkthrough."
@@ -418,6 +410,9 @@ layer_agy(){
     echo "seeded ~/.config/mows-agy/config — set model slugs there after running: agy models"
   fi
   echo "installed: ag agy-run agy-handoff agy-gate claude-quota agy-notify -> ~/.local/bin"
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARN: jq not found — agy delegation requires jq: sudo apt-get install -y jq"
+  fi
   if ! command -v agy >/dev/null 2>&1; then
     echo "antigravity CLI (agy) not found — install it yourself when ready (never run by this script):"
     echo "  curl -fsSL https://antigravity.google/cli/install.sh | bash"
@@ -430,6 +425,16 @@ layer_agy(){
 [ "$L_INFRA"  = 1 ] && layer_infra
 [ "$L_FLEET"  = 1 ] && layer_fleet
 [ "$L_AGY"    = 1 ] && layer_agy
+
+if [ "$NI" = 0 ] && [ $((L_CLAUDE + L_WATCH + L_FLEET + L_AGY)) -gt 0 ]; then
+  read -rp "append ~/.local/bin to PATH in ~/.bashrc? [y/N] " p
+  if [[ $p == y* ]]; then
+    # shellcheck disable=SC2016  # $HOME must stay literal — it's meant to expand later,
+    # each time .bashrc is sourced, not once now at install time.
+    printf '\n# mows-harness\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.bashrc"
+    echo "appended to $HOME/.bashrc"
+  fi
+fi
 
 echo "done."
 [ -d "$BK" ] && echo "backups (if anything pre-existing got overwritten): $BK"

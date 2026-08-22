@@ -960,8 +960,8 @@ Add this top-level key (alongside `"statusLine"`):
 
 - [ ] **Step 4: Flip the pinned counts**
 
-- `README.md`: both `9 commands, 11 skills` → `9 commands, 12 skills`; the `ls ~/.claude/skills | wc -l            # expect 11` line → `# expect 12`.
-- `scripts/e2e-container.sh:33`: `chk "skills == 11"             '[ "$(ls $HOME/.claude/skills | wc -l)" = 11 ]'` → `12` in both spots (label and test).
+- `README.md`: both `9 commands, 11 skills` → `9 commands, 13 skills`; the `ls ~/.claude/skills | wc -l            # expect 11` line → `# expect 13`.
+- `scripts/e2e-container.sh:33`: `chk "skills == 11"             '[ "$(ls $HOME/.claude/skills | wc -l)" = 11 ]'` → `13` in both spots (label and test).
 
 - [ ] **Step 5: Verify template parses and hook survives render**
 

@@ -20,12 +20,13 @@ literal `{{ }}` tokens where a real `sed`/`render()` call needs them verbatim �
 4. Cookie secret
 5. Render + place configs
 6. Enable order: caddy → oauth2-proxy → dashboard → web-term
-7. Linger
-8. `systemd-journal` group
-9. `/term`'s index page
-10. QA watch-stack (optional, ships disabled)
-11. Verify
-12. Android web console (optional)
+7. Transcript prune timer
+8. Linger
+9. `systemd-journal` group
+10. `/term`'s index page
+11. QA watch-stack (optional, ships disabled)
+12. Verify
+13. Android web console (optional)
 
 ### 1. DNS A records
 
@@ -156,7 +157,8 @@ they're the actual content being proxied to, and coming up before Caddy/oauth2-p
 would just mean requests to them fail differently (connection refused vs. an auth loop),
 not more safely. `claude-remote@<profile>`/`claude-remote-control@<profile>` (the sessions
 the dashboard and `/term` actually drive) are managed separately — see
-[`fleet/SETUP.md`](../fleet/SETUP.md), never auto-enabled by this layer.
+[`fleet/SETUP.md`](../fleet/SETUP.md), never auto-enabled by this layer (make sure `mkdir -p ~/Projects`
+exists beforehand, as `claude-remote@` sets it as `WorkingDirectory`).
 
 Once up: on a desktop or tablet **browser** the dashboard's `attach` / `>_` buttons open
 each session in its own named window (clicking the same session again reuses its window),
@@ -164,7 +166,18 @@ so the session list stays put; in the installed PWA and at phone widths there is
 window to spend, and everything opens in place exactly as before. No-JS clients keep the
 in-place links.
 
-### 7. Linger
+### 7. Transcript prune timer
+
+Install and enable the daily transcript cleanup service and timer (prunes transcripts idle >30 days):
+
+```bash
+sudo install -m755 infra/systemd/claude-transcript-prune.sh /usr/local/sbin/claude-transcript-prune.sh
+sudo install -m644 infra/systemd/claude-transcript-prune.service infra/systemd/claude-transcript-prune.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now claude-transcript-prune.timer
+```
+
+### 8. Linger
 
 ```bash
 sudo loginctl enable-linger <your-user>
@@ -176,7 +189,7 @@ rationale: [`infra/os/SETUP.md`](os/SETUP.md) §7, repeated as its own step here
 easy to do everything else above and still miss this one — the first symptom is usually
 `claude-rc: no systemd --user session`, well after the fact.
 
-### 8. `systemd-journal` group
+### 9. `systemd-journal` group
 
 `claude-rc logs <profile>` runs a plain `journalctl -u <unit> -f` — no sudo wrapper — so
 reading another account's unit logs without sudo is a group-membership question, not a sudo
@@ -190,7 +203,7 @@ Not granted by default (see [`fleet/SETUP.md`](../fleet/SETUP.md)'s "No extra gr
 design" section for why) — add it only if `claude-rc logs` (or a bare `journalctl -u
 claude-remote-<name>@default.service` run as an agent) actually reports permission denied.
 
-### 9. `/term`'s index page
+### 10. `/term`'s index page
 
 Caddy serves `/term` and `/term/` itself, from a static file — `ttyd`'s own `GET /` is
 never what a browser sees (see `infra/webconsole/claude-web-term.service.template`'s "Serving
@@ -219,7 +232,9 @@ after a repo update is exactly how the page picks up new or changed blocks. Skip
 steps and `/term` 404s for every visitor, indefinitely — it is not created by any of the
 `systemctl enable` steps above.
 
-### 10. QA watch-stack (optional — ships disabled)
+Note: `/term`'s "new session" launcher flow relies on `fleet/bin/cc` (installed via `./install.sh --fleet`).
+
+### 11. QA watch-stack (optional — ships disabled)
 
 Only if you want the `qa` skill's `watched` mode (human takeover of a headless browser via
 noVNC). Full walkthrough, including the amd64-vs-arm64 Chrome/Chromium split:
@@ -240,7 +255,7 @@ sudo systemctl start claude-qa-watch   # no .service suffix, no extra args — s
 sudo systemctl stop  claude-qa-watch
 ```
 
-### 11. Verify
+### 12. Verify
 
 ```bash
 curl -I https://<domain>/
@@ -271,7 +286,7 @@ curl -s localhost:9222/json/version   # Chrome's own CDP handshake — a JSON bl
                                        # port) came up; loopback-only, run this ON the box
 ```
 
-### 12. Android web console (optional)
+### 13. Android web console (optional)
 
 A containerized Android device (redroid) streamed and touch-controllable from the
 dashboard's `/droid` page, for mobile QA (adb + maestro + APK installs from `/term`).

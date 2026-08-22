@@ -337,6 +337,7 @@ case "$cmd" in
       echo "    3) take the listener offline:  claude-rc stop $acct && claude-rc resume $acct" >&2
       exit 1
     fi
+    mkdir -p "$PROJECTS_ROOT"
     cd "$PROJECTS_ROOT"
 
     # The native --resume picker enumerates by git repo/branch and shows NOTHING when the
@@ -412,6 +413,7 @@ case "$cmd" in
     else cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; fi
     s="$cfg/settings.json"
     [ -f "$s" ] || { echo "set-effort: no settings.json at $s" >&2; exit 1; }
+    command -v jq >/dev/null 2>&1 || { echo "set-effort: jq not found — sudo apt-get install -y jq" >&2; exit 1; }
     case "$lvl" in
       low|medium|high|xhigh) expr='.effortLevel=$l | del(.env.CLAUDE_CODE_EFFORT_LEVEL)' ;;
       max)                   expr='del(.effortLevel) | .env.CLAUDE_CODE_EFFORT_LEVEL="max"' ;;
@@ -440,6 +442,7 @@ case "$cmd" in
     else cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; fi
     s="$cfg/settings.json"
     [ -f "$s" ] || { echo "set-model: no settings.json at $s" >&2; exit 1; }
+    command -v jq >/dev/null 2>&1 || { echo "set-model: jq not found — sudo apt-get install -y jq" >&2; exit 1; }
     case "$m" in
       'opus[1m]')   id='claude-opus-4-8[1m]'      ; raw=1 ;;
       opus)         id='claude-opus-4-8'          ; raw=1 ;;

@@ -12,7 +12,7 @@ checks by hand, and don't substitute ad-hoc `oci` calls.
 ~/.claude/skills/oci-free-check/check.py
 ```
 
-Takes ~40s (it makes ~20 OCI API calls plus one SSH probe).
+Takes ~40s (it makes ~20 OCI API calls plus one SSH probe). Prerequisite: the `oci` CLI must be installed and authenticated (`oci setup config`).
 
 ## Exit codes
 
