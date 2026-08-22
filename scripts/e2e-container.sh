@@ -30,7 +30,7 @@ echo "### Part 2 step 3 — the README's own verification commands"
 chk "CLAUDE.md installed"      "[ -f $HOME/.claude/CLAUDE.md ]"
 chk "settings.json installed"  "[ -f $HOME/.claude/settings.json ]"
 chk "mcp-interactive.json"     "[ -f $HOME/.claude/mcp-interactive.json ]"
-chk "skills == 12"             '[ "$(ls $HOME/.claude/skills | wc -l)" = 12 ]'
+chk "skills == 13"             '[ "$(ls $HOME/.claude/skills | wc -l)" = 13 ]'
 chk "commands == 9"            '[ "$(ls $HOME/.claude/commands | wc -l)" = 9 ]'
 chk "settings.json parses"     "python3 -m json.tool $HOME/.claude/settings.json"
 chk "agents installed"         "[ -d $HOME/.claude/agents ]"

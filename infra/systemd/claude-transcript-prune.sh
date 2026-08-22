@@ -20,6 +20,7 @@
 set -euo pipefail
 shopt -s nullglob
 
+# Discover user profiles under /home/* only; root's own ~/.claude* is intentionally not globbed.
 ROOTS=()
 for d in /home/*/.claude /home/*/.claude-*; do
   [ -L "$d" ] && continue   # never follow a symlinked profile root (CWE-59)

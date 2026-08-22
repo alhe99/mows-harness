@@ -31,6 +31,13 @@ One Linux user (typically whoever administers the box) running several named Cla
 in each script's own header comment (all four are extensively self-documented); this is the
 quick-start version.
 
+**Creating a profile:** A profile directory comes to exist when you create its config dir and run Claude Code inside it once (the first run performs login):
+```bash
+mkdir -p ~/.claude-work && CLAUDE_CONFIG_DIR=~/.claude-work claude
+```
+
+Make sure `mkdir -p ~/Projects` (the default `PROJECTS_ROOT`) exists on the machine.
+
 **Keep the `<suffix>` to `[A-Za-z0-9_-]`.** The sudoers grant's unit patterns
 (`infra/os/sudoers.d/claude-harness.template`) are anchored POSIX-ERE on exactly that
 character class — a profile suffix with a space, a dot, or anything else outside it won't
@@ -62,10 +69,18 @@ intended NOPASSWD path.
 - **`claude-status`** — one glance at every profile: unit state, live `cc` tmux session
   presence, and the cached `claude-health` snapshot (regenerated if stale).
 
-Needs (installed by `infra/os/SETUP.md`, not repeated here): the sudoers grant in
-`infra/os/sudoers.d/claude-harness.template`, scoped to exactly the `claude-remote@*` /
-`claude-remote-control@*` unit families — see below for the two group/permission notes that
-apply to this model.
+### Needs
+
+1. **Sudoers grant** (installed by `infra/os/SETUP.md`, not repeated here): the sudoers grant in
+   `infra/os/sudoers.d/claude-harness.template`, scoped to exactly the `claude-remote@*` /
+   `claude-remote-control@*` unit families — see below for the two group/permission notes that
+   apply to this model.
+2. **Systemd units**: render and install the two remote-control units (`claude-remote@.service` and `claude-remote-control@.service`):
+   ```bash
+   ./install.sh --infra --non-interactive
+   sudo install -m644 rendered/claude-remote@.service rendered/claude-remote-control@.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
 
 ---
 

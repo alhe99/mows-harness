@@ -31,7 +31,7 @@
 #                       Claude Code OAuth session yet, so starting immediately would just
 #                       crash-loop.
 #   --vhost[=<domain>]  print a Caddy vhost snippet for this agent. Bare --vhost reads
-#                       $HARNESS_DOMAIN; --vhost=<domain> overrides it inline; with neither
+#                       $HARNESS_DOMAIN or $DOMAIN; --vhost=<domain> overrides it inline; with neither
 #                       set, prints the same block with a literal {{DOMAIN}} placeholder and
 #                       says so plainly (see "FIX B" below). Space-separated "--vhost
 #                       <domain>" is deliberately NOT supported: `add-agent.sh --vhost
@@ -158,7 +158,7 @@ done
 NAME=""
 REMOTE_CONTROL=0
 VHOST=0
-VHOST_DOMAIN="${HARNESS_DOMAIN:-}"
+VHOST_DOMAIN="${HARNESS_DOMAIN:-${DOMAIN:-}}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --remote-control) REMOTE_CONTROL=1 ;;
@@ -307,7 +307,7 @@ if [ "$VHOST" = 1 ]; then
     DPART="$VHOST_DOMAIN"; VNOTE="ready to paste"
   else
     DPART='{{DOMAIN}}'
-    VNOTE="placeholder left as-is — pass --vhost=<domain>, or export HARNESS_DOMAIN=<domain> before running this, for a ready-to-paste block; replace {{DOMAIN}} yourself otherwise"
+    VNOTE="placeholder left as-is — pass --vhost=<domain>, or export HARNESS_DOMAIN=<domain> (or DOMAIN=<domain>) before running this, for a ready-to-paste block; replace {{DOMAIN}} yourself otherwise"
   fi
   cat <<EOF
 

@@ -6,6 +6,7 @@ argument-hint: <project name or path> | list | close <project>
 You are handling `/open`. The user's argument string (may be empty) is: "$ARGUMENTS"
 
 Remote-control sessions are born in their listener's fixed directory — there is no native way to pick a directory from the app. `claude-rc open` fixes this: it spawns a per-project listener, which appears as its own entry in the app's session picker; a NEW session started on it begins fresh in that directory (project CLAUDE.md, rules and skills all load correctly).
+Requires `claude-rc` from the fleet layer (`./install.sh --fleet`).
 
 **If "$ARGUMENTS" is EMPTY** — run `ls -d {{PROJECTS_ROOT}}/*/ 2>/dev/null | head -20`, then print the directory basenames as a tappable list, one per line, formatted as `` `/open <name>` ``, followed by:
 

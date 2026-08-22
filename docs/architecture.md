@@ -13,7 +13,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Six cron scripts supervising the remote-control fleet |
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts) |
-| 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
+| 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota,agy-notify}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
 
 ## Port map
 
@@ -124,7 +124,7 @@ Six cron scripts (`watchdogs/bin/*`), all profile-agnostic (discover `default` +
 |---|---|---|---|
 | `claude-health` | Is `claude-remote@<profile>` active? Any established backend connection? | `*/5 * * * *` | Sustained-WEDGED ≥8min → `reset-claude-env <profile>` + unit restart, rate-limited to once per 2h (disable per-profile via `~/.local/state/claude-health.norecover`) |
 | `claude-mem-health` | claude-mem's shared memory worker on `:37777`; each profile's `installed_plugins.json` scope; transcripts with real user turns that never produced an `sdk_sessions` row | `*/10 * * * *` | Self-heals plugin scope back to `user`; flags worker/transcript anomalies (does **not** start the worker itself — claude-mem's own plugin hooks own that) |
-| `reap-idle-claude` | Detached `cc-<profile>-*` tmux sessions | `17 * * * *` | Kills sessions idle beyond `$IDLE` seconds (24h default) — spares any pane showing a usage-limit banner, since the shield revives it once the reset passes |
+| `reap-idle-claude` | Detached tmux sessions (matching `cc-*`, `ccw-*`, `web-*`, `agy-*`) | `17 * * * *` | Kills sessions idle beyond `$IDLE` seconds (24h default) — spares any pane showing a usage-limit banner, since the shield revives it once the reset passes |
 | `reap-mcp-orphans` | MCP server processes reparented to init (`ppid==1`, age > 5 min) | `*/15 * * * *` | Kills the orphan — excludes tmux/claude/remote-control processes so a daemonized tmux server hosting a live session is never mistaken for one |
 | `claude-limit-shield.sh` | tmux panes stalled on a usage-limit banner past its own parsed reset time | `*/5 * * * *` | Types a continue-nudge into the pane; `claude-limit-shield.sh selftest` runs an end-to-end check in a disposable session any time |
 | `log-boot` | Boot events | `@reboot` | Appends one line (kernel version + uptime) to `~/.local/state/boot-log.txt` — pure logging, no recovery action |
@@ -165,10 +165,10 @@ Dependencies, log locations, and logrotate detail: [`watchdogs/SETUP.md`](../wat
   `~/.claude/mcp-interactive.json`, in `infra/qa-watch/SETUP.md` §4.
 - **Session naming is a load-bearing contract, not cosmetic.** Every interactive session
   this harness launches — CLI (`cc`) or web (`web-term.sh`) — names its tmux session
-  `cc-<profile>-<slug-of-dir>`. `reap-idle-claude` only recognizes that `^cc-` prefix; a
-  session named anything else is invisible to idle-reaping (this is exactly the bug the
-  live reference deployment's own web terminal had, and this harness's `web-term.sh`
-  deliberately does not repeat it).
+  `cc-<profile>-<slug-of-dir>` (or `ccw-`, `web-`, `agy-`). `reap-idle-claude` matches
+  `cc-`, `ccw-`, `web-`, and `agy-` prefixes; a session named anything else is invisible
+  to idle-reaping (this is exactly the bug the live reference deployment's own web terminal
+  had, and this harness's `web-term.sh` deliberately does not repeat it).
 - **Sudoers grants for `claude-qa-watch` and `caddy` are exact-argument matches, not
   globs.** Call them as anything other than `systemctl start claude-qa-watch` / `systemctl
   stop claude-qa-watch` / `systemctl reload caddy` — a `.service` suffix, an extra flag,

@@ -18,13 +18,13 @@ you leave running, `--all` for the full web cockpit.
 
 **Five layers, install any subset:**
 
-- **claude** — `CLAUDE.md`, 9 commands, 12 skills, an agent, settings + MCP templates
+- **claude** — `CLAUDE.md`, 9 commands, 13 skills, an agent, settings + MCP templates
 - **watchdogs** — 6 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, a session dashboard, a browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
-  `claude-quota` → `~/.local/bin`
+  `claude-quota`, `agy-notify` → `~/.local/bin`
 
 <br clear="right">
 
@@ -44,7 +44,7 @@ unattended on their own hardware. Layer 1 works on any laptop. Layers 2–4 assu
 comfortable with a VPS, DNS, and creating a Google OAuth app — there's no way around that,
 and the setup guide walks each step.
 
-Requires Ubuntu/Debian + systemd, Node 20+, tmux. MIT.
+Requires Ubuntu/Debian + systemd, Node 18+ (20+ recommended), tmux. MIT.
 
 ---
 
@@ -61,11 +61,11 @@ running anything.
 
 | Layer | Flag | What lands where | Reversible? |
 |---|---|---|---|
-| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 12 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
+| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 13 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
 | **watchdogs** | `--watchdogs` | 6 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
-| **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
+| **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota`, `agy-notify` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
 
 All five are idempotent and independent. Re-running with a different flag set is safe.
 
@@ -84,8 +84,11 @@ Ask the human only if their intent is genuinely ambiguous — otherwise infer fr
 command -v apt-get systemctl        # both required; install.sh refuses to run without them
 node -v                             # want v20+; see Requirements below if older
 command -v tmux || echo "MISSING: sudo apt-get install -y tmux"
+command -v jq >/dev/null || echo "MISSING: sudo apt-get install -y jq"
 command -v git curl                 # needed for clone + Node install
 ```
+
+Install + first login of the Claude Code CLI (`npm install -g @anthropic-ai/claude-code` or `curl -fsSL https://claude.ai/install.sh | bash`) is required before the `--claude` or `--fleet` layers are usable.
 
 `install.sh` hard-guards on `apt-get` **and** `systemctl` being present. This is
 Ubuntu/Debian + systemd only; on anything else, stop and tell the human rather than
@@ -93,7 +96,7 @@ improvising.
 
 ## Values you cannot invent
 
-Only the `--infra` layer needs these. **Never fabricate, guess, or placeholder-fill a real
+Only the `--infra` layer needs these (with `PROJECTS_ROOT` and `CONTEXT7_API_KEY` also used by `--claude`). **Never fabricate, guess, or placeholder-fill a real
 credential** — stop and ask the human:
 
 | Value | Where the human gets it | Needed for |
@@ -102,6 +105,7 @@ credential** — stop and ask the human:
 | `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | Google Cloud Console → APIs & Services → Credentials → OAuth client (Web application) | the auth gate |
 | `ADMIN_EMAIL` | the Google account allowed to log in | oauth2-proxy allowlist |
 | `CONTEXT7_API_KEY` | context7.com (optional — skip if they don't use it) | the `context7` MCP server |
+| `PROJECTS_ROOT` | path where project repos live (e.g. `~/Projects` or `$HOME/Projects`) | `open.md` and `work.md` commands (`--claude`) |
 
 You *may* generate `COOKIE_SECRET` yourself — `install.sh` does it automatically with
 `openssl rand -base64 32 | tr -- '+/' '-_'` (URL-safe) when it's unset. `ADMIN_USER` defaults to the invoking user.
@@ -162,8 +166,8 @@ There is also a full end-to-end test, if you want proof before touching your own
 It builds a throwaway `ubuntu:24.04`, creates an unprivileged user, and runs everything in
 Part 2 as that user — preflight, install, every verification command below, the crontab
 recipe, `--infra` rendering with real values — then asserts idempotency (a second install
-backs up and restores cleanly) and blast radius (nothing written outside `$HOME`). 64 checks;
-all must pass.
+backs up and restores cleanly) and blast radius (nothing written outside `$HOME`). All checks
+must pass.
 
 ## Step 2 — install the layers you chose
 
@@ -185,10 +189,11 @@ doesn't match, report it rather than working around it.
 ```bash
 # --claude
 ls ~/.claude/CLAUDE.md ~/.claude/settings.json ~/.claude/mcp-interactive.json
-ls ~/.claude/skills | wc -l            # expect 12
+ls ~/.claude/skills | wc -l            # expect 13
 ls ~/.claude/commands | wc -l          # expect 9
 python3 -m json.tool ~/.claude/settings.json > /dev/null && echo "settings.json OK"
 grep -c '{{' ~/.claude/mcp-interactive.json    # expect 0; nonzero = an unfilled placeholder
+grep -rl '{{' ~/.claude/commands/ || echo "commands placeholders resolved"
 
 # --watchdogs
 ls ~/.local/bin/claude-health ~/.local/bin/claude-mem-health ~/bin/claude-limit-shield.sh
@@ -203,7 +208,7 @@ ls rendered/                           # staged templates; nothing installed yet
 grep -rl '{{' rendered/ || echo "all placeholders resolved"
 ```
 
-`~/.local/bin` must be on `PATH`. `install.sh --claude` offers to append it to `~/.bashrc`
+`~/.local/bin` must be on `PATH`. `install.sh` offers to append it to `~/.bashrc`
 (it asks first, and it never writes an alias).
 
 ## Step 4 — cron, if you installed watchdogs
@@ -243,8 +248,9 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    `https://<domain>/oauth2/callback`.
 4. **Review `./rendered/`** — read every file before it is installed with `sudo`. Confirm no
    `{{...}}` placeholder survives in anything root will execute.
-5. **Install and enable, in order** — caddy → oauth2-proxy → dashboard → web terminal. The
-   sudoers file goes in via `visudo -cf` validation, mode `0440`.
+5. **Install and enable, in order** — caddy → oauth2-proxy → dashboard → web terminal →
+   transcript prune timer (`claude-transcript-prune.timer`). The sudoers file goes in via
+   `visudo -cf` validation, mode `0440`.
 6. **`sudo loginctl enable-linger <user>`** — `claude-rc`'s ad-hoc listeners use user-scope
    systemd and will fail fast without it.
 7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
@@ -318,9 +324,10 @@ flowchart TB
 
 ## What each layer contains
 
-- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 12
-  agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` and MCP templates.
-  Also installable as a standalone plugin (below).
+- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 13
+  agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` (sets
+  `remoteControlAtStartup: true`) and MCP templates. Also installable as a standalone plugin
+  (below).
 - **`watchdogs/`** — six cron scripts keeping a remote-control Claude Code process alive and
   clean: unit/wedge recovery, memory-capture verification, idle-session reaping, orphaned-MCP
   reaping, usage-limit auto-continue, boot logging.
@@ -387,7 +394,7 @@ exactly that. Rationale in [`docs/architecture.md`](docs/architecture.md); insta
 - **Ubuntu 24.04** is the target and reference platform. `install.sh` hard-guards only on
   `apt-get` + `systemctl`, so other systemd Debian-family distros will likely work for
   `--claude`/`--watchdogs`/`--fleet`; `--infra` has had less cross-distro scrutiny.
-- **Node.js — 20+ recommended, required for `chrome-devtools-mcp`.** The dashboard runs fine
+- **Node.js — 18+ (20+ recommended, required for `chrome-devtools-mcp`).** The dashboard runs fine
   on 18, but its systemd unit execs `/usr/bin/node` as root, and a root process never sources
   a per-user fnm/nvm shim — so `/usr/bin/node` itself must be current. Of the bundled MCP
   servers, `@playwright/mcp` needs `>=18` but `chrome-devtools-mcp` needs
