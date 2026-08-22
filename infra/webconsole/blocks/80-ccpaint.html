@@ -1,36 +1,42 @@
-<script id="ccpaint-js">/*ccpaint-v2: blank or garbled screen when the phone comes back to a
-live session, cleared by any tap. Not corrupt content -- nothing repainted while we were away.
-Two renderer generations of this bug, same shape: on WebGL, rows drew against a stale glyph
-atlas (fused words) and then only background rectangles painted -- a green tmux bar with no
-text in it. ttyd 1.7.4 cannot recover a lost WebGL context (its onContextLoss disposes the
-addon but never clears the reference, and the re-enable path is `if(!this.webglAddon)`), so
-WebGL is now off entirely: `-t rendererType=canvas` on the unit. The canvas renderer has no
-context to lose, but iOS still purges canvas backing stores while the app is away, which
-leaves the whole grid empty with only the cursor layer repainting on blink.
-v1 hung the recovery on visibilitychange/pageshow/focus. That covers app-switching and NOTHING
-else: locking the iPhone screen in a standalone PWA fires none of those three, yet still
-freezes the page -- the same iOS gap 50-ccime.html works around for its reconnect kick. So v1
-simply never ran on the screen-off path, which is the path that kept reproducing.
-v2 stops trusting events for this and watches for evidence we were away instead:
-  1. the events, still, for app-switch (they do fire there)
-  2. a time gap -- a 1s timer that comes back >2.5s late means the page was frozen
-  3. a NEW websocket -- ttyd kills the child process on socket close and starts a fresh one on
-     reconnect, so a new socket is proof both that we were away and that output is coming
-repaint() also dispatches a resize, which makes the APPLICATION redraw (tmux/claude repaint on
-SIGWINCH) rather than only re-blitting whatever the renderer still holds -- the belt for output
-lost across a reconnect. Idempotent, once per resume.
+<script id="ccpaint-js">/*ccpaint-v3: the screen not repainting after the phone comes back to a
+live session -- historically garbled rows, then a blank grid, cleared by any tap.
+Renderer: WebGL is off at the unit (`-t rendererType=canvas`). ttyd 1.7.4 cannot recover a
+lost WebGL context -- its onContextLoss disposes the addon but never clears the reference and
+the re-enable path is `if(!this.webglAddon)` -- and a lost context is unfixable from JS, so on
+WebGL this block was powerless: first fused words from a stale glyph atlas, then background
+rectangles with no text at all (a green tmux bar with nothing in it).
+Trigger: NOT visibility events. Locking an iPhone screen in a standalone PWA fires no
+visibilitychange, pageshow or focus, yet still freezes the page -- the same iOS gap
+50-ccime.html works around for its reconnect kick -- so v1 never ran on the path that kept
+reproducing. v2 added two event-free triggers, kept below: a 1s timer that returns late (the
+page was frozen), and a new websocket (ttyd kills the child process on socket close and starts
+a fresh one on reconnect, so a new socket proves we were away).
+Repaint: clearTextureAtlas() + refresh() alone is NOT a full repaint. The canvas renderer
+caches what it has already drawn per cell and skips cells it believes are unchanged, so rows
+left stale by a purged backing store stay stale. _renderService.clear() drops that cache (and
+the layers) so the following refresh really redraws every cell from the buffer. Measured on
+the live page: 9691 glyph pixels -> 8 after clear() -> 9691 after refresh, exact.
+v3 also REMOVES v2's `dispatchEvent(new Event('resize'))` belt, which backfired. It was meant
+to make the app redraw via SIGWINCH, but on a stable viewport fit() changes nothing and the
+dispatch contributes no repaint at all, while on a phone -- where the PWA geometry, keyboard
+and URL bar move -- it lands on a different row count and DOES resize the pty. The visible
+result was ~50 crisp copies of one line: not a render artifact (every glyph was sharp) but a
+redraw trail from resizing the terminal under a running TUI. Repainting is the renderer's job;
+never touch the pty to do it.
 Kill switch: /term/?paint=off   Self-check: /term/?paintdbg=1 logs every repaint + its trigger.
-ponytail: polling a 1s timer instead of chasing the per-iOS-version event matrix -- one
-subtraction per second, and it cannot be wrong about whether the page stopped running.*/(function(){
+ponytail: _core._renderService is private xterm API, wrapped in try/catch with the public
+clearTextureAtlas/refresh still running if it ever disappears; the public surface has no
+"invalidate what you think you drew", so this is the only honest full repaint.*/(function(){
 if(/[?&]paint=off\b/.test(location.search))return;
 var dbg=/[?&]paintdbg=1\b/.test(location.search),n=0;
 function repaint(why){var t=window.term;if(!t)return;
+ /*synchronous: clear blanks the layers, so never yield to a paint between clear and refresh*/
+ try{t._core._renderService.clear()}catch(e){}/*drops the per-cell "already drawn" cache*/
  try{t.clearTextureAtlas&&t.clearTextureAtlas()}catch(e){}
  try{t.refresh(0,t.rows-1)}catch(e){}
- try{window.dispatchEvent(new Event('resize'))}catch(e){}/*fit+SIGWINCH: the app redraws too*/
  if(dbg)console.log('[ccpaint] repaint',++n,why)}
 function resume(why){requestAnimationFrame(function(){repaint(why)});
- setTimeout(function(){repaint(why+'/late')},300)}/*rAF can beat the GPU/canvas actually coming back*/
+ setTimeout(function(){repaint(why+'/late')},300)}/*rAF can beat the canvas actually coming back*/
 ['visibilitychange','pageshow','focus'].forEach(function(ty){
  (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
   if(document.visibilityState!=='visible')return;resume(ty)})});
@@ -41,7 +47,7 @@ setInterval(function(){
  var now=Date.now();
  if(now-last>2500)resume('frozen-'+(now-last)+'ms');/*screen lock: no event, but time moved*/
  last=now;
- var f=window.__ccimeWS,w=f&&f();/*exported by 50-ccime.html; absent on desktop, fine*/
+ var f=window.__ccimeWS,w=f&&f();/*exported by 50-ccime.html; absent on desktop and ?ime=off*/
  if(!w||w===ws)return;
  ws=w;
  if(first){first=false;return}/*the page's own first socket is not a reconnect*/
