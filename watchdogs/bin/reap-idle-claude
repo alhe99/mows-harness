@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reap abandoned Claude tmux sessions (cc-<profile>-* and agy-*): DETACHED and IDLE longer than $IDLE
+# Reap abandoned Claude tmux sessions (cc-*, ccw-*, web-*, agy-*): DETACHED and IDLE longer than $IDLE
 # seconds. Safe kill: the conversation is on disk — resuming in the project dir picks it
 # back up. An idle Claude TUI does not repaint (verified), so session_activity is a true
 # idleness clock; a session mid-task keeps printing -> stays fresh -> never reaped. Attached
@@ -19,7 +19,7 @@ ts=$(date '+%F %T')
 # handoff sessions, from agy-handoff) is a DIFFERENT prefix on purpose and
 # must never match — those terminate themselves via their command chain.
 mapfile -t sessions < <(tmux ls -F '#{session_name} #{session_attached} #{session_activity}' 2>/dev/null |
-  awk -v now="$now" -v idle="$IDLE" '($1 ~ /^cc-/ || $1 ~ /^agy-/) && $2==0 && (now-$3) > idle {print $1}')
+  awk -v now="$now" -v idle="$IDLE" '($1 ~ /^cc-/ || $1 ~ /^ccw-/ || $1 ~ /^web-/ || $1 ~ /^agy-/) && $2==0 && (now-$3) > idle {print $1}')
 
 for s in "${sessions[@]}"; do
   [ -n "$s" ] || continue
