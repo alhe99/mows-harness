@@ -1,0 +1,28 @@
+<script id="ccpaint-js">/*ccpaint-v1: garbled/stale screen when the PWA comes back from
+background, cleared by any tap. Not corrupt content -- a WebGL render artifact. While the
+tab is hidden requestAnimationFrame stops firing AND mobile browsers reclaim the GPU
+context, so xterm's glyph texture atlas is dead by the time rAF resumes. The next partial
+repaint draws only the dirty rows against that stale atlas, so rows come out with glyphs
+belonging to other lines -- fused words, one line repeated down the screen. A tap forced a
+full refresh, which is why touching the screen "fixed" it.
+ttyd 1.7.4 only half-handles this: its onContextLoss does `webglAddon?.dispose()` but never
+clears the reference, and its re-enable path is `if(!this.webglAddon)` -- so once lost,
+WebGL never comes back for that page load either.
+Fix: on foreground, drop the atlas and repaint the viewport. One atlas rebuild per resume.
+Kill switch: /term/?paint=off
+ponytail: no renderer swap and no patch to the 700KB ttyd bundle -- a forced repaint is the
+whole bug. Self-check: /term/?paintdbg=1 logs each repaint to the console.*/(function(){
+if(/[?&]paint=off\b/.test(location.search))return;
+var dbg=/[?&]paintdbg=1\b/.test(location.search);
+function repaint(){var t=window.term;if(!t)return;
+ try{t.clearTextureAtlas&&t.clearTextureAtlas()}catch(e){}
+ try{t.refresh(0,t.rows-1)}catch(e){}
+ if(dbg)console.log('[ccpaint] repaint',t.rows+'r')}
+['visibilitychange','pageshow','focus'].forEach(function(ty){
+ (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
+  if(document.visibilityState!=='visible')return;
+  requestAnimationFrame(repaint);
+  setTimeout(repaint,300)/*rAF can run before the GPU context is actually back*/})});
+/*capture on document -- this fires on the canvas and does not bubble*/
+document.addEventListener('webglcontextrestored',function(){requestAnimationFrame(repaint)},true);
+})()</script>

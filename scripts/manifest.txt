@@ -154,6 +154,7 @@ infra/webconsole/blocks/45-ccfont.html
 infra/webconsole/blocks/50-ccime.html
 infra/webconsole/blocks/60-ccclip.html
 infra/webconsole/blocks/70-ccrst.html
+infra/webconsole/blocks/80-ccpaint.html
 infra/droid/SETUP.md
 infra/droid/up.sh
 infra/droid/ws-scrcpy.patch

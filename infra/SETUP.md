@@ -210,8 +210,9 @@ never what a browser sees (see `infra/webconsole/claude-web-term.service.templat
 model" note). The generated page is ttyd's own bundle plus every self-authored addition
 spliced in: the clipboard shim and the `infra/webconsole/blocks/` mobile UX (key bar, PWA
 geometry, home key, photo attach, keyboard suggestions + reconnect, copy/paste overlay,
-restart-pane key — each block documents itself; runtime kill switches: `/term/?ime=off`,
-`?clip=off`, `?rst=off`). That file does not exist until you generate it:
+restart-pane key, repaint-on-foreground — each block documents itself; runtime kill
+switches: `/term/?ime=off`, `?clip=off`, `?rst=off`, `?paint=off`). That file does not
+exist until you generate it:
 
 ```bash
 infra/webconsole/make-term-index.sh
