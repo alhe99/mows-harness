@@ -1,3 +1,3 @@
 # Blessed findings (fingerprint = commit:file:rule:line).
 # Claude Code's public OAuth client id — shipped in every CLI install, not a credential.
-1b391affa1172cafbf7de2f1f4fe741e81009c24:agy/bin/claude-quota:generic-api-key:32
+4397a4370d5d4a07dc0f45a1fd7175842f5fbe1c:agy/bin/claude-quota:generic-api-key:32
