@@ -39,6 +39,7 @@ chk "watchdog: claude-health"      "[ -x $HOME/.local/bin/claude-health ]"
 chk "watchdog: claude-mem-health"  "[ -x $HOME/.local/bin/claude-mem-health ]"
 chk "watchdog: reap-idle-claude"   "[ -x $HOME/.local/bin/reap-idle-claude ]"
 chk "watchdog: reap-mcp-orphans"   "[ -x $HOME/.local/bin/reap-mcp-orphans ]"
+chk "watchdog: patch-health"       "[ -x $HOME/.local/bin/patch-health ]"
 chk "watchdog: log-boot"           "[ -x $HOME/.local/bin/log-boot ]"
 chk "watchdog: limit-shield"       "[ -x $HOME/bin/claude-limit-shield.sh ]"
 chk "fleet: cc"                    "[ -x $HOME/.local/bin/cc ]"
@@ -52,6 +53,7 @@ chk "claude-health --once exits 0" "claude-health --once"
 chk "claude-mem-health runs"       "claude-mem-health"
 chk "reap-idle-claude runs"        "reap-idle-claude"
 chk "reap-mcp-orphans runs"        "reap-mcp-orphans"
+chk "patch-health runs"            "patch-health"
 chk "log-boot runs"                "log-boot"
 chk "limit-shield selftest"        "$HOME/bin/claude-limit-shield.sh selftest"
 chk "cc --help works"              "cc --help | grep -q 'usage: cc'"
@@ -153,7 +155,7 @@ fi
 
 echo "### Part 2 step 4 — crontab recipe from the README"
 { crontab -l 2>/dev/null; sed "s|\$HOME|$HOME|g" watchdogs/crontab.example | grep -v '^#'; } | crontab -
-chk "crontab took all 6 entries" '[ "$(crontab -l 2>/dev/null | grep -cE "^([*0-9@])")" -eq 6 ]'
+chk "crontab took all 7 entries" '[ "$(crontab -l 2>/dev/null | grep -cE "^([*0-9@])")" -eq 7 ]'
 chk "crontab has no literal \$HOME" '! crontab -l 2>/dev/null | grep -q "\\\$HOME"'
 
 echo "### --infra with real values: renders with ZERO placeholders"

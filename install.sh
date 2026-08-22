@@ -8,7 +8,7 @@
 #                 lives one level under global/, not at the plugin root, so `claude plugin
 #                 validate claude --strict` doesn't warn that it's dead weight there — see
 #                 layer_claude() below; the destination is still plain ~/.claude/CLAUDE.md.)
-#   --watchdogs   the 6 cron watchdog scripts (watchdogs/bin/*) into ~/.local/bin + ~/bin.
+#   --watchdogs   the 7 cron watchdog scripts (watchdogs/bin/*) into ~/.local/bin + ~/bin.
 #   --infra       VPS/systemd/caddy/oauth2-proxy/qa-watch/dashboard templates, rendered into
 #                 ./rendered/ for review — NEVER installed, enabled, started, or touched live
 #                 by this script. Prints the exact sudo commands to do that yourself.
@@ -34,7 +34,7 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [
 
   --claude          ~/.claude config (CLAUDE.md, rules, agents, commands, skills, scripts,
                      settings, mcp template) + plugin marketplace registration
-  --watchdogs       6 cron watchdog scripts -> ~/.local/bin (+ ~/bin for the limit shield)
+  --watchdogs       7 cron watchdog scripts -> ~/.local/bin (+ ~/bin for the limit shield)
   --infra           stage VPS/systemd/caddy/oauth2-proxy/qa-watch/dashboard templates into
                      ./rendered/ for review; never installs/enables/starts anything itself
   --fleet           profile-model CLIs (cc, claude-rc, claude-status, reset-claude-env)
@@ -261,9 +261,10 @@ layer_watchdogs(){
   mkdir -p "$HOME/.local/bin" "$HOME/bin" "$HOME/.local/state"
   install -m755 watchdogs/bin/claude-health watchdogs/bin/claude-mem-health \
     watchdogs/bin/reap-idle-claude watchdogs/bin/reap-mcp-orphans watchdogs/bin/log-boot \
+    watchdogs/bin/patch-health \
     "$HOME/.local/bin/"
   install -m755 watchdogs/bin/claude-limit-shield.sh "$HOME/bin/"
-  echo "installed: claude-health claude-mem-health reap-idle-claude reap-mcp-orphans log-boot -> ~/.local/bin"
+  echo "installed: claude-health claude-mem-health reap-idle-claude reap-mcp-orphans log-boot patch-health -> ~/.local/bin"
   echo "installed: claude-limit-shield.sh -> ~/bin"
   echo "== add to crontab -e (cron does not expand \$HOME — already expanded below) =="
   sed "s|\$HOME|$HOME|g" watchdogs/crontab.example
