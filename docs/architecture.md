@@ -10,7 +10,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Layer | Install flag | Key paths | What it is |
 |---|---|---|---|
 | 1. claude | `--claude` | `claude/{CLAUDE.md → global/,rules,agents,commands,skills}`, `claude/settings.template.json`, `claude/mcp.template.json` | The agentic config itself, copied into `~/.claude`; also loadable as a standalone plugin (`.claude-plugin/marketplace.json`, `claude/.claude-plugin/plugin.json`) |
-| 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Six cron scripts supervising the remote-control fleet |
+| 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Seven cron scripts supervising the host and remote-control fleet |
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts) |
 | 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota,agy-notify}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
@@ -117,8 +117,9 @@ Three consequences worth internalizing:
 
 ## Watchdog rationale
 
-Six cron scripts (`watchdogs/bin/*`), all profile-agnostic (discover `default` + every
-`~/.claude-<suffix>` dir dynamically) and all no-ops on a box with nothing matching yet:
+Seven cron scripts (`watchdogs/bin/*`), all profile-agnostic (fleet-facing ones discover
+`default` + every `~/.claude-<suffix>` dir dynamically) and all no-ops on a box with nothing
+matching yet:
 
 | Watchdog | Watches | Cadence | Recovery action |
 |---|---|---|---|
@@ -126,6 +127,7 @@ Six cron scripts (`watchdogs/bin/*`), all profile-agnostic (discover `default` +
 | `claude-mem-health` | claude-mem's shared memory worker on `:37777`; each profile's `installed_plugins.json` scope; transcripts with real user turns that never produced an `sdk_sessions` row | `*/10 * * * *` | Self-heals plugin scope back to `user`; flags worker/transcript anomalies (does **not** start the worker itself — claude-mem's own plugin hooks own that) |
 | `reap-idle-claude` | Detached tmux sessions (matching `cc-*`, `ccw-*`, `web-*`, `agy-*`) | `17 * * * *` | Kills sessions idle beyond `$IDLE` seconds (24h default) — spares any pane showing a usage-limit banner, since the shield revives it once the reset passes |
 | `reap-mcp-orphans` | MCP server processes reparented to init (`ppid==1`, age > 5 min) | `*/15 * * * *` | Kills the orphan — excludes tmux/claude/remote-control processes so a daemonized tmux server hosting a live session is never mistaken for one |
+| `patch-health` | Stalled OS security updates (`dpkg --audit`, apt update stamp >3d old or missing, reboot pending >7d) | `23 4 * * *` | Logs findings to `~/.local/state/patch-health.log`; optionally notifies via `agy-notify` (rate-limited to 1/day) |
 | `claude-limit-shield.sh` | tmux panes stalled on a usage-limit banner past its own parsed reset time | `*/5 * * * *` | Types a continue-nudge into the pane; `claude-limit-shield.sh selftest` runs an end-to-end check in a disposable session any time |
 | `log-boot` | Boot events | `@reboot` | Appends one line (kernel version + uptime) to `~/.local/state/boot-log.txt` — pure logging, no recovery action |
 

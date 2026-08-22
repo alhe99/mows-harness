@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# patch-health — detect stalled OS security patching (broken packages, stale apt lists,
+# un-rebooted kernel upgrades). Cron daily.
+#
+# Born from an outage where a stray directory broke systemd's preinst, unattended-upgrades
+# failed closed daily ("Cache has broken packages"), and security updates silently piled up.
+# Generic to any Debian/Ubuntu host.
+set -euo pipefail
+
+ST="$HOME/.local/state"
+LOG="$ST/patch-health.log"
+MARKER="$ST/patch-health-last-alert"
+mkdir -p "$ST"
+
+ts=$(date '+%F %T')
+log() { echo "[$ts] $*" >> "$LOG"; }
+
+STAMP="${STAMP:-/var/lib/apt/periodic/update-success-stamp}"
+REBOOT_REQ="${REBOOT_REQ:-/var/run/reboot-required}"
+now=$(date +%s)
+problems=()
+
+# 1. dpkg left half-configured (packages broken or incomplete preinst/postinst)
+audit=$(dpkg --audit 2>/dev/null || true)
+[ -n "$audit" ] && problems+=("dpkg --audit non-empty (packages half-configured)")
+
+# 2. apt package lists haven't refreshed in >3 days
+if [ -f "$STAMP" ]; then
+  mtime=$(stat -c %Y "$STAMP" 2>/dev/null || echo "$now")
+  age_d=$(( (now - mtime) / 86400 ))
+  [ "$age_d" -gt 3 ] && problems+=("apt lists stale: last successful update ${age_d}d ago")
+else
+  problems+=("apt update-success-stamp missing")
+fi
+
+# 3. reboot pending for >7 days (staged kernel or critical libraries never activated)
+if [ -f "$REBOOT_REQ" ]; then
+  rb_mtime=$(stat -c %Y "$REBOOT_REQ" 2>/dev/null || echo "$now")
+  rb_d=$(( (now - rb_mtime) / 86400 ))
+  [ "$rb_d" -gt 7 ] && problems+=("reboot pending for ${rb_d}d (staged kernel not active)")
+fi
+
+[ ${#problems[@]} -eq 0 ] && exit 0
+
+# Log findings
+for p in "${problems[@]}"; do
+  log "PROBLEM: $p"
+done
+
+# At most one alert per day (rate-limited via marker file)
+today=$(date +%F)
+[ -f "$MARKER" ] && [ "$(cat "$MARKER" 2>/dev/null || true)" = "$today" ] && exit 0
+
+# Optional notification via agy-notify if present on PATH
+if command -v agy-notify >/dev/null 2>&1; then
+  host=$(hostname 2>/dev/null || uname -n)
+  msg="⚠️ patch-health on $host: $(printf '%s; ' "${problems[@]}")"
+  if agy-notify "$msg"; then
+    echo "$today" > "$MARKER"
+  fi
+fi
+
+exit 0

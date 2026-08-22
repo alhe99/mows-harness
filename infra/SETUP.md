@@ -302,7 +302,7 @@ Deliberately delegated, not duplicated:
 
 - Profile/agent creation and day-to-day operation (`cc`, `claude-rc`, `add-agent.sh`):
   [`fleet/SETUP.md`](../fleet/SETUP.md).
-- The six cron watchdogs, their crontab, and logrotate: [`watchdogs/SETUP.md`](../watchdogs/SETUP.md).
+- The seven cron watchdogs, their crontab, and logrotate: [`watchdogs/SETUP.md`](../watchdogs/SETUP.md).
 - tmux, the firewall baseline, fail2ban, unattended-upgrades, sshd hardening, the scoped
   sudoers grant itself, and linger's full rationale: [`infra/os/SETUP.md`](os/SETUP.md).
 - The full architecture — port map, the profile-vs-agent fidelity note, why the dashboard

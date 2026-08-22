@@ -19,8 +19,8 @@ you leave running, `--all` for the full web cockpit.
 **Five layers, install any subset:**
 
 - **claude** — `CLAUDE.md`, 9 commands, 13 skills, an agent, settings + MCP templates
-- **watchdogs** — 6 cron jobs that restart a wedged agent, reap idle sessions and orphaned
-  MCP processes, and auto-continue past usage-limit stalls
+- **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
+  MCP processes, monitor OS patch health, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, a session dashboard, a browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
@@ -62,7 +62,7 @@ running anything.
 | Layer | Flag | What lands where | Reversible? |
 |---|---|---|---|
 | **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 13 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
-| **watchdogs** | `--watchdogs` | 6 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
+| **watchdogs** | `--watchdogs` | 7 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
 | **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota`, `agy-notify` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
@@ -196,7 +196,7 @@ grep -c '{{' ~/.claude/mcp-interactive.json    # expect 0; nonzero = an unfilled
 grep -rl '{{' ~/.claude/commands/ || echo "commands placeholders resolved"
 
 # --watchdogs
-ls ~/.local/bin/claude-health ~/.local/bin/claude-mem-health ~/bin/claude-limit-shield.sh
+ls ~/.local/bin/claude-health ~/.local/bin/claude-mem-health ~/.local/bin/patch-health ~/bin/claude-limit-shield.sh
 ~/.local/bin/claude-health --once      # runs a single pass; expect exit 0
 
 # --fleet
@@ -220,7 +220,7 @@ additively, never destructively:
 ```bash
 # additive: keeps every existing entry, appends ours
 { crontab -l 2>/dev/null; sed "s|\$HOME|$HOME|g" watchdogs/crontab.example | grep -v '^#'; } | crontab -
-crontab -l | grep claude               # verify the 6 entries landed
+crontab -l                             # verify the 7 entries landed
 ```
 
 Cron does not expand `$HOME` — that `sed` is required, not cosmetic.
@@ -328,9 +328,9 @@ flowchart TB
   agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` (sets
   `remoteControlAtStartup: true`) and MCP templates. Also installable as a standalone plugin
   (below).
-- **`watchdogs/`** — six cron scripts keeping a remote-control Claude Code process alive and
-  clean: unit/wedge recovery, memory-capture verification, idle-session reaping, orphaned-MCP
-  reaping, usage-limit auto-continue, boot logging.
+- **`watchdogs/`** — seven cron scripts keeping the host and remote-control Claude Code processes
+  alive and clean: unit/wedge recovery, memory-capture verification, idle-session reaping,
+  orphaned-MCP reaping, usage-limit auto-continue, OS patch-health monitoring, boot logging.
 - **`infra/`** — templates for the public surface: Caddy (TLS + reverse proxy), oauth2-proxy
   (Google-gated auth), a zero-dependency session dashboard, a `ttyd` web terminal, an
   on-demand browser-QA watch stack, firewall templates, and scoped sudoers.

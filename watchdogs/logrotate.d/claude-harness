@@ -1,7 +1,7 @@
 # Layer 2 watchdogs — logrotate config.
 # logrotate does NOT expand ~ — replace ~ below with your absolute home directory path,
 # then install to /etc/logrotate.d/claude-harness.
-~/.local/state/claude-health.log ~/.local/state/claude-mem-health.log ~/.local/state/reap-idle-claude.log ~/.local/state/reap-mcp-orphans.log ~/.local/state/claude-limit-shield/shield.log {
+~/.local/state/claude-health.log ~/.local/state/claude-mem-health.log ~/.local/state/reap-idle-claude.log ~/.local/state/reap-mcp-orphans.log ~/.local/state/patch-health.log ~/.local/state/claude-limit-shield/shield.log {
   weekly
   rotate 4
   compress

@@ -138,6 +138,7 @@ watchdogs/bin/claude-health
 watchdogs/bin/claude-limit-shield.sh
 watchdogs/bin/claude-mem-health
 watchdogs/bin/log-boot
+watchdogs/bin/patch-health
 watchdogs/bin/reap-idle-claude
 watchdogs/bin/reap-mcp-orphans
 watchdogs/crontab.example
