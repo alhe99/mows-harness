@@ -1,4 +1,4 @@
-<script id="ccpaint-js">/*ccpaint-v4: the screen not repainting after the phone comes back to a
+<script id="ccpaint-js">/*ccpaint-v5: the screen not repainting after the phone comes back to a
 live session -- historically garbled rows, then a blank grid, cleared by any tap.
 Renderer: WebGL is off at the unit (`-t rendererType=canvas`). ttyd 1.7.4 cannot recover a
 lost WebGL context -- its onContextLoss disposes the addon but never clears the reference and
@@ -35,6 +35,17 @@ function repaint(why){var t=window.term;if(!t)return;
  try{t.clearTextureAtlas&&t.clearTextureAtlas()}catch(e){}
  try{t.refresh(0,t.rows-1)}catch(e){}
  if(dbg)console.log('[ccpaint] repaint',++n,why)}
+function hardreset(why){var t=window.term;/*v5: webterm-hook.log proved tmux's model CLEAN
+ while the phone showed garbage -- so the mangle lives in THIS xterm's grid: stale pre-lock
+ rows reflowed by the resize churn, plus in-flight redraw bytes applied at the wrong size.
+ Repainting our own buffer just repaints the mangle. A NEW socket means ttyd killed the old
+ child and a fresh attach redraw is coming, so the only content worth keeping is what's about
+ to arrive: wipe the grid, let it land clean. Runs ONCE per socket, never from the delayed
+ repaints (a late reset would eat bytes already arrived; the tmux client-attached hook's
+ refresh-client at +2s covers even that race).*/
+ try{t&&t.reset&&t.reset()}catch(e){}
+ if(dbg)console.log('[ccpaint] reset',why);
+ resume(why)}
 function resume(why){requestAnimationFrame(function(){repaint(why)});
  setTimeout(function(){repaint(why+'/late')},300);/*rAF can beat the canvas actually coming back*/
  var k=window.__ccimeKick;if(k)setTimeout(k,400)}/*v4: socket died during screen lock -> blank
@@ -54,7 +65,7 @@ setInterval(function(){
  if(!w||w===ws)return;
  ws=w;
  if(first){first=false;return}/*the page's own first socket is not a reconnect*/
- if(w.readyState===1)resume('ws-new');
- else w.addEventListener('open',function(){resume('ws-open')})
+ if(w.readyState===1)hardreset('ws-new');
+ else w.addEventListener('open',function(){hardreset('ws-open')})
 },1000);
 })()</script>
