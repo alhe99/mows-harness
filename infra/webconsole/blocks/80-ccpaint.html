@@ -1,4 +1,4 @@
-<script id="ccpaint-js">/*ccpaint-v5: the screen not repainting after the phone comes back to a
+<script id="ccpaint-js">/*ccpaint-v6: the screen not repainting after the phone comes back to a
 live session -- historically garbled rows, then a blank grid, cleared by any tap.
 Renderer: WebGL is off at the unit (`-t rendererType=canvas`). ttyd 1.7.4 cannot recover a
 lost WebGL context -- its onContextLoss disposes the addon but never clears the reference and
@@ -56,8 +56,27 @@ function resume(why){requestAnimationFrame(function(){repaint(why)});
   if(document.visibilityState!=='visible')return;resume(ty)})});
 /*fires on the canvas and does not bubble -- capture on document*/
 document.addEventListener('webglcontextrestored',function(){resume('ctxrestored')},true);
-var last=Date.now(),ws=null,first=true;
+var last=Date.now(),ws=null,first=true,pd0=-1,stuck=0;
 setInterval(function(){
+ /*v6 -- THE actual bug, reproduced deterministically 2026-08-23 by replaying the phone's own
+ resize churn (53x47->49x47->49x49->59x55->59x32->59x55, from webterm-hook.log) against a live
+ ttyd: the churn kills xterm's WriteBuffer processing loop mid-stream. Bytes keep ARRIVING but
+ are never parsed -- caught with 408 chunks / ~700KB queued in _writeBuffer while tmux's model
+ ticked on cleanly -- so the grid freezes on whatever half-frame was painted when the loop
+ died: rows fused at stale widths, empty bottom rows, or plain blank. Every earlier fix
+ repainted some buffer's own copy of that stale frame; none touched the queue. A tap always
+ fixed it because user input restarts the loop (xterm's own _didUserInput path). This watchdog
+ is that tap: pending bytes with zero progress across 2 ticks means the loop is dead (a live
+ one drains 700KB in ms) -- restart it. One private API (_writeBuffer), wrapped in try/catch.*/
+ try{var wb=window.term&&window.term._core._writeBuffer;
+  if(wb&&typeof wb._pendingData==='number'){var pd=wb._pendingData;
+   /*a healthy queue sampled at 1Hz is empty -- parsing drains hundreds of KB per tick, so
+   nonzero AND non-decreasing on consecutive ticks means the loop is dead, not busy (with a
+   live producer like tmux the jammed queue GROWS, which is why an equality check missed it)*/
+   if(pd>0&&pd0>0&&pd>=pd0){if(++stuck>=2){try{wb._innerWrite()}catch(e){}
+    if(dbg)console.log('[ccpaint] unjam',pd+'B');stuck=0}}
+   else stuck=0;
+   pd0=pd}}catch(e){}
  var now=Date.now();
  if(now-last>2500)resume('frozen-'+(now-last)+'ms');/*screen lock: no event, but time moved*/
  last=now;
