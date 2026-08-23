@@ -126,6 +126,7 @@ infra/webconsole/clipboard.conf
 infra/webconsole/make-term-index.sh
 infra/webconsole/tmux-buffer-to-osc52.sh
 infra/webconsole/web-term.sh
+infra/webconsole/webterm-settle.sh
 install.sh
 scripts/e2e-container
 scripts/e2e-container.sh
