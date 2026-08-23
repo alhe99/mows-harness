@@ -1,4 +1,4 @@
-<script id="ccpaint-js">/*ccpaint-v6: the screen not repainting after the phone comes back to a
+<script id="ccpaint-js">/*ccpaint-v7: the screen not repainting after the phone comes back to a
 live session -- historically garbled rows, then a blank grid, cleared by any tap.
 Renderer: WebGL is off at the unit (`-t rendererType=canvas`). ttyd 1.7.4 cannot recover a
 lost WebGL context -- its onContextLoss disposes the addon but never clears the reference and
@@ -35,22 +35,31 @@ function repaint(why){var t=window.term;if(!t)return;
  try{t.clearTextureAtlas&&t.clearTextureAtlas()}catch(e){}
  try{t.refresh(0,t.rows-1)}catch(e){}
  if(dbg)console.log('[ccpaint] repaint',++n,why)}
-function hardreset(why){var t=window.term;/*v5: webterm-hook.log proved tmux's model CLEAN
- while the phone showed garbage -- so the mangle lives in THIS xterm's grid: stale pre-lock
- rows reflowed by the resize churn, plus in-flight redraw bytes applied at the wrong size.
- Repainting our own buffer just repaints the mangle. A NEW socket means ttyd killed the old
- child and a fresh attach redraw is coming, so the only content worth keeping is what's about
- to arrive: wipe the grid, let it land clean. Runs ONCE per socket, never from the delayed
- repaints (a late reset would eat bytes already arrived; the tmux client-attached hook's
- refresh-client at +2s covers even that race).*/
- try{t&&t.reset&&t.reset()}catch(e){}
- if(dbg)console.log('[ccpaint] reset',why);
- resume(why)}
 function resume(why){requestAnimationFrame(function(){repaint(why)});
  setTimeout(function(){repaint(why+'/late')},300);/*rAF can beat the canvas actually coming back*/
  var k=window.__ccimeKick;if(k)setTimeout(k,400)}/*v4: socket died during screen lock -> blank
  page, and no event fires on iOS unlock; the freeze detector lands here, so reconnect here.
  kick() checks readyState itself -- a healthy socket makes this a no-op*/
+/*v7 -- THE ROOT CAUSE, from the repro's own console: rapid resize during active output
+races xterm's parser -- InputHandler.print writes to a buffer row the resize just deleted,
+"Cannot set properties of undefined (setting 'isWrapped')" rips through WriteBuffer._innerWrite
+and the loop is never rescheduled: bytes arrive forever, parsed never. Every symptom of the
+last two days (fused rows, tiled frames, blank grid, all cured by a tap = xterm's user-input
+loop restart) is that one dead loop. Why only recently: the mobile-UX head made the iOS
+keyboard RESIZE the page and PWA geometry settle in steps, so phones now churn 4-6 sizes per
+resume where the old page had none -- the latent race never fired before.
+Fix at the entry: coalesce resize bursts (150ms) and apply only when the write queue is
+drained, so the parser is never mid-stream when the buffer changes shape. The unjam watchdog
+below stays as the belt for anything else that ever kills the loop.*/
+(function(){var iv2=setInterval(function(){var t=window.term;if(!t)return;clearInterval(iv2);
+ var orig=t.resize.bind(t),rq=null,timer=null;
+ t.resize=function(c,r){rq=[c,r];clearTimeout(timer);timer=setTimeout(apply,150)};
+ function apply(){if(!rq)return;
+  var wb=null;try{wb=t._core._writeBuffer}catch(e){}
+  if(wb&&wb._pendingData>0){setTimeout(apply,50);return}/*mid-parse: wait for drain (the
+   watchdog unjams a dead loop, so this cannot wait forever)*/
+  var q=rq;rq=null;try{orig(q[0],q[1])}catch(e){}
+  if(dbg)console.log('[ccpaint] resize applied',q[0]+'x'+q[1])}},250)})();
 ['visibilitychange','pageshow','focus'].forEach(function(ty){
  (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
   if(document.visibilityState!=='visible')return;resume(ty)})});
@@ -84,7 +93,7 @@ setInterval(function(){
  if(!w||w===ws)return;
  ws=w;
  if(first){first=false;return}/*the page's own first socket is not a reconnect*/
- if(w.readyState===1)hardreset('ws-new');
- else w.addEventListener('open',function(){hardreset('ws-open')})
+ if(w.readyState===1)resume('ws-new');
+ else w.addEventListener('open',function(){resume('ws-open')})
 },1000);
 })()</script>
