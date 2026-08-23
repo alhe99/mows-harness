@@ -1,4 +1,4 @@
-<script id="ccime-js">/*ccime-v4: mobile keyboard word suggestions that track the typed
+<script id="ccime-js">/*ccime-v5: mobile keyboard word suggestions that track the typed
 line + reconnect that survives it. Shadow-line mode (touch only, needs window.term): the
 hidden textarea RETAINS the current line so the IME has real prediction context; trusted
 key/input/composition events are stopped at document-capture before xterm sees them, and
@@ -33,6 +33,9 @@ function pst(x){var t=ta();if(!t)return;t.focus();var d=new DataTransfer();d.set
 function enterKey(){var t=ta();if(!t)return;
  t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))}
 function kick(){if(CCWS&&CCWS.readyState>1)enterKey()}/*dead socket: trip ttyd's Enter-to-reconnect*/
+window.__ccimeKick=kick;/*v5: ccpaint's freeze detector calls this -- iOS unlock fires none of
+ the events kick is hooked on below, so a socket that died during screen lock left a blank
+ page until a tap. kick() no-ops while the socket is healthy, so extra calls are free*/
 function fix(t){if(!t||t.getAttribute('autocorrect')==='on')return;
  [['autocomplete','on'],['autocorrect','on'],['spellcheck','true'],['enterkeyhint','send']]
  .forEach(function(a){t.setAttribute(a[0],a[1])});
@@ -46,7 +49,7 @@ function diff(t){var a=Array.from(prev),b=Array.from(t.value),p=0;
  while(p<a.length&&p<b.length&&a[p]===b[p])p++;
  var out=new Array(a.length-p+1).join('\x7f')+b.slice(p).join('');
  prev=t.value;saved=prev;if(out)send(out)}
-function engage(){window.__ccime=4;
+function engage(){window.__ccime=5;
 ['keydown','keyup','keypress'].forEach(function(ty){
  document.addEventListener(ty,function(e){
   if(!isTA(e))return;

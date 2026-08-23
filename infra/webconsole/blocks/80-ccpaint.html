@@ -1,4 +1,4 @@
-<script id="ccpaint-js">/*ccpaint-v3: the screen not repainting after the phone comes back to a
+<script id="ccpaint-js">/*ccpaint-v4: the screen not repainting after the phone comes back to a
 live session -- historically garbled rows, then a blank grid, cleared by any tap.
 Renderer: WebGL is off at the unit (`-t rendererType=canvas`). ttyd 1.7.4 cannot recover a
 lost WebGL context -- its onContextLoss disposes the addon but never clears the reference and
@@ -36,7 +36,10 @@ function repaint(why){var t=window.term;if(!t)return;
  try{t.refresh(0,t.rows-1)}catch(e){}
  if(dbg)console.log('[ccpaint] repaint',++n,why)}
 function resume(why){requestAnimationFrame(function(){repaint(why)});
- setTimeout(function(){repaint(why+'/late')},300)}/*rAF can beat the canvas actually coming back*/
+ setTimeout(function(){repaint(why+'/late')},300);/*rAF can beat the canvas actually coming back*/
+ var k=window.__ccimeKick;if(k)setTimeout(k,400)}/*v4: socket died during screen lock -> blank
+ page, and no event fires on iOS unlock; the freeze detector lands here, so reconnect here.
+ kick() checks readyState itself -- a healthy socket makes this a no-op*/
 ['visibilitychange','pageshow','focus'].forEach(function(ty){
  (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
   if(document.visibilityState!=='visible')return;resume(ty)})});
