@@ -1,4 +1,4 @@
-<script id="ccime-js">/*ccime-v3: mobile keyboard word suggestions that track the typed
+<script id="ccime-js">/*ccime-v4: mobile keyboard word suggestions that track the typed
 line + reconnect that survives it. Shadow-line mode (touch only, needs window.term): the
 hidden textarea RETAINS the current line so the IME has real prediction context; trusted
 key/input/composition events are stopped at document-capture before xterm sees them, and
@@ -9,7 +9,11 @@ v3: Enter is dispatched as a synthetic keydown instead of term.input('\r') -- tt
 injection never reaches, so v2 made a dead session unrecoverable from the phone keyboard.
 Also auto-kicks that reconnect on return-to-foreground / tap while the socket is closed
 (ttyd sets doReconnect=false after a socket error, so backgrounded phones always land in
-the press-Enter branch). Kill switch: /term/?ime=off
+the press-Enter branch). v4: swallows historyUndo/historyRedo -- iOS shake-to-undo pops an Undo dialog because the
+shadow line gives the textarea a real edit history, and accepting it would desync the pty.
+The dialog is system UI and cannot be suppressed from a page (Accessibility > Touch >
+Shake to Undo turns it off); this only makes tapping Undo harmless.
+Kill switch: /term/?ime=off
 ponytail: diff counts code points, not grapheme clusters -- a ZWJ emoji sequence may need
 extra backspaces; per-cluster segmentation if it ever matters.*/(function(){
 if(!matchMedia('(pointer:coarse)').matches)return;
@@ -42,7 +46,7 @@ function diff(t){var a=Array.from(prev),b=Array.from(t.value),p=0;
  while(p<a.length&&p<b.length&&a[p]===b[p])p++;
  var out=new Array(a.length-p+1).join('\x7f')+b.slice(p).join('');
  prev=t.value;saved=prev;if(out)send(out)}
-function engage(){window.__ccime=3;
+function engage(){window.__ccime=4;
 ['keydown','keyup','keypress'].forEach(function(ty){
  document.addEventListener(ty,function(e){
   if(!isTA(e))return;
@@ -60,6 +64,9 @@ function engage(){window.__ccime=3;
 document.addEventListener('beforeinput',function(e){
  if(!isTA(e)||!e.isTrusted)return;
  if(e.inputType==='insertLineBreak'){e.preventDefault();e.stopPropagation();submit(e.target);return}
+ if(e.inputType==='historyUndo'||e.inputType==='historyRedo'){e.preventDefault();e.stopPropagation();
+  resync();return}/*iOS shake-to-undo offers the shadow line's edit history; letting it revert the
+  field would make the input diff fire backspaces at the pty and scramble the real line*/
  if(e.inputType==='insertFromPaste'){var d=e.data||(e.dataTransfer&&e.dataTransfer.getData('text/plain'))||'';
   if(d.indexOf('\n')>=0){e.preventDefault();e.stopPropagation();pst(d);return}}/*multiline paste -> bracketed paste, never raw newlines*/
 },true);
