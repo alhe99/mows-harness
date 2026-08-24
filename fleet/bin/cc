@@ -95,20 +95,30 @@ if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
   # watchdogs/bin/reap-idle-claude matches (^cc-), so extra sessions are reaped like any
   # other. Only asked when there is a terminal to answer with: the `-t 0` guard above
   # already gates this branch, so scripted and nested-tmux callers keep the old path.
-  if [ -z "$WT" ] && tmux has-session -t "=$SES" 2>/dev/null; then
-    printf 'cc: a Claude session is already running in %s\n' "$DIR"
-    printf '    %s · %s\n' "$SES" \
-      "$(tmux display -p -t "=$SES" '#{?session_attached,attached on another client,detached}' 2>/dev/null || echo live)"
-    printf '  [Enter] work in that one   [n] new session, same tree   [w] new worktree, own branch   [q] quit\n'
+  # ANY session working in this directory counts — webconsole (web-*) and other
+  # profiles' launchers included, not just our own cc-<profile>-<slug> name.
+  # Compared on pane_current_path against the normalized [dir].
+  DIRABS=$(cd "$DIR" 2>/dev/null && pwd || echo "$DIR")
+  HERE="$(tmux list-sessions -F '#{session_name} #{pane_current_path}' 2>/dev/null \
+    | awk -v p="$DIRABS" '{s=$1; r=substr($0, length(s)+2)} r==p {print s}')"
+  if [ -z "$WT" ] && [ -n "$HERE" ]; then
+    TGT="$(printf '%s\n' "$HERE" | grep -m1 "^cc-$P-" || true)"
+    [ -n "$TGT" ] || TGT="$(printf '%s\n' "$HERE" | head -1)"
+    printf 'cc: Claude session(s) already running in %s:\n' "$DIRABS"
+    printf '%s\n' "$HERE" | sed 's/^/    /'
+    printf '  [Enter] work in %s   [n] new session, same tree   [w] new worktree, own branch   [q] quit\n' "$TGT"
     read -rp '  > ' ANS || ANS=q
     case "$ANS" in
-      n|N|new) N=2
-               while tmux has-session -t "=$SES-$N" 2>/dev/null; do N=$((N+1)); done
-               SES="$SES-$N"; printf 'cc: starting %s\n' "$SES" ;;
+      n|N|new) if tmux has-session -t "=$SES" 2>/dev/null; then
+                 N=2
+                 while tmux has-session -t "=$SES-$N" 2>/dev/null; do N=$((N+1)); done
+                 SES="$SES-$N"
+               fi
+               printf 'cc: starting %s\n' "$SES" ;;
       w|W) read -rp '  worktree name > ' WT
            [ -n "$WT" ] || exit 1 ;;
       q|Q) exit 0 ;;
-      *) exec tmux attach -d -t "=$SES" ;;
+      *) exec tmux attach -d -t "=$TGT" ;;
     esac
   fi
   if [ -n "$WT" ]; then
