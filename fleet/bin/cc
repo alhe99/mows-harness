@@ -99,13 +99,14 @@ if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
   # profiles' launchers included, not just our own cc-<profile>-<slug> name.
   # Compared on pane_current_path against the normalized [dir].
   DIRABS=$(cd "$DIR" 2>/dev/null && pwd || echo "$DIR")
-  HERE="$(tmux list-sessions -F '#{session_name} #{pane_current_path}' 2>/dev/null \
-    | awk -v p="$DIRABS" '{s=$1; r=substr($0, length(s)+2)} r==p {print s}')"
+  # @label last in the format — a user-set label may itself contain tabs
+  HERE="$(tmux list-sessions -F $'#{session_name}\t#{pane_current_path}\t#{@label}' 2>/dev/null \
+    | awk -F'\t' -v p="$DIRABS" '$2==p {print $1 "\t" $3}')"
   if [ -z "$WT" ] && [ -n "$HERE" ]; then
-    TGT="$(printf '%s\n' "$HERE" | grep -m1 "^cc-$P-" || true)"
-    [ -n "$TGT" ] || TGT="$(printf '%s\n' "$HERE" | head -1)"
+    TGT="$(printf '%s\n' "$HERE" | cut -f1 | grep -m1 "^cc-$P-" || true)"
+    [ -n "$TGT" ] || TGT="$(printf '%s\n' "$HERE" | head -1 | cut -f1)"
     printf 'cc: Claude session(s) already running in %s:\n' "$DIRABS"
-    printf '%s\n' "$HERE" | sed 's/^/    /'
+    printf '%s\n' "$HERE" | awk -F'\t' '{print "    " $1 ($2==""?"":" · " $2)}'
     printf '  [Enter] work in %s   [n] new session, same tree   [w] new worktree, own branch   [q] quit\n' "$TGT"
     read -rp '  > ' ANS || ANS=q
     case "$ANS" in
