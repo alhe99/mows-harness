@@ -71,10 +71,12 @@ intended NOPASSWD path.
 - **`ccwt`** — lifecycle for per-session git worktrees. Parallel sessions in one repo
   stop sharing a tree by starting with `cc [profile] [dir] -w <name>` (or answering `w`
   at the "already running here" prompt): the session runs in its own checkout at
-  `<repo>/.claude/worktrees/<name>` on branch `worktree-<name>`. cc creates the
-  worktree itself — native `claude --worktree` trips a legacy trust check
-  (`hasTrustDialogAccepted`) the modern trust flow never satisfies — and re-running
-  the same `-w <name>` reattaches/reuses it. The tmux
+  `<repo>/.claude/worktrees/<branch-with-dashes>` on a conventionalcommits.org-style
+  branch — `-w fix/ledger-race` uses that branch verbatim, a bare `-w ledger-race`
+  becomes `feat/ledger-race`. cc creates the worktree itself — native
+  `claude --worktree` trips a legacy trust check (`hasTrustDialogAccepted`) the
+  modern trust flow never satisfies — and re-running the same `-w <name>`
+  reattaches/reuses it. The tmux
   session gets a `-wt-<name>` suffix and is pre-labeled via `@label`, so dashboard rows,
   browser tabs and Discord pings all carry the worktree name. From the main checkout:
   `ccwt list` (branch, merged?, dirty?, live session?), `ccwt done <name>` (merge the

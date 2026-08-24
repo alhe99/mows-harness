@@ -41,7 +41,8 @@ usage: cc [profile] [dir] [-- <claude flags...>]
   cc <profile>             ~/.claude-<profile>, current directory
   cc <profile> <dir>       ~/.claude-<profile>, in <dir>
   cc <dir>                 default profile, in <dir>
-  cc [profile] [dir] -w <name>   session in its own git worktree/branch (see ccwt)
+  cc [profile] [dir] -w <name>   session in its own git worktree/branch (see ccwt);
+                                 name = conventional branch: fix/x, chore/y … bare name = feat/<name>
   cc <profile> -- --continue   pass flags through to claude itself
 
 Runs claude inside tmux session cc-<profile>-<slug> when attached to a terminal,
@@ -58,20 +59,23 @@ esac
 P=default
 [ $# -ge 1 ] && case " $(profiles | tr '\n' ' ') " in *" $1 "*) P=$1; shift ;; esac
 # -w <name> is accepted before or after [dir]: run the session in its own git
-# worktree (branch worktree-<name>, checkout at <dir>/.claude/worktrees/<name>)
-# so parallel sessions in one repo never share a tree. cc creates the worktree
-# itself — native `claude --worktree` trips a legacy trust check
+# worktree so parallel sessions in one repo never share a tree. The branch
+# follows conventionalcommits.org types: "fix/ledger-race" is used verbatim, a
+# bare "ledger-race" becomes feat/ledger-race; checkout lands at
+# <dir>/.claude/worktrees/<branch-with-dashes>. cc creates the worktree itself
+# — native `claude --worktree` trips a legacy trust check
 # (hasTrustDialogAccepted) the modern trust flow never satisfies — and reuses
 # it when it already exists, so re-running the same -w reattaches/resumes.
 # Merge back: ccwt done.
 WT=""
 mkwt() { # create/reuse the -w worktree at $WTP; branch may survive a removed checkout
-  WT="${WT//[^a-zA-Z0-9._-]/-}"
-  WTP="$DIR/.claude/worktrees/$WT"
+  WT="$(printf '%s' "$WT" | tr -c 'a-zA-Z0-9._/-' '-')"
+  case "$WT" in */*) BR="$WT" ;; *) BR="feat/$WT" ;; esac
+  WTP="$DIR/.claude/worktrees/${BR//\//-}"
   [ -d "$WTP" ] && return 0
-  git -C "$DIR" worktree add -b "worktree-$WT" "$WTP" >/dev/null 2>&1 \
-    || git -C "$DIR" worktree add "$WTP" "worktree-$WT" >/dev/null \
-    || { echo "cc: could not create worktree $WTP (not a git repo?)" >&2; exit 1; }
+  git -C "$DIR" worktree add -b "$BR" "$WTP" >/dev/null 2>&1 \
+    || git -C "$DIR" worktree add "$WTP" "$BR" >/dev/null \
+    || { echo "cc: could not create worktree $WTP (not a git repo, or bad branch name '$BR'?)" >&2; exit 1; }
 }
 if [ "${1-}" = "-w" ]; then WT="${2-}"; [ -n "$WT" ] || { echo "cc: -w needs a name" >&2; exit 1; }; shift 2; fi
 DIR=$PWD; if [ $# -ge 1 ] && [ "$1" != "--" ] && [ "$1" != "-w" ]; then DIR=$1; shift; fi
@@ -116,7 +120,7 @@ if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
                  SES="$SES-$N"
                fi
                printf 'cc: starting %s\n' "$SES" ;;
-      w|W) read -rp '  worktree name > ' WT
+      w|W) read -rp '  branch (conventional: fix/x, chore/y … bare name = feat/) > ' WT
            [ -n "$WT" ] || exit 1 ;;
       q|Q) exit 0 ;;
       *) exec tmux attach -d -t "=$TGT" ;;
@@ -126,12 +130,12 @@ if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
     # Session name gets a -wt-<slug> suffix (still ^cc-, so the reaper matches)
     # and is pre-labeled via @label for dashboard rows / tab titles / Discord.
     mkwt
-    WSLUG=$(printf '%s' "$WT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
+    WSLUG=$(printf '%s' "$BR" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//;s/-*$//')
     SES="$SES-wt-$WSLUG"
     if ! tmux has-session -t "=$SES" 2>/dev/null; then
       tmux new-session -d -s "$SES" -c "$WTP" \
         "$(printf '%q ' env CLAUDE_CONFIG_DIR="$CFG" "${RUN[@]}")"
-      tmux set-option -t "=$SES:" @label "$WT" 2>/dev/null || true
+      tmux set-option -t "=$SES:" @label "$BR" 2>/dev/null || true
     fi
     exec tmux attach -d -t "=$SES"
   fi

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # ccwt — lifecycle for Claude session worktrees (created by `cc … -w <name>`):
-# checkouts under <repo>/.claude/worktrees/<name>, each on its own branch
-# (worktree-<name>). "Still in use" = some process (the Claude session's shell)
+# checkouts under <repo>/.claude/worktrees/<dir>, each on its own conventional
+# branch (feat/x, fix/y — dir name is the branch with / as -; every command
+# reads the real branch from the checkout, so any branch name works).
+# "Still in use" = some process (the Claude session's shell)
 # still has its cwd inside the worktree, read from /proc.
 # Run from the MAIN checkout — `done` merges into the branch checked out there.
 #
