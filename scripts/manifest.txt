@@ -95,6 +95,7 @@ docs/assets/phone.png
 fleet/SETUP.md
 fleet/add-agent.sh
 fleet/bin/cc
+fleet/bin/ccswap
 fleet/bin/claude-rc
 fleet/bin/claude-status
 fleet/bin/reset-claude-env

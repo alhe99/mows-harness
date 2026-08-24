@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ccswap — continue this directory's latest Claude Code session on the OTHER account.
+#
+# When a session hits its quota limit mid-task, don't wait for the reset:
+# exit the blocked session and run `ccswap` in the same directory. The session
+# transcript (a plain JSONL under <config-dir>/projects/<escaped-cwd>/) is copied
+# into the other account's matching project dir and resumed there — same
+# conversation, full context, next message billed to the other account.
+#
+# usage: ccswap [session-id]
+#   bare        swap the most recently touched session for $PWD (searched across
+#               all profiles) onto the other account
+#   session-id  swap that specific session instead
+#
+# Companions: watchdogs/bin/claude-limit-shield.sh waits out the reset and nudges;
+# ccswap is the "don't wait" path. Launches via the cc/ccw wrappers when they match
+# the target config dir (inheriting tmux + curated MCP), plain claude otherwise.
+# ponytail: two-profile swap; add target picking if a third account ever appears.
+set -euo pipefail
+
+slug=$(printf '%s' "$PWD" | sed 's/[^a-zA-Z0-9]/-/g')
+
+# profiles = config dirs that actually hold sessions: ~/.claude + ~/.claude-*
+dirs=()
+for d in "$HOME/.claude" "$HOME"/.claude-*; do
+  [ -d "$d/projects" ] && dirs+=("$d")
+done
+if [ "${#dirs[@]}" -ne 2 ]; then
+  echo "ccswap: expected exactly 2 account config dirs with projects/, found ${#dirs[@]}: ${dirs[*]-none}" >&2
+  exit 1
+fi
+
+sid="${1:-}"
+src=""
+if [ -n "$sid" ]; then
+  sid="${sid%.jsonl}"
+  for d in "${dirs[@]}"; do
+    f="$d/projects/$slug/$sid.jsonl"
+    # a previous swap leaves the id in both dirs — prefer the newer copy
+    if [ -f "$f" ] && { [ -z "$src" ] || [ "$f" -nt "$src" ]; }; then src="$f"; fi
+  done
+  [ -n "$src" ] || { echo "ccswap: session $sid not found under */projects/$slug/" >&2; exit 1; }
+else
+  for d in "${dirs[@]}"; do
+    f=$(ls -t "$d/projects/$slug/"*.jsonl 2>/dev/null | head -1) || true
+    if [ -n "$f" ] && { [ -z "$src" ] || [ "$f" -nt "$src" ]; }; then src="$f"; fi
+  done
+  [ -n "$src" ] || { echo "ccswap: no sessions found for $PWD (looked in ${dirs[*]/%//projects/$slug})" >&2; exit 1; }
+  sid=$(basename "$src" .jsonl)
+fi
+
+srcdir="${src%%/projects/*}"
+tgt=""
+for d in "${dirs[@]}"; do [ "$d" != "$srcdir" ] && tgt="$d"; done
+
+mkdir -p "$tgt/projects/$slug"
+cp -f "$src" "$tgt/projects/$slug/$sid.jsonl"
+echo "ccswap: $sid  $(basename "$srcdir") -> $(basename "$tgt")"
+command -v claude-quota >/dev/null && claude-quota 2>/dev/null || true
+
+# cc/ccw own their account's tmux + MCP setup — go through them when they match
+launch=(env CLAUDE_CONFIG_DIR="$tgt" claude)
+case "$tgt" in
+  "$HOME/.claude")      command -v cc  >/dev/null && launch=(cc)  ;;
+  "$HOME/.claude-work") command -v ccw >/dev/null && launch=(ccw) ;;
+esac
+exec "${launch[@]}" --resume "$sid"
