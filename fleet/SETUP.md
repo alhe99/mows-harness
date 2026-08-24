@@ -68,6 +68,23 @@ intended NOPASSWD path.
   live list (also editable there via the row's ✎ button) and replaces the session id in
   the browser-tab/terminal title (`<name> · <dir>`, see `infra/os/tmux.conf`), so several
   sessions in the same directory stay tellable apart. Dies with the session — correct.
+- **`ccwt`** — lifecycle for per-session git worktrees. Parallel sessions in one repo
+  stop sharing a tree by starting with `cc [profile] [dir] -w <name>` (or answering `w`
+  at the "already running here" prompt): the session runs in its own checkout at
+  `<repo>/.claude/worktrees/<name>` on branch `worktree-<name>`. cc creates the
+  worktree itself — native `claude --worktree` trips a legacy trust check
+  (`hasTrustDialogAccepted`) the modern trust flow never satisfies — and re-running
+  the same `-w <name>` reattaches/reuses it. The tmux
+  session gets a `-wt-<name>` suffix and is pre-labeled via `@label`, so dashboard rows,
+  browser tabs and Discord pings all carry the worktree name. From the main checkout:
+  `ccwt list` (branch, merged?, dirty?, live session?), `ccwt done <name>` (merge the
+  branch into the current one, remove worktree + branch; refuses while any process
+  still has its cwd inside the worktree or work is uncommitted), `ccwt drop <name>` (discard,
+  asks first). Pairs with SDD: one spec/feature = one worktree = one branch, merged via
+  `ccwt done` when its checks pass; bigger fire-and-forget work keeps going to
+  `agy-handoff`, which uses the same worktree+gate pattern. Needs
+  `.claude/worktrees/` in the global gitignore (`~/.config/git/ignore`) so worktrees
+  never show as untracked in the host repo.
 - **`claude-rc`** — manage/switch the profile's Remote Control systemd units
   (`claude-remote@<profile>.service` / `claude-remote-control@<profile>.service`). Run
   `claude-rc` (no args) or `claude-rc --help` for the full subcommand list — `status`,

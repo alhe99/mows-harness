@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ccwt — lifecycle for Claude session worktrees (created by `cc … -w <name>`):
+# checkouts under <repo>/.claude/worktrees/<name>, each on its own branch
+# (worktree-<name>). "Still in use" = some process (the Claude session's shell)
+# still has its cwd inside the worktree, read from /proc.
+# Run from the MAIN checkout — `done` merges into the branch checked out there.
+#
+# usage: ccwt list           worktrees here: branch, merged?, dirty?, live session?
+#        ccwt done <name>    merge its branch into the current branch, then remove it
+#        ccwt drop <name>    discard worktree AND branch (asks first)
+set -uo pipefail
+
+die() { echo "ccwt: $*" >&2; exit 1; }
+
+cmd="${1-}"
+case "$cmd" in list|done|drop) ;; *) sed -n '8,10p' "$0" | sed 's/^# //'; exit 1 ;; esac
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not in a git repo"
+[ -d "$root/.git" ] || die "run from the main checkout, not from inside a worktree"
+wtdir="$root/.claude/worktrees"
+
+# first pid whose cwd is inside the worktree (a live cc session, its claude, its
+# shells); empty if none — our own readlinks on other users' /proc just fail silently
+wt_pid() {
+  local p t
+  for p in /proc/[0-9]*; do
+    t="$(readlink "$p/cwd" 2>/dev/null)" || continue
+    case "$t" in "$wtdir/$1"|"$wtdir/$1"/*) echo "${p##*/}"; return 0 ;; esac
+  done
+  return 1
+}
+wt_live() { wt_pid "$1" >/dev/null; }
+
+if [ "$cmd" = list ]; then
+  cur="$(git -C "$root" branch --show-current)"
+  found=0
+  for wt in "$wtdir"/*/; do
+    [ -d "$wt" ] || continue
+    found=1; name="$(basename "$wt")"
+    br="$(git -C "$wt" branch --show-current 2>/dev/null)"; br="${br:-?}"
+    state=dirty; [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] && state=clean
+    merged=unmerged
+    git -C "$root" merge-base --is-ancestor "$br" HEAD 2>/dev/null && merged=merged
+    ahead="$(git -C "$root" rev-list --count "HEAD..$br" 2>/dev/null || echo '?')"
+    live=""; wt_live "$name" && live="  LIVE session (pid $(wt_pid "$name"))"
+    printf '%-18s %-26s %s, %s, %s commits ahead of %s%s\n' \
+      "$name" "$br" "$merged" "$state" "$ahead" "$cur" "$live"
+  done
+  [ "$found" = 1 ] || echo "ccwt: no session worktrees in $root"
+  exit 0
+fi
+
+name="${2-}"; [ -n "$name" ] || die "$cmd needs a worktree name (see: ccwt list)"
+wt="$wtdir/$name"
+[ -d "$wt" ] || die "no worktree at $wt"
+br="$(git -C "$wt" branch --show-current 2>/dev/null)"
+wt_live "$name" && die "a Claude session (pid $(wt_pid "$name")) is still using $name — exit it first"
+
+if [ "$cmd" = done ]; then
+  [ -n "$br" ] || die "worktree has no branch checked out"
+  [ -z "$(git -C "$wt" status --porcelain)" ] \
+    || die "worktree has uncommitted changes — commit them there, or discard with: ccwt drop $name"
+  git -C "$root" merge --no-edit "$br" \
+    || die "merge stopped — resolve in $root, commit, then clean up with: ccwt drop $name"
+  git -C "$root" worktree unlock "$wt" 2>/dev/null || true
+  git -C "$root" worktree remove "$wt"
+  git -C "$root" branch -d "$br"
+  echo "ccwt: merged $br into $(git -C "$root" branch --show-current), removed $wt"
+else # drop
+  read -rp "ccwt: discard worktree $name AND branch ${br:-?} (uncommitted work is lost)? [y/N] " a
+  case "$a" in y|Y) ;; *) exit 0 ;; esac
+  git -C "$root" worktree unlock "$wt" 2>/dev/null || true
+  git -C "$root" worktree remove --force "$wt" || die "could not remove $wt"
+  [ -n "$br" ] && git -C "$root" branch -D "$br"
+  echo "ccwt: dropped $name"
+fi
