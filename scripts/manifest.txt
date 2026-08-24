@@ -166,3 +166,4 @@ claude/scripts/discord-send.sh
 claude/scripts/discord-via-agy.sh
 claude/scripts/quota-gate.sh
 claude/skills/discord/SKILL.md
+fleet/bin/ccname

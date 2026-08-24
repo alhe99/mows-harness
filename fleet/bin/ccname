@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# ccname — put a human name on the tmux session you're in.
+# Shows bold on the dashboard's live list and replaces the session id in the
+# browser-tab / terminal title ("<name> · <dir>"), so several sessions in the
+# same directory stay tellable apart. Stored as the tmux session option @label;
+# the dashboard's ✎ button edits the same thing.
+#
+# usage: ccname my label here   set (spaces fine, no quoting needed)
+#        ccname                 clear
+set -euo pipefail
+[ -n "${TMUX:-}" ] || { echo "ccname: not inside a tmux session" >&2; exit 1; }
+tmux set-option @label "$*"
+if [ -n "$*" ]; then echo "session named: $*"; else echo "session name cleared"; fi

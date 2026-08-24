@@ -7,7 +7,7 @@ ways. Read this section before touching either — mixing them up is the most li
 
 | | **Profile model** | **Agent model** |
 |---|---|---|
-| Tooling | `fleet/bin/{cc,ccswap,claude-rc,claude-status,reset-claude-env}` | `fleet/add-agent.sh` |
+| Tooling | `fleet/bin/{cc,ccname,ccswap,claude-rc,claude-status,reset-claude-env}` | `fleet/add-agent.sh` |
 | Shape | ONE Linux user (the admin), N `~/.claude`/`~/.claude-<suffix>` config dirs | N separate Linux user accounts, one per agent, each with its own `~/.claude` |
 | Provenance | **Extracted from, and validated against, a real working reference box.** Every script's header documents the exact live behavior it replaced. | **Designed fresh for this repo. No live precedent.** Nothing here was extracted from anywhere, and — as of this task — it has never run for real, not even once, on the reference box. |
 | Status | Proven | Unvalidated in production; validated only via `bash -n`/shellcheck, `DRY_RUN=1` transcripts, and rendered-copy `visudo -cf`/`systemd-analyze verify` (see `.superpowers/sdd/task-14-report.md` if you have it) |
@@ -62,7 +62,13 @@ intended NOPASSWD path.
   message billed to the other quota. Run it from the project directory after exiting the
   blocked session. Complements `watchdogs/bin/claude-limit-shield.sh` (which waits out the
   reset instead). Expects exactly two config dirs with `projects/` (`~/.claude` + one
-  `~/.claude-*`). — manage/switch the profile's Remote Control systemd units
+  `~/.claude-*`).
+- **`ccname [label...]`** — put a human name on the tmux session you're in (no args =
+  clear). Stored as the tmux session option `@label`: it shows bold on the dashboard's
+  live list (also editable there via the row's ✎ button) and replaces the session id in
+  the browser-tab/terminal title (`<name> · <dir>`, see `infra/os/tmux.conf`), so several
+  sessions in the same directory stay tellable apart. Dies with the session — correct.
+- **`claude-rc`** — manage/switch the profile's Remote Control systemd units
   (`claude-remote@<profile>.service` / `claude-remote-control@<profile>.service`). Run
   `claude-rc` (no args) or `claude-rc --help` for the full subcommand list — `status`,
   `start`/`stop`/`only`/`all`, `workdir`, `boot`, `logs`, `resume`, `set-effort`/`set-model`,

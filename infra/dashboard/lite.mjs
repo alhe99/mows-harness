@@ -177,12 +177,12 @@ const sh = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }
 async function tmuxLive() {
   if (Date.now() - tmuxCache.t < 3000) return tmuxCache.list;
   const out = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-panes', '-a', '-F',
-    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{pane_pid}\t#{pane_current_path}']);
+    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{pane_pid}\t#{pane_current_path}\t#{@label}']);
   const list = [];
   for (const l of out.trim().split('\n').filter(Boolean)) {
-    const [name, att, created, pid, cwd] = l.split('\t');
+    const [name, att, created, pid, cwd, ...rest] = l.split('\t'); // @label last: user text may hold tabs
     if (list.some(x => x.name === name)) continue; // first pane per session
-    list.push({ name, attached: att === '1', created: +created * 1000, pid: +pid, cwd, paused: false });
+    list.push({ name, attached: att === '1', created: +created * 1000, pid: +pid, cwd, label: rest.join(' ').trim(), paused: false });
   }
   if (list.length) { // paused = the leader's descendants (claude) are in state T
     const st = await sh('ps', ['-eo', 'pid=,ppid=,stat=']);
@@ -249,6 +249,9 @@ async function action(req, res, url) {
     const sig = act === 'pause' ? '-STOP' : '-CONT';
     const kids = await descendants(t.pid);
     if (kids.length) await sh('kill', [sig, '--', ...kids.map(String)]);
+  } else if (act === 'label') { // name a live session (empty = clear); tmux titles show it in browser tabs
+    const label = (b.label || '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'set-option', '-t', '=' + name + ':', '@label', label]); // "=name:" — set-option rejects the bare "=name" exact form kill-session takes
   } else { res.writeHead(404); return res.end(); }
   tmuxCache.t = 0;
   res.writeHead(303, { location: back }); res.end();
@@ -679,6 +682,7 @@ const dayLbl = ms => { const d = new Date(ms).toISOString().slice(0, 10);
 function actForms(l, back) {
   const f = (act, label, cls) => `<form class="af" method="post" action="/a/${act}"><input type="hidden" name="name" value="${esc(l.name)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab${cls ? ' ' + cls : ''}">${label}</button></form>`;
   return (l.paused ? f('resume', '▶ resume', 'ok') : f('pause', '⏸ pause'))
+    + `<details class="kx"><summary class="ab" title="name this session">✎</summary><div class="kc"><form class="af" method="post" action="/a/label"><input type="hidden" name="name" value="${esc(l.name)}"><input type="hidden" name="back" value="${esc(back)}"><input class="li2" name="label" value="${esc(l.label || '')}" maxlength="60" placeholder="session name" aria-label="session name"><button class="ab ok">save</button></form></div></details>`
     + `<details class="kx"><summary class="ab danger">✕ kill</summary><div class="kc"><div>stop <b>${esc(l.name)}</b>?</div><span class="muted">the process ends now — the transcript stays on disk, resume anytime.</span>${f('kill', 'kill it', 'danger')}</div></details>`;
 }
 const abs = t => t ? new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—';
@@ -726,6 +730,8 @@ button:hover{background:var(--pop);border-color:var(--bd2)}
 .ln a,.ln span{color:var(--ok);font:600 13px var(--mono)}
 .la{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .lt{flex-basis:100%;margin:-2px 0 0 18px;font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb{font:600 13px var(--sans);color:var(--fg)}
+.li2{background:rgba(255,255,255,.04);border:1px solid var(--bd2);border-radius:var(--r);color:var(--fg);padding:6px 10px;font:13px var(--sans);width:100%;min-height:32px}
 .af{display:inline;margin:0}
 .ab{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--bd);border-radius:var(--r);padding:5px 12px;min-height:34px;background:var(--card2);color:var(--fg2);font:13px var(--sans);cursor:pointer;list-style:none}
 .ab:hover{background:var(--pop);border-color:var(--bd2)}
@@ -1033,7 +1039,7 @@ async function listView(req, res, url) {
       .reduce((a, e) => (!a || e.mt > a.mt ? e : a), null) : null);
     const title = tsrc ? (await titleOf(tsrc)).title : '';
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
-<span class="ln">${nm}</span><span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
+<span class="ln">${nm}</span>${l.label ? `<span class="lb">${esc(l.label)}</span>` : ''}<span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
 <span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
   }))).join('') + `</div>` : '';
 
