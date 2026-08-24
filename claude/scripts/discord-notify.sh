@@ -31,6 +31,13 @@ sid8="${session_id:0:8}"
 [ -n "$sid8" ] || sid8="unknown"
 key="s-${sid8}"
 
+# Session name (tmux @label, set via ccname or the dashboard ✎). The hook
+# inherits $TMUX from the pane Claude runs in, so read it live each time.
+label=""
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  label="$(tmux display-message -p '#{@label}' 2>/dev/null || true)"
+fi
+
 state_dir="$HOME/.claude/state/discord-threads"
 mkdir -p "$state_dir"
 
@@ -49,7 +56,9 @@ if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
 fi
 
 if [ ${#msg} -gt 200 ]; then msg="${msg:0:200}..."; fi
-text="⏸️ **${proj}** (\`${sid8}\`) — ${msg:-needs your input}"
+head="${proj}"
+[ -n "$label" ] && head="${label} · ${proj}"
+text="⏸️ **${head}** (\`${sid8}\`) — ${msg:-needs your input}"
 if [ -n "$ctx" ]; then
   text="${text}
 >>> ${ctx}"
@@ -57,7 +66,7 @@ fi
 
 out="$(timeout 10 "$HOME/.claude/scripts/discord-send.sh" \
   -k "$key" \
-  -n "cc · ${proj} · ${sid8}" \
+  -n "cc · ${head} · ${sid8}" \
   -m "$text" 2>&1)" || true
 printf '%s input %s %s\n' "$(date '+%F %T')" "$key" "${out:-no-output}" \
   >> "$state_dir/notify.log" 2>/dev/null || true
