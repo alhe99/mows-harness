@@ -682,7 +682,7 @@ const dayLbl = ms => { const d = new Date(ms).toISOString().slice(0, 10);
 function actForms(l, back) {
   const f = (act, label, cls) => `<form class="af" method="post" action="/a/${act}"><input type="hidden" name="name" value="${esc(l.name)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab${cls ? ' ' + cls : ''}">${label}</button></form>`;
   return (l.paused ? f('resume', '▶ resume', 'ok') : f('pause', '⏸ pause'))
-    + `<details class="kx"><summary class="ab" title="name this session">✎</summary><div class="kc"><form class="af" method="post" action="/a/label"><input type="hidden" name="name" value="${esc(l.name)}"><input type="hidden" name="back" value="${esc(back)}"><input class="li2" name="label" value="${esc(l.label || '')}" maxlength="60" placeholder="session name" aria-label="session name"><button class="ab ok">save</button></form></div></details>`
+    + `<details class="kx"><summary class="ab" title="name this session">✎</summary><div class="kc"><form class="af lf" method="post" action="/a/label"><input type="hidden" name="name" value="${esc(l.name)}"><input type="hidden" name="back" value="${esc(back)}"><input class="li2" name="label" value="${esc(l.label || '')}" maxlength="60" placeholder="session name" aria-label="session name"><button class="ab ok">save</button></form></div></details>`
     + `<details class="kx"><summary class="ab danger">✕ kill</summary><div class="kc"><div>stop <b>${esc(l.name)}</b>?</div><span class="muted">the process ends now — the transcript stays on disk, resume anytime.</span>${f('kill', 'kill it', 'danger')}</div></details>`;
 }
 const abs = t => t ? new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—';
@@ -731,7 +731,8 @@ button:hover{background:var(--pop);border-color:var(--bd2)}
 .la{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .lt{flex-basis:100%;margin:-2px 0 0 18px;font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lb{font:600 13px var(--sans);color:var(--fg)}
-.li2{background:rgba(255,255,255,.04);border:1px solid var(--bd2);border-radius:var(--r);color:var(--fg);padding:6px 10px;font:13px var(--sans);width:100%;min-height:32px}
+.af.lf{display:flex;gap:8px;align-items:center}
+.li2{background:rgba(255,255,255,.04);border:1px solid var(--bd2);border-radius:var(--r);color:var(--fg);padding:6px 10px;font:13px var(--sans);flex:1;min-width:0;min-height:32px}
 .af{display:inline;margin:0}
 .ab{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--bd);border-radius:var(--r);padding:5px 12px;min-height:34px;background:var(--card2);color:var(--fg2);font:13px var(--sans);cursor:pointer;list-style:none}
 .ab:hover{background:var(--pop);border-color:var(--bd2)}
