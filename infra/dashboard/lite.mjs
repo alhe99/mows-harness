@@ -714,7 +714,139 @@ function usage(force) {
   return usageCache.d;
 }
 usage(); // warm the cache at boot so the first visitor already sees numbers
-function sysPanel(fhref, open) {
+// ---------- reclaim: measured, opt-in disk prune (the ⌫ chip in the system panel) ----------
+// Memory and CPU are deliberately NOT prunable here, and that is not laziness: the panel's
+// memory figure is MemTotal-MemAvailable, which ALREADY excludes the page cache, so
+// drop_caches would "free" only bytes the kernel was lending back anyway — and cost a
+// re-read of everything hot. The load average is the sessions you asked for. Disk is the
+// one resource on a box like this that genuinely leaks: package and build caches grow
+// forever and nothing ever prunes them.
+// Every target measures itself BEFORE it runs, so the preview never promises bytes it
+// cannot free, and the number reported afterwards is a real statfs delta, not the estimate.
+// Paths are literals in this table and the POST only picks ids out of it — no request
+// input ever reaches an rm. Groups: '' = safe (pre-checked), anything else is opt-in.
+const HB = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' G'
+  : n >= 1048576 ? (n / 1048576).toFixed(0) + ' M' : (n / 1024).toFixed(0) + ' K';
+const bytesOf = s => { // "451.8MB", "874.0M", "33592336" -> bytes
+  const m = /^([\d.]+)\s*([kKMGT])?i?[bB]?/.exec(String(s).trim());
+  return m ? Math.round(+m[1] * ({ k: 1024, K: 1024, M: 1048576, G: 1073741824, T: 1099511627776 }[m[2]] || 1)) : 0;
+};
+const rrun = (cmd, args, t = 120000) => new Promise(r =>
+  execFile(cmd, args, { timeout: t, maxBuffer: 8e6 }, (e, out) => r(e ? '' : out)));
+const du = async p => existsSync(p) ? parseInt(await rrun('du', ['-sbx', p], 60000), 10) || 0 : 0;
+const rmrf = p => fsp.rm(p, { recursive: true, force: true });
+let dfCache = { t: 0, d: null };
+async function dockerDf() { // one `docker system df` serves both docker targets in a scan
+  if (dfCache.d && Date.now() - dfCache.t < 10000) return dfCache.d;
+  const d = {};
+  for (const ln of (await rrun('docker', ['system', 'df', '--format', '{{json .}}'], 20000)).trim().split('\n')) {
+    const j = jp(ln); if (j) d[j.Type] = bytesOf(j.Reclaimable);
+  }
+  dfCache = { t: Date.now(), d };
+  return d;
+}
+const OLD = 7 * 864e5;
+// /tmp is shared with the whole OS, so this NEVER sweeps it wholesale — only entries
+// matching known tool litter (harness scratchpads, staged-demo trees, MSBuild temps,
+// bare-uuid dirs) and only once they are a week cold. Mostly empty dirs: the win is
+// 2000 fewer dirents, so the row reports the count, not bytes.
+const TMP_LITTER = /^(claude-|mows-shots-|MSBuild\d|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-)/;
+async function tmpStale(kill) {
+  let n = 0, b = 0, cut = Date.now() - OLD;
+  for (const f of await fsp.readdir('/tmp')) {
+    if (!TMP_LITTER.test(f)) continue;
+    try {
+      const st = await fsp.stat('/tmp/' + f);
+      if (st.mtimeMs > cut) continue;
+      n++; b += st.size;
+      if (kill) await rmrf('/tmp/' + f);
+    } catch { /* vanished or not ours */ }
+  }
+  return { b, extra: n ? n + ' entries' : '' }; // no entries -> no row in the preview
+}
+async function oldFiles(dir, kill) {
+  let n = 0, b = 0, cut = Date.now() - OLD;
+  for (const f of await fsp.readdir(dir).catch(() => [])) {
+    try {
+      const st = await fsp.stat(dir + '/' + f);
+      if (st.mtimeMs > cut) continue;
+      n++; b += st.size;
+      if (kill) await rmrf(dir + '/' + f);
+    } catch { /* vanished */ }
+  }
+  return { b, extra: n ? n + ' files' : '' };
+}
+const RT = [
+  { id: 'journal', label: 'systemd journal', note: 'vacuum down to 200M',
+    size: async () => Math.max(0, bytesOf((/take up ([\d.]+\s*[kKMGT]?)/.exec(await rrun('journalctl', ['--disk-usage'])) || [])[1]) - 200 * 1048576),
+    run: () => rrun('journalctl', ['--vacuum-size=200M']) },
+  { id: 'apt', label: 'apt package cache', note: 're-downloaded on demand',
+    size: () => du('/var/cache/apt/archives'), run: () => rrun('apt-get', ['clean']) },
+  { id: 'npm', label: 'npm cache', note: '.npm/_cacache',
+    size: () => du(`${TMUX_HOME}/.npm/_cacache`), run: () => rmrf(`${TMUX_HOME}/.npm/_cacache`) },
+  { id: 'go', label: 'go build cache', note: '.cache/go-build',
+    size: () => du(`${TMUX_HOME}/.cache/go-build`), run: () => rmrf(`${TMUX_HOME}/.cache/go-build`) },
+  { id: 'uv', label: 'uv python cache', note: '.cache/uv',
+    size: () => du(`${TMUX_HOME}/.cache/uv`), run: () => rmrf(`${TMUX_HOME}/.cache/uv`) },
+  { id: 'pip', label: 'pip wheel cache', note: '.cache/pip',
+    size: () => du(`${TMUX_HOME}/.cache/pip`), run: () => rmrf(`${TMUX_HOME}/.cache/pip`) },
+  { id: 'gyp', label: 'node-gyp headers', note: '.cache/node-gyp',
+    size: () => du(`${TMUX_HOME}/.cache/node-gyp`), run: () => rmrf(`${TMUX_HOME}/.cache/node-gyp`) },
+  { id: 'docker', label: 'docker dangling layers', note: 'every tagged image is kept',
+    size: async () => { const d = await dockerDf(); return (d.Images || 0) + (d['Build Cache'] || 0); },
+    run: async () => { await rrun('docker', ['image', 'prune', '-f'], 90000); await rrun('docker', ['builder', 'prune', '-f'], 90000); } },
+  { id: 'shots', label: 'terminal screenshots', note: 'older than 7 days',
+    size: () => oldFiles('/opt/claude-dashboard/shots'), run: () => oldFiles('/opt/claude-dashboard/shots', true) },
+  { id: 'tmp', label: 'stale /tmp scratch dirs', note: 'tool litter, 7 days cold',
+    size: () => tmpStale(), run: () => tmpStale(true) },
+  { id: 'browsers', g: 'qa', label: 'playwright + puppeteer browsers', note: 'next QA journey re-downloads ~1.3 G',
+    size: async () => (await du(`${TMUX_HOME}/.cache/ms-playwright`)) + (await du(`${TMUX_HOME}/.cache/puppeteer`)),
+    run: async () => { await rmrf(`${TMUX_HOME}/.cache/ms-playwright`); await rmrf(`${TMUX_HOME}/.cache/puppeteer`); } },
+  { id: 'vol', g: 'data', label: 'unused docker volumes', note: 'a volume can hold a dev database — no undo',
+    size: async () => (await dockerDf())['Local Volumes'] || 0,
+    run: () => rrun('docker', ['volume', 'prune', '-f'], 60000) },
+];
+async function reclaimScan() { // ~1-2 s of du, so only ever on the explicit preview request
+  return Promise.all(RT.map(async t => {
+    let v = 0; try { v = await t.size(); } catch { /* tool absent -> 0 */ }
+    const o = typeof v === 'number' ? { b: v, extra: '' } : v;
+    return { ...t, b: o.b || 0, extra: o.extra };
+  }));
+}
+async function reclaimAction(req, res) {
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  let raw = '', n = 0;
+  for await (const c of req) { n += c.length; if (n > 4096) { res.writeHead(413); return res.end('too large'); } raw += c; }
+  const f = new URLSearchParams(raw);
+  const ids = new Set(f.getAll('t'));
+  const sel = RT.filter(t => ids.has(t.id));
+  const b4 = statfsSync('/');
+  for (const t of sel) { try { await t.run(); } catch { /* one dead target must not abort the rest */ } }
+  const af = statfsSync('/');
+  const back = new URLSearchParams(f.get('back') || '');
+  back.set('sys', '1');
+  back.set('freed', String(Math.max(0, (af.bavail - b4.bavail) * af.bsize)));
+  back.set('rn', String(sel.length));
+  hostCache = { t: 0, h: null }; // the disk meter must show the new number on the bounce
+  dfCache = { t: 0, d: null };
+  res.writeHead(303, { location: '/?' + back }); res.end();
+}
+function recForm(rec) {
+  const rows = rec.scan.filter(t => t.b > 0 || t.extra);
+  const safe = rows.filter(t => !t.g).reduce((s, t) => s + t.b, 0);
+  const row = t => `<label class="rrow"><input type="checkbox" name="t" value="${t.id}"${t.g ? '' : ' checked'}>
+<span class="rl">${esc(t.label)}</span><b>${HB(t.b)}</b>
+<span class="muted">${esc(t.extra ? t.extra + ' · ' + t.note : t.note)}</span></label>`;
+  return `<div class="statgrid"><div class="stat wide"><span class="sl">reclaim · measured just now</span>
+<form class="rf" method="post" action="/sys/reclaim"><input type="hidden" name="back" value="${esc(rec.back || '')}">
+${rows.length ? rows.map(row).join('') : '<div class="mlist muted">nothing to reclaim — every cache here is already empty</div>'}
+${rows.length ? `<div class="rrow tot"><span class="rl">checked by default</span><b>${HB(safe)}</b><button class="ab danger">\u232b reclaim selected</button></div>
+<div class="mlist muted">runs as root · no undo. memory and cpu are missing on purpose: the mem bar above already
+excludes the page cache, so there is nothing there to free, and the load is your own sessions.</div>` : ''}
+</form></div></div>`;
+}
+function sysPanel(fhref, open, rec) {
   const h = hostInfo(), u = usage();
   const pct = (x, t) => t ? Math.min(100, Math.round(x / t * 100)) : 0;
   const meter = (p, hot) => `<span class="meter"><i style="width:${Math.min(100, Math.max(0, p))}%${p >= (hot == null ? 101 : hot) ? ';background:var(--bad)' : p >= 50 ? ';background:var(--warn)' : ''}"></i></span>`;
@@ -760,9 +892,13 @@ ${u.agyEv ? `<div class="qrow"><span style="width:72px">last event</span><span c
   }
   const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
   const age = usageCache.t ? (rel(usageCache.t) === 'now' ? 'now' : rel(usageCache.t) + ' ago') : '—';
-  const urow = `<div class="bar"><span class="chip">usage updated <b>${age}</b>${usageCache.busy ? ' · refreshing…' : ''}</span><a class="chip" href="${fhref || '/?fresh=1'}">↻ refresh</a></div>`;
+  const rchip = rec ? `<a class="chip" href="${esc(rec.href)}">${rec.scan ? '\u2715 close' : '\u232b reclaim'}</a>` : '';
+  const rflash = rec && rec.freed != null
+    ? `<span class="chip ok">reclaimed <b>${HB(rec.freed)}</b> · ${rec.n} target${rec.n === 1 ? '' : 's'}</span>` : '';
+  const urow = `<div class="bar"><span class="chip">usage updated <b>${age}</b>${usageCache.busy ? ' · refreshing…' : ''}</span><a class="chip" href="${fhref || '/?fresh=1'}">↻ refresh</a>${rchip}${rflash}</div>`;
+  const rblk = rec && rec.scan ? recForm(rec) : '';
   return `<details class="sys"${open ? ' open' : ''}><summary><span class="syst">📊 system</span><span class="syss">load <b>${h.load.toFixed(2)}</b> · mem <b>${GB(h.memUsed)}/${GB(h.memTot)}G</b> · disk <b>${GB(h.dskUsed)}/${GB(h.dskTot)}G</b> · up <b>${days}d</b>${sumToday == null ? '' : ` · today <b>${money(sumToday)}</b>`}</span></summary>
-<div class="sysbody">${cards}${urow}${ubody}</div></details>`;
+<div class="sysbody">${cards}${urow}${rblk}${ubody}</div></details>`;
 }
 
 // ---------- transcript parse (LRU 3 files; >25MB -> tail 8MB window) ----------
@@ -987,6 +1123,14 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 .meter i{display:block;height:100%;background:var(--ok);border-radius:2px}
 .qrow{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mut);padding:2px 0;min-width:0}
 .qrow .meter{flex:1;margin:0}
+.rrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--mut);padding:3px 0;min-width:0;cursor:pointer}
+.rrow .rl{color:var(--fg);flex:0 0 auto}
+.rrow b{color:var(--fg);font-variant-numeric:tabular-nums;margin-left:auto;flex-shrink:0}
+.rrow>.muted{flex:0 0 100%;padding:0 0 0 24px;font-size:11px}
+.rrow input{width:16px;height:16px;accent-color:var(--warn);flex-shrink:0}
+.rrow.tot{border-top:1px solid var(--hair);margin-top:6px;padding-top:9px;cursor:default}
+.rf{margin:0}
+.chip.ok{border-color:rgba(52,211,153,.35);color:var(--ok)}
 .qrow b{color:var(--fg);font-variant-numeric:tabular-nums;flex-shrink:0}
 .qrow>span:first-child{width:52px;flex-shrink:0}
 .qrow .sid8{font-family:var(--mono);font-size:11px;color:var(--fg2);text-decoration:underline;text-decoration-color:var(--bd2)}
@@ -1227,6 +1371,14 @@ async function listView(req, res, url) {
   // summarized) whenever the URL carries one so active state is never hidden
   const fOn = !!(url.searchParams.get('acct') || d || s || q);
   const sysOpen = !!url.searchParams.get('sys'); // set by the ↻ usage-refresh bounce
+  // ⌫ reclaim: the preview is its own GET (the du sweep costs ~1-2 s, so it must never
+  // ride along on a plain page load); the POST bounces back here with freed=<bytes>
+  const rec = { href: '/' + qs({ ...P, sys: 1, reclaim: 1 }), back: qs(P) };
+  if (url.searchParams.get('reclaim')) { rec.scan = await reclaimScan(); rec.href = '/' + qs({ ...P, sys: 1 }); }
+  if (url.searchParams.get('freed')) {
+    rec.freed = +url.searchParams.get('freed') || 0;
+    rec.n = +url.searchParams.get('rn') || 0;
+  }
   const fState = [acct && BY_ID[acct] ? BY_ID[acct].label : 'all',
     ({ today: 'today', '7d': '7 days', '30d': '30 days' })[d] || 'all time']
     .concat(s === 'live' ? ['live'] : [], q ? ['“' + esc(q) + '”'] : []).join(' · ');
@@ -1237,7 +1389,7 @@ async function listView(req, res, url) {
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
 <div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
-${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen)}
+${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen, rec)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
@@ -1352,6 +1504,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/settings/term-theme') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await termThemeAction(req, res);
+    }
+    if (p === '/sys/reclaim') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+      return await reclaimAction(req, res);
     }
     if (p === '/settings') return await settingsView(req, res);
     if (p === '/' ) {

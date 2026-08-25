@@ -20,7 +20,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Port | Bound to | Service | Notes |
 |---|---|---|---|
 | 443 | public | Caddy | TLS termination + reverse proxy — the only thing this box exposes to the Internet and the only thing that terminates TLS |
-| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, and `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`) |
+| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`), and `POST /sys/reclaim` (measured cache/disk prune behind a mandatory preview) |
 | 7681 | 127.0.0.1 | `ttyd` (`/term`) | Only `/term/ws` and `/term/token` reach `ttyd` through Caddy's `reverse_proxy`; plain `GET /term` and `/term/` are intercepted earlier and served by Caddy's own `file_server` from `term-index.html` (see `infra/webconsole/make-term-index.sh`) |
 | 4180 | 127.0.0.1 | oauth2-proxy | Caddy's `forward_auth` target for every protected route, plus a `reverse_proxy` for `/oauth2/*` |
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |

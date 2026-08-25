@@ -177,6 +177,38 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now claude-transcript-prune.timer
 ```
 
+#### The `⌫ reclaim` button
+
+The system panel's `⌫ reclaim` chip is the interactive half of the same disk hygiene: the
+prune timer handles transcripts on a schedule, this handles the caches nothing else ever
+sweeps. Tapping it is a plain `GET` that only *measures* — one `du` pass, ~1-2 s — and
+renders a per-target breakdown with a checkbox each; the delete happens on the `POST` to
+`/sys/reclaim`, and the number reported afterwards is a real `statfs` delta, not the
+estimate. Targets are literals in the `RT` table in `lite.mjs`; the POST only picks ids out
+of that table, so no request input ever reaches an `rm`.
+
+Checked by default (safe — everything here is re-downloaded or rebuilt on demand): the
+systemd journal (vacuumed to 200M), the apt archive, the npm / go-build / uv / pip /
+node-gyp caches, docker dangling layers and build cache (`docker image prune -f` +
+`docker builder prune -f`, so every *tagged* image survives), `/opt/claude-dashboard/shots`
+older than 7 days, and week-cold tool litter in `/tmp` — matched against a narrow
+allowlist (`claude-*`, `mows-shots-*`, `MSBuild*`, bare-uuid dirs), never a wholesale
+sweep of a directory the rest of the OS shares.
+
+Unchecked, opt in per run: the Playwright/Puppeteer browser caches (the next QA journey
+re-downloads ~1.3 G) and unused docker volumes (a volume can hold a dev database — no undo).
+
+> **There is deliberately no "free memory" or "free CPU" action**, and adding one would be
+> theatre. The panel's memory figure is `MemTotal - MemAvailable`, which already excludes
+> the page cache, so `drop_caches` would release only what the kernel was lending back
+> anyway — at the cost of re-reading everything hot. And the load average is the sessions
+> you asked for; a button that shrinks it is a button that kills your own work. Disk is the
+> only resource on this box that genuinely leaks.
+
+The dashboard runs as `root` (see `infra/systemd/claude-dash-lite.service`), so no extra
+sudoers grant is involved — which is exactly why the scope above is a fixed table and the
+preview is mandatory.
+
 ### 8. Linger
 
 ```bash
