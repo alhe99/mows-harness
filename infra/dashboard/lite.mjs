@@ -285,7 +285,9 @@ async function action(req, res, url) {
     if (kids.length) await sh('kill', [sig, '--', ...kids.map(String)]);
   } else if (act === 'label') { // name a live session (empty = clear); tmux titles show it in browser tabs
     const label = (b.label || '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-    await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'set-option', '-t', '=' + name + ':', '@label', label]); // "=name:" — set-option rejects the bare "=name" exact form kill-session takes
+    // through ccname, not tmux directly: it also writes ~/.local/state/cc-labels/<name>, which is
+    // what brings the label back after the tmux server dies (2026-08-25: twice in one night)
+    await runAs([], 'ccname', ['-t', name, ...(label ? [label] : [])], 10000);
   } else { res.writeHead(404); return res.end(); }
   tmuxCache.t = 0;
   res.writeHead(303, { location: back }); res.end();

@@ -28,6 +28,35 @@ Already-running tmux server? Apply without restarting anything:
 tmux source-file ~/.tmux.conf
 ```
 
+### 1b. The tmux server as its own unit — and off needrestart's list
+
+Every live Claude Code session is a process inside *some* tmux server. Left to itself that
+server is forked by whichever client came first — on a harness box that is ttyd, so the
+server (and every session) ends up inside `claude-web-term.service`'s cgroup, and **any
+restart of ttyd kills them all**: a hand-run `systemctl restart` deploying a `/term` fix, or
+`needrestart` after `unattended-upgrades` replaced libcurl (2026-08-25, both, one night).
+`claude-tmux.service` starts the server first, in its own cgroup, and `claude-web-term`
+`Requires=` it; ttyd can then be restarted at will — clients drop for a second and reconnect
+to sessions that never noticed.
+
+```bash
+sed "s/{{ADMIN_USER}}/$USER/g" infra/os/claude-tmux.service.template > rendered/claude-tmux.service
+sudo install -m644 rendered/claude-tmux.service /etc/systemd/system/
+sudo install -m644 infra/os/needrestart-claude.conf /etc/needrestart/conf.d/claude.conf
+sudo systemctl daemon-reload && sudo systemctl enable claude-tmux
+sudo needrestart -r l          # claude-tmux must NOT be listed
+```
+
+On a fresh box just `enable --now` it before `claude-web-term` (infra/SETUP.md §6). On a box
+that already runs sessions, do **not** `start` it yet — the old server holds the socket and
+`tmux -D` would fail. The switch-over is one deliberate `sudo systemctl restart
+claude-web-term` at a quiet moment: that kills the old server for the last time, and the
+`Requires=` brings `claude-tmux` up ahead of ttyd. Every restart after that is free.
+
+Session names (`ccname`, dashboard ✎) are also written to `~/.local/state/cc-labels/`, and
+the `session-created` hook in `tmux.conf` re-applies them — so a name survives even the
+reboot case, and is back the moment that session is reopened.
+
 ## 2. Firewall (IPv4 + IPv6)
 
 **Review both files before applying anything.** `infra/os/firewall/rules.v4.template` and

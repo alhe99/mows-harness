@@ -2,12 +2,31 @@
 # ccname — put a human name on the tmux session you're in.
 # Shows bold on the dashboard's live list and replaces the session id in the
 # browser-tab / terminal title ("<name> · <dir>"), so several sessions in the
-# same directory stay tellable apart. Stored as the tmux session option @label;
-# the dashboard's ✎ button edits the same thing.
+# same directory stay tellable apart. Stored as the tmux session option @label
+# (the dashboard's ✎ button calls this same script with -t) AND as a file under
+# ~/.local/state/cc-labels/<session>, because a tmux option lives exactly as long
+# as the tmux server — a ttyd restart wiped every name twice on 2026-08-25. The
+# session-created hook in infra/os/tmux.conf calls `ccname --restore`, and web-<sid8>
+# names are stable per Claude session, so a name comes back whenever that session
+# is reopened, reboot included.
 #
-# usage: ccname my label here   set (spaces fine, no quoting needed)
-#        ccname                 clear
+# usage: ccname my label here      set (spaces fine, no quoting needed)
+#        ccname                    clear
+#        ccname -t SESSION [label] same, for a session you are not inside (dashboard ✎)
+#        ccname --restore SESSION  re-apply the saved name if the session has none (hook)
 set -euo pipefail
-[ -n "${TMUX:-}" ] || { echo "ccname: not inside a tmux session" >&2; exit 1; }
-tmux set-option @label "$*"
-if [ -n "$*" ]; then echo "session named: $*"; else echo "session name cleared"; fi
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/cc-labels"
+case "${1:-}" in
+  --restore)
+    S=${2:?session}; f="$STATE/${S//\//_}"
+    [ -s "$f" ] || exit 0
+    [ -z "$(tmux show-options -qvt "=$S:" @label 2>/dev/null)" ] || exit 0  # a live name wins
+    exec tmux set-option -t "=$S:" @label "$(cat "$f")";;
+  -t) S=${2:?session}; shift 2;;
+  *)  [ -n "${TMUX:-}" ] || { echo "ccname: not inside a tmux session (or: ccname -t SESSION ...)" >&2; exit 1; }
+      S="$(tmux display-message -p '#S')";;
+esac
+tmux set-option -t "=$S:" @label "$*"   # "=name:" — the exact-match form set-option accepts
+mkdir -p "$STATE"
+if [ -n "$*" ]; then printf '%s\n' "$*" > "$STATE/${S//\//_}"; echo "session named: $*"
+else rm -f "$STATE/${S//\//_}"; echo "session name cleared"; fi

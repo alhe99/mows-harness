@@ -135,6 +135,20 @@ Dependencies, log locations, and logrotate detail: [`watchdogs/SETUP.md`](../wat
 
 ## Known operational caveats
 
+### The tmux server owns the sessions — keep it out of ttyd's cgroup
+
+`claude-tmux.service` (`tmux -D`, foreground, its own cgroup) is the process every live
+Claude Code session lives in; ttyd and `cc` only attach. Without that unit the first web
+client forks the server inside `claude-web-term.service`, and since that unit is
+`KillMode=control-group`, every ttyd restart — manual, or `needrestart` after a routine
+security update — takes every session and every `ccname` label with it. `claude-web-term`
+`Requires=` the tmux unit so the order cannot be wrong on a fresh box, and
+`infra/os/needrestart-claude.conf` exempts the tmux unit from needrestart, because a
+restart of *that* unit is by definition "kill every session". Labels are additionally
+persisted to `~/.local/state/cc-labels/` and re-applied by a `session-created` hook, so a
+reboot loses the sessions but not their names.
+
+
 - **Dashboard discovery is startup-only** (see above) — restart `claude-dash-lite` after
   provisioning a new profile or agent, or after its first real session finally creates a
   `projects/` directory.

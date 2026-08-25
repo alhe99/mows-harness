@@ -1,0 +1,44 @@
+# claude-tmux.service.template — the tmux server that OWNS every live Claude Code session,
+# as its own unit. ttyd (claude-web-term.service) and `cc` from an SSH shell only ever
+# attach to it.
+#
+# Why this exists (2026-08-25, twice in one night): without it, the first web session ever
+# opened forks the tmux server *inside* claude-web-term.service's cgroup, and that unit is
+# KillMode=control-group. Every restart of ttyd — a hand-run `systemctl restart` deploying
+# a /term fix, or needrestart after unattended-upgrades pulled a libcurl security update —
+# killed the server, every live session in it, and every `ccname` label (a tmux option,
+# memory-only). Here the server is started first, in its own cgroup, so ttyd can be
+# restarted freely: clients drop for a second and reconnect to sessions that never noticed.
+#
+# `tmux -D` = run the server in the foreground (systemd wants a main process) and turn
+# exit-empty OFF, so the unit stays up with zero sessions and is there when the first
+# `new-session -AD` arrives. Needs tmux >= 3.2 (`tmux -V`; Ubuntu 24.04 ships 3.4).
+#
+# PATH/LANG mirror what web-term.sh exports: panes inherit the SERVER's environment, and
+# this server is no longer a child of anything that set them.
+#
+# Stopping or restarting THIS unit is, by definition, "kill every session" — that is the
+# one operation it must never do by accident, which is why infra/os/needrestart-claude.conf
+# exempts it from needrestart (install the two together). A reboot still ends sessions;
+# labels survive it on disk (fleet/bin/ccname) and come back when a session is reopened.
+#
+# Render: sed "s/{{ADMIN_USER}}/<user>/g" > rendered/claude-tmux.service, then
+#   sudo install -m644 rendered/claude-tmux.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable claude-tmux
+# and see infra/SETUP.md §6 for the one-time switch-over on a box that already runs sessions.
+[Unit]
+Description=tmux server owning every live Claude Code session (ttyd and cc only attach)
+After=network.target
+
+[Service]
+Type=simple
+User={{ADMIN_USER}}
+Environment=LANG=C.UTF-8
+Environment=PATH=/home/{{ADMIN_USER}}/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/tmux -D
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

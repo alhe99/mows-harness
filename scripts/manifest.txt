@@ -120,9 +120,11 @@ infra/oauth2-proxy/emails.txt.template
 infra/oauth2-proxy/oauth2-proxy.cfg.template
 infra/oauth2-proxy/oauth2-proxy.service
 infra/os/SETUP.md
+infra/os/claude-tmux.service.template
 infra/os/firewall/docker-user-fence.service.template
 infra/os/firewall/rules.v4.template
 infra/os/firewall/rules.v6.template
+infra/os/needrestart-claude.conf
 infra/os/sudoers.d/claude-harness-agent.template
 infra/os/sudoers.d/claude-harness.template
 infra/os/tmux.conf

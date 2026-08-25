@@ -51,9 +51,14 @@
 # block alone wasn't enough. The canvas renderer has no context to lose, and a purged canvas
 # IS recoverable by a repaint, which ccpaint already does on foreground. Upgrade path is one
 # word: rendererType=webgl restores the old behaviour, =dom drops canvas too (slowest).
+# Requires= the tmux server unit (infra/os/claude-tmux.service.template): the server must
+# already exist, in ITS cgroup, before ttyd's first `new-session -AD` — otherwise that call
+# forks a server inside THIS unit's cgroup and every restart of ttyd (yours, or needrestart's
+# after a security update) kills every live session with it. Learned 2026-08-25, twice.
 [Unit]
 Description=Web terminal (ttyd) for Claude Code sessions — /term behind Caddy auth
-After=network.target
+Requires=claude-tmux.service
+After=network.target claude-tmux.service
 
 [Service]
 Type=simple

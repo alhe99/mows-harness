@@ -343,6 +343,12 @@ layer_infra(){
   echo "    sudo install -o oauth2-proxy -g oauth2-proxy -m0640 rendered/oauth2-proxy.cfg rendered/emails.txt /etc/oauth2-proxy/"
   echo "    sudo install -m644 infra/oauth2-proxy/oauth2-proxy.service /etc/systemd/system/oauth2-proxy.service && sudo systemctl daemon-reload"
 
+  echo "-- tmux server unit (infra/os/SETUP.md §1b — owns every live session; enable BEFORE claude-web-term) --"
+  render infra/os/claude-tmux.service.template rendered/claude-tmux.service
+  echo "  sudo install -m644 rendered/claude-tmux.service /etc/systemd/system/claude-tmux.service"
+  echo "  sudo install -m644 infra/os/needrestart-claude.conf /etc/needrestart/conf.d/claude.conf"
+  echo "  sudo systemctl daemon-reload && sudo systemctl enable --now claude-tmux   (box already running sessions? enable only — see §1b)"
+
   echo "-- web console /term (infra/webconsole/ — no SETUP.md; commands here) --"
   echo "  sudo mkdir -p /opt/claude-dashboard"
   echo "  sudo install -m644 infra/webconsole/web-term.sh infra/webconsole/clipboard-shim.html /opt/claude-dashboard/"

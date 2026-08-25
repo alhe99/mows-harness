@@ -138,7 +138,7 @@ in the enable order that matters:
   /etc/sudoers.d/claude-harness` — full grant rationale in
   [`infra/os/SETUP.md`](os/SETUP.md) §6.
 
-### 6. Enable order: caddy → oauth2-proxy → dashboard → web-term
+### 6. Enable order: caddy → oauth2-proxy → dashboard → tmux → web-term
 
 (ttyd's distro unit was already masked back in step 2 — nothing left to do for it here.)
 
@@ -147,8 +147,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now caddy
 sudo systemctl enable --now oauth2-proxy
 sudo systemctl enable --now claude-dash-lite
-sudo systemctl enable --now claude-web-term
+sudo systemctl enable --now claude-tmux       # infra/os/SETUP.md §1b — owns every live session
+sudo systemctl enable --now claude-web-term   # Requires= the line above
 ```
+
+`claude-tmux` before `claude-web-term` is not cosmetic: if ttyd's first `new-session` finds
+no server it forks one inside ttyd's own cgroup, and from then on every restart of ttyd
+kills every live session (see §1b in [`infra/os/SETUP.md`](os/SETUP.md) for the night
+that taught us). Already running sessions the old way? Install and `enable` `claude-tmux`
+without starting it, then one deliberate `sudo systemctl restart claude-web-term` at a
+quiet moment migrates — the `Requires=` starts the server unit first.
 
 Caddy first: it's the only thing that ever binds a public port, so nothing behind it is
 reachable — or matters yet — until it's up. oauth2-proxy next, so Caddy's `forward_auth`
