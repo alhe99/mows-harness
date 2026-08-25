@@ -69,6 +69,34 @@ status bar on attach, so a buffer with zero non-empty lines seconds after load m
 frame was LOST, not "nothing to show". Ladder, each rung only if still empty: repaint
 (free), reconnect kick (no-op on a healthy socket), one full reload — capped at 2 per tab
 via sessionStorage so it can never loop.*/
+/*v8.1 diag: a real user's tabs go blank on every load while 15+ staged runs paint —
+the failure only exists in the field, so the page phones home its own boot stages
+through the /z access-log sink (same channel as ccpwa's geometry beacon; a handful of
+beacons per load, plain query strings, no bodies). Read them:
+jq 'select(.request.uri|test("t=termdiag"))' the Caddy log. Remove once solved.*/
+var diag=(function(){var boot=Math.floor(performance.now());
+ function send(e,d){try{var u='/z?t=termdiag&e='+e+'&d='+encodeURIComponent(String(d).slice(0,120))+'&ms='+Math.floor(performance.now());
+  navigator.sendBeacon?navigator.sendBeacon(u):fetch(u,{keepalive:true})}catch(x){}}
+ window.addEventListener('error',function(ev){send('jserr',(ev.message||'?')+' @'+(ev.filename||'').split('/').pop()+':'+ev.lineno)});
+ window.addEventListener('unhandledrejection',function(ev){send('reject',ev.reason)});
+ var OW=window.WebSocket,n=0;
+ window.WebSocket=function(u,pr){var ws=pr!==undefined?new OW(u,pr):new OW(u),id=++n,bytes=0,first=false;
+  if(String(u).indexOf('/ws')>=0){send('ws-new',id+':'+String(u).slice(-40));
+   ws.addEventListener('open',function(){send('ws-open',id)});
+   ws.addEventListener('close',function(ev){send('ws-close',id+':'+ev.code)});
+   ws.addEventListener('error',function(){send('ws-err',id)});
+   ws.addEventListener('message',function(m){
+    bytes+=(m.data&&(m.data.byteLength||m.data.length))||0;
+    if(!first){first=true;send('ws-first-msg',id+':'+bytes+'B')}});
+   setTimeout(function(){send('ws-5s',id+':'+bytes+'B rs'+ws.readyState)},5000)}
+  return ws};
+ window.WebSocket.prototype=OW.prototype;
+ ['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(function(k){window.WebSocket[k]=OW[k]});
+ [3000,9000].forEach(function(ms){setTimeout(function(){
+  var t=window.term,ln=-1;try{var b=t.buffer.active;ln=0;
+   for(var i=0;i<b.length;i++){var l=b.getLine(i);if(l&&l.translateToString(true).trim())ln++}}catch(e){}
+  send('buf'+ms,ln+'L')},ms)});
+ return send})();
 function bufEmpty(){try{var b=window.term.buffer.active;
  for(var i=0;i<b.length;i++){var l=b.getLine(i);if(l&&l.translateToString(true).trim())return false}
  return true}catch(e){return false}}
