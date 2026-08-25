@@ -578,7 +578,7 @@ async function settingsView(req, res) {
 
   saveBtn.addEventListener('click', function(){
     saveBtn.disabled = true;
-    fetch('/term-theme', {
+    fetch('/settings/term-theme', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: sel.value })
@@ -1342,13 +1342,13 @@ const server = http.createServer(async (req, res) => {
       return await watchAction(req, res, p);
     }
     if (p === '/themes.json') return send(req, res, 200, JSON.stringify(THEME_MAP), 'application/json');
-    if (p === '/term-theme.json') {
+    if (p === '/settings/term-theme.json') {
       const s = await readSettings();
       const name = typeof s.termTheme === 'string' ? s.termTheme : '';
       const theme = THEME_MAP[name] || null;
       return send(req, res, 200, JSON.stringify({ name, theme }), 'application/json');
     }
-    if (p === '/term-theme') {
+    if (p === '/settings/term-theme') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await termThemeAction(req, res);
     }

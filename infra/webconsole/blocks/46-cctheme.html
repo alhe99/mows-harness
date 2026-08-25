@@ -9,7 +9,7 @@ brightPurple->brightMagenta, cursorColor->cursor. Picker lives in the #cckb key 
 on desktop the bar is hidden, so set it once via URL (?theme=Nord, ?theme=default to reset)
 or console (cctheme("Nord")) — the choice persists per browser in localStorage ("cctheme").
 canonical source is infra/webconsole/themes.json — keep in sync.
-"Auto (global)" = follows dashboard global (/term-theme.json), or ttyd default when unset,
+"Auto (global)" = follows dashboard global (/settings/term-theme.json), or ttyd default when unset,
 captured live at init, so there is always a way back. Kill switch: ?theme=off.
 Guardian interval re-asserts the effective theme if a reconnect/preference push restores
 ttyd defaults (same pattern, same reason as ccfont).*/(function(){
@@ -47,7 +47,7 @@ ttyd defaults (same pattern, same reason as ccfont).*/(function(){
     function fetchGlobal(cb){
       lastFetch=Date.now();
       try{
-        fetch('/term-theme.json').then(function(r){
+        fetch('/settings/term-theme.json').then(function(r){
           if(!r.ok)return;
           return r.json();
         }).then(function(d){

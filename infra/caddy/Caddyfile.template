@@ -109,6 +109,10 @@
             file_server
         }
         handle /term* {
+            # PREFIX wildcard: swallows EVERY path starting with /term, not just
+            # /term/ws and /term/token. A lite.mjs endpoint named /term-theme once
+            # landed here and 404'd in ttyd — dashboard routes must never start
+            # with /term (they live under /settings/* instead).
             reverse_proxy 127.0.0.1:7681
         }
         handle {
