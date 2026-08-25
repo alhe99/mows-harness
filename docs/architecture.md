@@ -12,7 +12,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 1. claude | `--claude` | `claude/{CLAUDE.md → global/,rules,agents,commands,skills}`, `claude/settings.template.json`, `claude/mcp.template.json` | The agentic config itself, copied into `~/.claude`; also loadable as a standalone plugin (`.claude-plugin/marketplace.json`, `claude/.claude-plugin/plugin.json`) |
 | 2. watchdogs | `--watchdogs` | `watchdogs/bin/*`, `watchdogs/crontab.example`, `watchdogs/logrotate.d/` | Seven cron scripts supervising the host and remote-control fleet |
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
-| 4. fleet | `--fleet` | `fleet/bin/{cc,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts) |
+| 4. fleet | `--fleet` | `fleet/bin/{cc,ccname,ccswap,ccwt,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts), plus per-session helpers — `ccname` (label a session), `ccswap` (continue a quota-blocked session on the other account), `ccwt` (per-session git worktrees, created by `cc -w`) |
 | 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota,agy-notify}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
 
 ## Port map
@@ -20,7 +20,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Port | Bound to | Service | Notes |
 |---|---|---|---|
 | 443 | public | Caddy | TLS termination + reverse proxy — the only thing this box exposes to the Internet and the only thing that terminates TLS |
-| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view |
+| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, and `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`) |
 | 7681 | 127.0.0.1 | `ttyd` (`/term`) | Only `/term/ws` and `/term/token` reach `ttyd` through Caddy's `reverse_proxy`; plain `GET /term` and `/term/` are intercepted earlier and served by Caddy's own `file_server` from `term-index.html` (see `infra/webconsole/make-term-index.sh`) |
 | 4180 | 127.0.0.1 | oauth2-proxy | Caddy's `forward_auth` target for every protected route, plus a `reverse_proxy` for `/oauth2/*` |
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |

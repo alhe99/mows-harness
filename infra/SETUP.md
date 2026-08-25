@@ -209,10 +209,10 @@ Caddy serves `/term` and `/term/` itself, from a static file — `ttyd`'s own `G
 never what a browser sees (see `infra/webconsole/claude-web-term.service.template`'s "Serving
 model" note). The generated page is ttyd's own bundle plus every self-authored addition
 spliced in: the clipboard shim and the `infra/webconsole/blocks/` mobile UX (key bar, PWA
-geometry, home key, photo attach, keyboard suggestions + reconnect, copy/paste overlay,
-restart-pane key, repaint-on-foreground — each block documents itself; runtime kill
-switches: `/term/?ime=off`, `?clip=off`, `?rst=off`, `?paint=off`). That file does not
-exist until you generate it:
+geometry, home key, photo attach, font size, **color themes**, keyboard suggestions +
+reconnect, copy/paste overlay, restart-pane key, repaint-on-foreground — each block
+documents itself; runtime kill switches: `/term/?ime=off`, `?clip=off`, `?rst=off`,
+`?paint=off`, `?theme=off`). That file does not exist until you generate it:
 
 ```bash
 infra/webconsole/make-term-index.sh
@@ -240,6 +240,41 @@ steps and `/term` 404s for every visitor, indefinitely — it is not created by 
 `systemctl enable` steps above.
 
 Note: `/term`'s "new session" launcher flow relies on `fleet/bin/cc` (installed via `./install.sh --fleet`).
+
+#### Terminal color themes
+
+`blocks/46-cctheme.html` ships 12 xterm color schemes (Material family, Nord, Catppuccin
+Mocha, TokyoNight, Rosé Pine, GitHub Dark/Light) converted from
+[mbadolato/iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) (MIT).
+Three ways to pick one, in precedence order:
+
+| Where | How | Scope |
+|---|---|---|
+| the `/term` key bar | the theme dropdown (mobile; the bar is hidden on desktop) | that browser, persisted in `localStorage` |
+| `/term` URL or console | `/term/?theme=Nord`, `?theme=default` to clear, or `cctheme("Nord")` | same — writes the same `localStorage` key |
+| the dashboard | `/settings` → **Global theme** → Save | every terminal tab on every device, picked up by open tabs within ~30 s |
+
+A device-local pick always wins over the global one; "Auto (global)" in the key bar clears
+it and follows the dashboard again. With nothing set anywhere, `ttyd`'s stock palette
+applies. The canonical color map lives in `infra/webconsole/themes.json` (read by the
+dashboard) and is mirrored inline in the block (the terminal page must theme itself before
+any fetch resolves) — **keep the two in sync when adding a scheme.**
+
+The dashboard persists the global choice to `/opt/claude-dashboard/settings.json`
+(`--settings-file` overrides the path; created on first Save, `{"termTheme":"<name>"}`) and
+serves it back at `GET /settings/term-theme.json`. Install `themes.json` next to `lite.mjs`
+so the `/settings` preview and the validation of `POST /settings/term-theme` see the same
+map:
+
+```bash
+sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json
+sudo systemctl restart claude-dash-lite
+```
+
+> **Never name a dashboard route `/term…`.** Caddy's `handle /term*` is a *prefix* matcher:
+> it swallows every path starting with `/term`, so an endpoint called `/term-theme` reaches
+> `ttyd` and 404s instead of reaching the dashboard. That is why these live under
+> `/settings/*`. The trap is commented in `infra/caddy/Caddyfile.template` too.
 
 ### 11. QA watch-stack (optional — ships disabled)
 
