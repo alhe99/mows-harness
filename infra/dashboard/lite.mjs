@@ -1006,7 +1006,8 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
 <a class="tb" href="/term/?v=3"><span class="ti">⌨</span>terminal</a>
 <a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
-<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a></nav>`;
+<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a>
+<a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings"><span class="ti">⚙</span>settings</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
@@ -1015,7 +1016,7 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
-${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* attach / >_ open the session in its OWN window on a desktop or tablet BROWSER, so the
    dashboard stays put and pause/kill/the other sessions stay one click away. NOT in the
