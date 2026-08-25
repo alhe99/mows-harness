@@ -125,6 +125,7 @@ infra/webconsole/claude-web-term.service.template
 infra/webconsole/clipboard-shim.html
 infra/webconsole/clipboard.conf
 infra/webconsole/make-term-index.sh
+infra/webconsole/themes.json
 infra/webconsole/tmux-buffer-to-osc52.sh
 infra/webconsole/web-term.sh
 infra/webconsole/webterm-settle.sh
