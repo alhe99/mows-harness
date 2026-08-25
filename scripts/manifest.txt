@@ -99,6 +99,7 @@ docs/assets/term-phone.png
 docs/assets/theme-cycle.gif
 docs/superpowers/plans/2026-08-10-agy-delegation.md
 docs/superpowers/specs/2026-08-10-antigravity-delegation-design.md
+docs/superpowers/specs/2026-08-25-persistent-terminal-shell-design.md
 fleet/SETUP.md
 fleet/add-agent.sh
 fleet/bin/cc
