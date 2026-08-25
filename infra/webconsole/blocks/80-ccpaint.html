@@ -114,8 +114,16 @@ function bufEmpty(){try{var b=window.term.buffer.active;
   if(document.visibilityState!=='visible')return;resume(ty)})});
 /*fires on the canvas and does not bubble -- capture on document*/
 document.addEventListener('webglcontextrestored',function(){resume('ctxrestored')},true);
-var last=Date.now(),ws=null,first=true,pd0=-1,stuck=0;
+var last=Date.now(),ws=null,first=true,pd0=-1,stuck=0,hadContent=false;
 setInterval(function(){
+ /*v9 -- from the field beacons (2026-08-25, termdiag): on a slow real-world connect the
+ ws takes ~4.5s to OPEN, data then lands fine (38 buffer lines by 10s) yet the glyph
+ layer never paints -- full buffer, blank screen, live cursor. Same dead-atlas family the
+ header documents, but on a FRESH load no resume event ever runs the cure, and v8's
+ fixed-clock rungs fired before the socket had even opened. The right moment is the
+ buffer's empty->content transition: repaint right then (and once more for luck).*/
+ if(!hadContent&&window.term&&!bufEmpty()){hadContent=true;
+  repaint('first-content');setTimeout(function(){repaint('first-content/late')},1000)}
  /*v6 -- THE actual bug, reproduced deterministically 2026-08-23 by replaying the phone's own
  resize churn (53x47->49x47->49x49->59x55->59x32->59x55, from webterm-hook.log) against a live
  ttyd: the churn kills xterm's WriteBuffer processing loop mid-stream. Bytes keep ARRIVING but
