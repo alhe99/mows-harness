@@ -93,6 +93,40 @@ const PORT = +flag('--port', 3005), HOST = flag('--host', '127.0.0.1');
 // one-tap resumable, so a stale context can't be retaken by accident.
 const RESUME_DAYS = +flag('--resume-days', 7);
 const canResume = (mt, live) => live || Date.now() - mt < RESUME_DAYS * 864e5;
+const SETTINGS_FILE = flag('--settings-file', process.env.SETTINGS_FILE || '/opt/claude-dashboard/settings.json');
+
+function loadThemeMap() {
+  const dir = path.dirname(new URL(import.meta.url).pathname);
+  const p1 = path.join(dir, 'themes.json');
+  const p2 = path.join(dir, '../webconsole/themes.json');
+  for (const p of [p1, p2]) {
+    try {
+      if (existsSync(p)) return JSON.parse(readFileSync(p, 'utf8'));
+    } catch (e) {
+      console.warn(`warning: failed to parse themes.json at ${p}:`, e.message);
+    }
+  }
+  console.warn('warning: themes.json not found next to lite.mjs or at ../webconsole/themes.json');
+  return {};
+}
+const THEME_MAP = loadThemeMap();
+
+async function readSettings() {
+  try {
+    const raw = await fsp.readFile(SETTINGS_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    return data && typeof data === 'object' ? data : {};
+  } catch {
+    return {};
+  }
+}
+async function saveSettings(patch) {
+  const cur = await readSettings();
+  const next = { ...cur, ...patch };
+  await fsp.mkdir(path.dirname(SETTINGS_FILE), { recursive: true }).catch(() => {});
+  await fsp.writeFile(SETTINGS_FILE, JSON.stringify(next, null, 2) + '\n');
+  return next;
+}
 
 // ---------- session index (in-memory, rebuilt in background) ----------
 let index = [];            // [{a, sid, path, mt, sz, proj}] sorted by mt desc
@@ -443,6 +477,130 @@ async function droidView(req, res) {
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · an Android container (<b>redroid</b>, native-arch, no KVM) streams here through ws-scrcpy — interact directly in the frame; the slim toolbar inside it has power/volume/back/home and a keyboard toggle. install an apk from the <a href="/term/?v=3">terminal</a>: <b>adb -s ${DROID_UDID} install app.apk</b> · run a QA flow: <b>maestro --device ${DROID_UDID} test flow.yaml</b> · <b>⧉ console</b> opens the raw ws-scrcpy page (other video decoders, web adb shell, file browser).</div>`;
   send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
+}
+
+// ---------- /settings: global terminal theme configuration + live preview ----------
+async function termThemeAction(req, res) {
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  const chunks = [];
+  let n = 0;
+  for await (const c of req) {
+    n += c.length;
+    if (n > 4096) { res.writeHead(400); return res.end('too large'); }
+    chunks.push(c);
+  }
+  let body;
+  try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end('invalid json'); }
+  if (!body || typeof body.name !== 'string') { res.writeHead(400); return res.end('invalid body'); }
+  const name = body.name;
+  if (name !== '' && !Object.prototype.hasOwnProperty.call(THEME_MAP, name)) {
+    res.writeHead(400); return res.end('unknown theme');
+  }
+  await saveSettings({ termTheme: name });
+  res.writeHead(200, { 'content-type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, name }));
+}
+
+async function settingsView(req, res) {
+  const s = await readSettings();
+  const curTheme = typeof s.termTheme === 'string' ? s.termTheme : '';
+  const names = Object.keys(THEME_MAP);
+  const mapJson = JSON.stringify(THEME_MAP);
+  const opts = [`<option value=""${curTheme === '' ? ' selected' : ''}>ttyd default</option>`]
+    .concat(names.map(n => `<option value="${esc(n)}"${curTheme === n ? ' selected' : ''}>${esc(n)}</option>`))
+    .join('');
+
+  const body = `<h1><a href="/">← sessions</a> <span class="muted">· ⚙ settings</span></h1>
+<div class="lp" style="max-width:640px">
+  <div style="font-weight:600;font-size:14px;color:var(--fg)">Terminal color theme</div>
+  <div class="lr" style="gap:10px;align-items:center">
+    <label for="themesel" style="font-size:13px;color:var(--mut)">Global theme:</label>
+    <select id="themesel" class="li2" style="max-width:200px;height:34px;background:var(--card2);border:1px solid var(--bd);border-radius:var(--r);color:var(--fg);padding:0 8px;font:13px var(--sans)">
+      ${opts}
+    </select>
+    <button id="savebtn" class="ab ok" type="button">Save</button>
+    <span id="savemsg" style="font-size:13px;transition:opacity .2s;opacity:0"></span>
+  </div>
+  <p class="muted" style="font-size:12.5px;margin-top:2px">Applies to all terminal tabs (open tabs within ~30 s). A theme picked inside a terminal's key bar overrides this on that device.</p>
+</div>
+<div style="font-weight:600;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin:18px 4px 8px">Live Preview</div>
+<div id="prevcard" style="border:1px solid var(--bd);border-radius:var(--r-lg);padding:14px 16px;font:13px/1.5 var(--mono);max-width:640px;box-shadow:0 4px 16px rgba(0,0,0,.3);transition:background .15s,color .15s">
+  <div style="margin-bottom:6px"><span>alonso@mows:~$ ls</span></div>
+  <div style="margin-bottom:8px"><span style="opacity:.9">Desktop  Documents  Downloads  src  config.json</span></div>
+  <div style="display:flex;gap:4px;margin-bottom:4px" id="prev-norm"></div>
+  <div style="display:flex;gap:4px;margin-bottom:10px" id="prev-bright"></div>
+  <div><span>alonso@mows:~$ </span><span id="prev-cursor" style="display:inline-block;width:8px;height:15px;vertical-align:-2px"></span></div>
+</div>
+<script>
+(function(){
+  var THEMES = ${mapJson};
+  var DEFAULT_THEME = {
+    background: "#0a0a0a",
+    foreground: "#fafafa",
+    cursor: "#fafafa",
+    selectionBackground: "#3f3f46",
+    black: "#212121", red: "#b7141f", green: "#457b24", yellow: "#f6981e",
+    blue: "#134eb2", magenta: "#560088", cyan: "#0e717c", white: "#afafaf",
+    brightBlack: "#424242", brightRed: "#e83b3f", brightGreen: "#7aba3a", brightYellow: "#bfaa00",
+    brightBlue: "#54a4f3", brightMagenta: "#aa4dbc", brightCyan: "#26bbd1", brightWhite: "#d9d9d9"
+  };
+  var sel = document.getElementById('themesel');
+  var card = document.getElementById('prevcard');
+  var cur = document.getElementById('prev-cursor');
+  var norm = document.getElementById('prev-norm');
+  var brt = document.getElementById('prev-bright');
+  var saveBtn = document.getElementById('savebtn');
+  var saveMsg = document.getElementById('savemsg');
+  var normKeys = ['black','red','green','yellow','blue','magenta','cyan','white'];
+  var brtKeys = ['brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
+
+  function updatePreview() {
+    var name = sel.value;
+    var t = (name && THEMES[name]) ? THEMES[name] : DEFAULT_THEME;
+    card.style.background = t.background || "#0a0a0a";
+    card.style.color = t.foreground || "#fafafa";
+    cur.style.background = t.cursor || t.foreground || "#fafafa";
+    norm.innerHTML = normKeys.map(function(k){
+      var c = t[k] || '#888';
+      return '<span style="display:inline-block;width:24px;height:18px;border-radius:3px;background:' + c + '" title="' + k + ': ' + c + '"></span>';
+    }).join('');
+    brt.innerHTML = brtKeys.map(function(k){
+      var c = t[k] || '#aaa';
+      return '<span style="display:inline-block;width:24px;height:18px;border-radius:3px;background:' + c + '" title="' + k + ': ' + c + '"></span>';
+    }).join('');
+  }
+
+  sel.addEventListener('change', updatePreview);
+  updatePreview();
+
+  saveBtn.addEventListener('click', function(){
+    saveBtn.disabled = true;
+    fetch('/term-theme', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: sel.value })
+    }).then(function(r){
+      if (!r.ok) throw new Error('status ' + r.status);
+      return r.json();
+    }).then(function(d){
+      saveBtn.disabled = false;
+      saveMsg.textContent = '✓ saved';
+      saveMsg.style.color = 'var(--ok)';
+      saveMsg.style.opacity = '1';
+      setTimeout(function(){ saveMsg.style.opacity = '0'; }, 2500);
+    }).catch(function(err){
+      saveBtn.disabled = false;
+      saveMsg.textContent = '✕ error saving';
+      saveMsg.style.color = 'var(--bad)';
+      saveMsg.style.opacity = '1';
+      setTimeout(function(){ saveMsg.style.opacity = '0'; }, 3500);
+    });
+  });
+})();
+</script>`;
+  send(req, res, 200, page('settings · terminal theme', body, '', '', 'settings'));
 }
 
 // ---------- system + usage panel (host metrics, claude/agy limits, spend) ----------
@@ -1076,7 +1234,7 @@ async function listView(req, res, url) {
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
-<div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a></div>
+<div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
 ${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
@@ -1182,6 +1340,18 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await watchAction(req, res, p);
     }
+    if (p === '/themes.json') return send(req, res, 200, JSON.stringify(THEME_MAP), 'application/json');
+    if (p === '/term-theme.json') {
+      const s = await readSettings();
+      const name = typeof s.termTheme === 'string' ? s.termTheme : '';
+      const theme = THEME_MAP[name] || null;
+      return send(req, res, 200, JSON.stringify({ name, theme }), 'application/json');
+    }
+    if (p === '/term-theme') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+      return await termThemeAction(req, res);
+    }
+    if (p === '/settings') return await settingsView(req, res);
     if (p === '/' ) {
       if (url.searchParams.get('fresh')) { // ↻ button: force usage re-collect, then bounce back (PRG)
         usage(true); // runs in background — the sys=1 page below auto-reloads until it lands
