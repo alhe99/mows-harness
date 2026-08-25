@@ -37,7 +37,7 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [
   --watchdogs       7 cron watchdog scripts -> ~/.local/bin (+ ~/bin for the limit shield)
   --infra           stage VPS/systemd/caddy/oauth2-proxy/qa-watch/dashboard templates into
                      ./rendered/ for review; never installs/enables/starts anything itself
-  --fleet           profile-model CLIs (cc, claude-rc, claude-status, reset-claude-env)
+  --fleet           profile-model CLIs (cc, ccname, ccswap, ccwt, claude-rc, claude-status, reset-claude-env)
                      -> ~/.local/bin
   --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota, agy-notify) -> ~/.local/bin
   --all             all five layers above
@@ -390,8 +390,9 @@ layer_infra(){
 layer_fleet(){
   echo "== fleet (profile-model CLIs) =="
   mkdir -p "$HOME/.local/bin"
-  install -m755 fleet/bin/cc fleet/bin/claude-rc fleet/bin/reset-claude-env fleet/bin/claude-status "$HOME/.local/bin/"
-  echo "installed: cc claude-rc reset-claude-env claude-status -> ~/.local/bin"
+  install -m755 fleet/bin/cc fleet/bin/ccname fleet/bin/ccswap fleet/bin/ccwt \
+    fleet/bin/claude-rc fleet/bin/reset-claude-env fleet/bin/claude-status "$HOME/.local/bin/"
+  echo "installed: cc ccname ccswap ccwt claude-rc reset-claude-env claude-status -> ~/.local/bin"
   if ! command -v jq >/dev/null 2>&1; then
     echo "WARN: jq not found — fleet commands (claude-rc set-effort/set-model/resume) require jq: sudo apt-get install -y jq"
   fi

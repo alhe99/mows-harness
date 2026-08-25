@@ -527,11 +527,11 @@ async function settingsView(req, res) {
 </div>
 <div style="font-weight:600;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin:18px 4px 8px">Live Preview</div>
 <div id="prevcard" style="border:1px solid var(--bd);border-radius:var(--r-lg);padding:14px 16px;font:13px/1.5 var(--mono);max-width:640px;box-shadow:0 4px 16px rgba(0,0,0,.3);transition:background .15s,color .15s">
-  <div style="margin-bottom:6px"><span>alonso@mows:~$ ls</span></div>
+  <div style="margin-bottom:6px"><span>you@harness:~$ ls</span></div>
   <div style="margin-bottom:8px"><span style="opacity:.9">Desktop  Documents  Downloads  src  config.json</span></div>
   <div style="display:flex;gap:4px;margin-bottom:4px" id="prev-norm"></div>
   <div style="display:flex;gap:4px;margin-bottom:10px" id="prev-bright"></div>
-  <div><span>alonso@mows:~$ </span><span id="prev-cursor" style="display:inline-block;width:8px;height:15px;vertical-align:-2px"></span></div>
+  <div><span>you@harness:~$ </span><span id="prev-cursor" style="display:inline-block;width:8px;height:15px;vertical-align:-2px"></span></div>
 </div>
 <script>
 (function(){
