@@ -536,15 +536,16 @@ async function settingsView(req, res) {
 <script>
 (function(){
   var THEMES = ${mapJson};
+  // what "ttyd default" really looks like: ttyd's own fg/bg/cursor + xterm.js stock ANSI
   var DEFAULT_THEME = {
-    background: "#0a0a0a",
-    foreground: "#fafafa",
-    cursor: "#fafafa",
+    background: "#2b2b2b",
+    foreground: "#d2d2d2",
+    cursor: "#adadad",
     selectionBackground: "#3f3f46",
-    black: "#212121", red: "#b7141f", green: "#457b24", yellow: "#f6981e",
-    blue: "#134eb2", magenta: "#560088", cyan: "#0e717c", white: "#afafaf",
-    brightBlack: "#424242", brightRed: "#e83b3f", brightGreen: "#7aba3a", brightYellow: "#bfaa00",
-    brightBlue: "#54a4f3", brightMagenta: "#aa4dbc", brightCyan: "#26bbd1", brightWhite: "#d9d9d9"
+    black: "#000000", red: "#cd3131", green: "#0dbc79", yellow: "#e5e510",
+    blue: "#2472c8", magenta: "#bc3fbc", cyan: "#11a8cd", white: "#e5e5e5",
+    brightBlack: "#666666", brightRed: "#f14c4c", brightGreen: "#23d18b", brightYellow: "#f5f543",
+    brightBlue: "#3b8eea", brightMagenta: "#d670d6", brightCyan: "#29b8db", brightWhite: "#e5e5e5"
   };
   var sel = document.getElementById('themesel');
   var card = document.getElementById('prevcard');
