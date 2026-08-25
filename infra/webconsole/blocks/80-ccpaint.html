@@ -60,6 +60,27 @@ below stays as the belt for anything else that ever kills the loop.*/
    watchdog unjams a dead loop, so this cannot wait forever)*/
   var q=rq;rq=null;try{orig(q[0],q[1])}catch(e){}
   if(dbg)console.log('[ccpaint] resize applied',q[0]+'x'+q[1])}},250)})();
+/*v8: lost first frame on a FRESH load — F5 on an attach tab gave a themed background
+with a cursor at 0,0 and nothing else, while server-side the tmux client had attached at
+220x60 and drawn a full screen (2026-08-25, not reproducible in 15 staged loads — a
+client-side race somewhere between ws-open and first paint). Every healer above fires on
+RESUME events only, so a fresh load had none. Detector: tmux always paints at least its
+status bar on attach, so a buffer with zero non-empty lines seconds after load means the
+frame was LOST, not "nothing to show". Ladder, each rung only if still empty: repaint
+(free), reconnect kick (no-op on a healthy socket), one full reload — capped at 2 per tab
+via sessionStorage so it can never loop.*/
+function bufEmpty(){try{var b=window.term.buffer.active;
+ for(var i=0;i<b.length;i++){var l=b.getLine(i);if(l&&l.translateToString(true).trim())return false}
+ return true}catch(e){return false}}
+[4000,8000,15000].forEach(function(ms,step){setTimeout(function(){
+ if(!window.term)return;
+ if(!bufEmpty()){if(step===0){try{sessionStorage.removeItem('ccpaint-r')}catch(e){}}return}
+ if(dbg)console.log('[ccpaint] buffer empty at '+ms+'ms, rung '+step);
+ if(step===0){repaint('settle-empty');return}
+ if(step===1){var k=window.__ccimeKick;if(k){k();return}}
+ try{var n=+(sessionStorage.getItem('ccpaint-r')||0);
+  if(n<2){sessionStorage.setItem('ccpaint-r',n+1);location.reload()}}catch(e){}
+},ms)});
 ['visibilitychange','pageshow','focus'].forEach(function(ty){
  (ty==='visibilitychange'?document:window).addEventListener(ty,function(){
   if(document.visibilityState!=='visible')return;resume(ty)})});
