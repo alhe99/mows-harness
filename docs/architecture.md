@@ -190,3 +190,25 @@ reboot loses the sessions but not their names.
   stop claude-qa-watch` / `systemctl reload caddy` — a `.service` suffix, an extra flag,
   anything — and the rule simply doesn't match, falling through to an interactive password
   prompt (fail closed, not open).
+
+### The "app" feel is platform features, not a framework
+
+The dashboard is server-rendered HTML with no client framework (see the header of
+`infra/dashboard/lite.mjs` — that replaced a React build that cost 500 MB RSS and a MB-scale
+bundle). It still feels like an installed app because three browser features do the work:
+
+- **cross-document View Transitions** (`@view-transition { navigation: auto }`): the tab bar is
+  named `tabs` so it stays pinned while the content crossfades. Chrome 126+, Safari 18.2+;
+  anything older just navigates.
+- **Speculation Rules** (`<script type="speculationrules">`, `eagerness: moderate`): dashboard
+  links are prerendered on hover/touch-start, so the tap lands on a page that already exists.
+  The rule lists `/`, `/?*`, `/settings`, `/s/*` only — never `/term*` (a prerender would spawn
+  a ttyd → tmux attach), and links carrying `fresh=1` (20 s quota refresh) or `reclaim=1` (disk
+  scan) are excluded by selector. Chrome only; Safari relies on bfcache.
+- **bfcache**: pages send `cache-control: no-cache` (never `no-store`) and register no `unload`
+  handlers, so back/forward restore instantly.
+
+Actions stay POST → 303 → GET; a two-line `submit` listener marks the form `.busy` while it runs
+and `pageshow` clears it on a bfcache restore. Proof under automation stops at the prerender
+*request* — Chrome reports `PrerenderingDisabledByDevTools` whenever CDP is attached, so
+activation can only be seen in a real browser.

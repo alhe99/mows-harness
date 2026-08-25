@@ -16,6 +16,10 @@
 // ponytail: no client JS by design — pagination/filtering are plain links, so
 // the app works identically on 2G, with JS disabled, and in text browsers.
 // (sole exception: a one-line service-worker registration; pure enhancement.)
+// The app-shell feel comes from the platform, not a framework: CSS view transitions pin
+// the tab bar across navigations, a speculationrules block prerenders dashboard links on
+// hover/touch (never /term*, ?fresh=1, ?reclaim=1 — those have side effects), bfcache
+// makes back/forward instant (headers are no-cache, never no-store).
 import http from 'node:http';
 import { promises as fsp, readdirSync, existsSync, readFileSync, statfsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -1146,6 +1150,15 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
 .flt input[type=search]{width:100%}
 summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-radius:6px}
 @media(max-width:700px){.sys > summary{font-size:12px;padding:8px 30px 8px 10px}.sysbody{padding:0 8px 8px}input[type=search]{font-size:16px}}
+/* app-shell feel (2026-08-25): cross-document view transitions keep the tab bar pinned and
+   crossfade only the content, so a navigation reads as a screen change, not a page reload.
+   Chrome 126+/Safari 18.2+; older browsers just navigate. */
+@view-transition{navigation:auto}
+.tabs{view-transition-name:tabs}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.16s}
+@media(prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
+form.busy{pointer-events:none}form.busy button,form.busy summary{animation:busy 1s ease-in-out infinite}
+@keyframes busy{50%{opacity:.35}}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
@@ -1161,9 +1174,13 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
+<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/settings","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
 ${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
+/* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
+document.addEventListener('submit',function(e){e.target.classList.add('busy')});
+addEventListener('pageshow',function(){document.querySelectorAll('form.busy').forEach(function(f){f.classList.remove('busy')})});
 /* attach / >_ open the session in its OWN window on a desktop or tablet BROWSER, so the
    dashboard stays put and pause/kill/the other sessions stay one click away. NOT in the
    installed PWA: there is no second window there, and target=_blank throws the user out to
