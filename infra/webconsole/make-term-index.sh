@@ -27,12 +27,13 @@
 #      comment is stripped — see the splice step below)
 #   2. every blocks/*.html file, verbatim, in filename order (10-cckb.html, 20-ccpwa.html,
 #      ...) — /term's own UX: unicode-11 char widths (ccu11), key bar (cckb), PWA geometry
-#      (ccpwa), home key (cchome), photo attach (ccimg), font-size keys (ccfont), keyboard
-#      suggestions + reconnect (ccime), copy/paste overlay (ccclip), restart-pane key
-#      (ccrst), repaint-on-foreground (ccpaint). Each block documents
-#      itself in its own top-of-block comment. Runtime kill switches, as /term URL params:
-#      ?ime=off ?clip=off ?rst=off for the three that intercept input, ?u11=off for the
-#      width shim, ?paint=off for the repaint.
+#      (ccpwa), home key (cchome), photo attach (ccimg), font-size keys (ccfont), color
+#      theme picker (cctheme), keyboard suggestions + reconnect (ccime), copy/paste overlay
+#      (ccclip), restart-pane key (ccrst), repaint-on-foreground (ccpaint). Each block
+#      documents itself in its own top-of-block comment. Runtime kill switches, as /term
+#      URL params: ?ime=off ?clip=off ?rst=off for the three that intercept input, ?u11=off
+#      for the width shim, ?paint=off for the repaint, ?theme=off for the theme picker
+#      (?theme=<Name> also SETS a theme — the desktop path, see 46-cctheme.html).
 #
 # usage: make-term-index.sh [output-path]
 #   output-path   default: /opt/claude-dashboard/term-index.html — the exact path
