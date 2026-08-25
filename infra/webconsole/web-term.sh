@@ -67,6 +67,19 @@ LAST="$HOME/.cache/webterm-last"
 mark() { mkdir -p "${LAST%/*}"; printf '%s\n' "$1" >"$LAST"; printf '\033]2;%s\007' "$1"; }
 lastn() { cat "$LAST" 2>/dev/null || true; }   # missing file is the normal first-ever-run case, not an error
 
+# per-tab client registry, for the /app shell's server-side switch (design doc §2): each
+# browser shell tab gets an 8-hex tabid; we record which tty its ttyd-spawned web-term.sh
+# is running on, so `switch` can later find that tab's tmux client and repoint it. A ttyd
+# reconnect re-runs this script under the same tabid with a new tty -> file is overwritten,
+# self-healing. Pruned on every write so a tab closed for good doesn't linger forever.
+CLIENTS_DIR="$HOME/.cache/webterm-clients"
+register_tab() { # tabid (optional; non-matching/absent is a silent no-op, not an error)
+  [[ "${1-}" =~ ^[0-9a-f]{8}$ ]] || return 0
+  mkdir -p "$CLIENTS_DIR"
+  printf '%s' "$(tty)" >"$CLIENTS_DIR/$1"
+  find "$CLIENTS_DIR" -mmin +1440 -delete 2>/dev/null || true
+}
+
 # newest sessions across every profile: "mtime<TAB>profile<TAB>sid<TAB>cwd"
 # ponytail: fully capture find|sort, cap inside the loop — a trailing head on the
 # pipeline SIGPIPEs sort/printf and sprays "Broken pipe" into the terminal.
@@ -111,33 +124,38 @@ resolve() { # sid-prefix -> "profile<TAB>cwd<TAB>fullsid" (newest match; 8 hex c
   printf '%s\t%s\t%s\n' "$p" "${cwd:-$HOME}" "$sid"
 }
 
-do_resume() { # profile cwd sid — own tmux name so it never hijacks an unrelated session
-  local cfg n
-  cfg=$(cfg_for "$1")
+ensure_session() { # profile cwd sid — creates the tmux session detached if missing, echoes its name
+  local n cwd
   n="cc-$1-$(slug "$2")"
-  # already live -> ATTACH. A second `claude --resume` of the same session steals
-  # it and kills the first one's in-flight work. Note this name is derived from the
-  # directory, so in a directory running several sessions (cc's -2, -3 … suffixes) this
-  # always attaches the unsuffixed one; reach a specific extra session from the LIVE list
-  # in the menu, or from the dashboard's attach button, which both use exact names.
-  mark "$n"
-  if tmux has-session -t "=$n" 2>/dev/null; then
-    tmux attach -d -t "=$n" || true
-    return
-  fi
-  (
-    cd "$2" 2>/dev/null || cd "$HOME"
+  # note this name is derived from the directory, so in a directory running several
+  # sessions (cc's -2, -3 … suffixes) this always addresses the unsuffixed one; reach a
+  # specific extra session from the LIVE list in the menu, or the dashboard's attach
+  # button / switch, which both use exact names.
+  if ! tmux has-session -t "=$n" 2>/dev/null; then
+    cwd="$2"; [ -d "$cwd" ] || cwd="$HOME"
     # window runs our `run` wrapper: if claude dies (phone/claude.ai takeover, OOM
     # kill, crash) the pane stays up with an explanation + one-key take-back
     # instead of dropping the user to the picker.
-    tmux new-session -AD -s "$n" "$(printf '%q ' "$0" run "$1" "$2" "$3")"
-  ) || true
+    tmux new-session -d -s "$n" -c "$cwd" "$(printf '%q ' "$0" run "$1" "$2" "$3")" || true
+  fi
+  echo "$n"
+}
+
+do_resume() { # profile cwd sid — own tmux name so it never hijacks an unrelated session
+  local n
+  n=$(ensure_session "$1" "$2" "$3")
+  # already live -> ATTACH. A second `claude --resume` of the same session steals
+  # it and kills the first one's in-flight work.
+  mark "$n"
+  tmux attach -d -t "=$n" || true
 }
 
 run_session() { # profile cwd sid — in-pane runner, lives INSIDE the tmux window
   local cfg rc a
   cfg=$(cfg_for "$1")
   cd "$2" 2>/dev/null || cd "$HOME"
+  # the dashboard joins this live session to its transcript by @sid, not by the session name
+  tmux set-option @sid "$3" 2>/dev/null || true
   local mcp=(); [ -f "$cfg/mcp-interactive.json" ] && mcp=(--strict-mcp-config --mcp-config "$cfg/mcp-interactive.json")
   while :; do
     env CLAUDE_CONFIG_DIR="$cfg" "$CLAUDE" "${mcp[@]}" --resume "$3" && rc=0 || rc=$?
@@ -212,16 +230,35 @@ menu() {
 case "${1-}" in
   run) run_session "${2-default}" "${3-$HOME}" "${4-}"; exit 0 ;;
   list) recent | while IFS=$'\t' read -r ts p sid cwd; do printf '%s %s %s %s\n' "$(date -d "@$ts" '+%F %H:%M')" "$p" "${sid:0:8}" "$cwd"; done; exit 0 ;;
-  attach) [ -n "${2-}" ] && mark "$2"; tmux attach -d -t "${2-}" 2>/dev/null || true ;;
+  attach) [ -n "${2-}" ] && mark "$2"; register_tab "${3-}"; tmux attach -d -t "${2-}" 2>/dev/null || true ;;
   resume) [ -n "${4-}" ] && do_resume "${2-default}" "${3-$HOME}" "${4}" ;;
   resolve) resolve "${2-}"; exit $? ;;
-  open) # dashboard deep link: /term/?arg=open&arg=<sid8>
+  open) # dashboard deep link: /term/?arg=open&arg=<sid8>[&arg=<tabid>]
     if r=$(resolve "${2-}"); then
       IFS=$'\t' read -r p cwd sid <<<"$r"
+      register_tab "${3-}"
       do_resume "$p" "$cwd" "$sid"
     else
       printf ' no session matches "%s"\n' "${2-}"; sleep 2
     fi ;;
+  switch) # /a/switch backend (design doc §2): web-term.sh switch <tabid> <to>
+    tab="${2-}"; to="${3-}"
+    [[ "$tab" =~ ^[0-9a-f]{8}$ ]] || exit 2
+    tty=$(cat "$CLIENTS_DIR/$tab" 2>/dev/null) || exit 2
+    [ -n "$tty" ] || exit 2
+    if tmux has-session -t "=$to" 2>/dev/null; then
+      n="$to"
+    elif r=$(resolve "$to"); then
+      IFS=$'\t' read -r p cwd sid <<<"$r"
+      n=$(ensure_session "$p" "$cwd" "$sid")
+    else
+      exit 3
+    fi
+    tmux detach-client -s "=$n" 2>/dev/null || true   # take-over semantics, same as attach -d
+    tmux switch-client -c "$tty" -t "=$n" || exit 2
+    mark "$n" >/dev/null   # discard mark()'s OSC title-stamp: our own stdout here is the caller's `to` value, not a terminal
+    echo "$n"
+    exit 0 ;;
 esac
 
 # fresh interactive connection: if the last session is alive and detached

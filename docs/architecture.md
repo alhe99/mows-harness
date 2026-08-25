@@ -20,7 +20,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Port | Bound to | Service | Notes |
 |---|---|---|---|
 | 443 | public | Caddy | TLS termination + reverse proxy — the only thing this box exposes to the Internet and the only thing that terminates TLS |
-| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`), and `POST /sys/reclaim` (measured cache/disk prune behind a mandatory preview) |
+| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`), `POST /sys/reclaim` (measured cache/disk prune behind a mandatory preview), and the persistent shell — `GET /app`, `POST /a/switch`, `GET /app/live.json` (see caveat below) |
 | 7681 | 127.0.0.1 | `ttyd` (`/term`) | Only `/term/ws` and `/term/token` reach `ttyd` through Caddy's `reverse_proxy`; plain `GET /term` and `/term/` are intercepted earlier and served by Caddy's own `file_server` from `term-index.html` (see `infra/webconsole/make-term-index.sh`) |
 | 4180 | 127.0.0.1 | oauth2-proxy | Caddy's `forward_auth` target for every protected route, plus a `reverse_proxy` for `/oauth2/*` |
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |
@@ -190,6 +190,22 @@ reboot loses the sessions but not their names.
   stop claude-qa-watch` / `systemctl reload caddy` — a `.service` suffix, an extra flag,
   anything — and the rule simply doesn't match, falling through to an interactive password
   prompt (fail closed, not open).
+
+### One terminal, tmux switches it — the `/app` shell
+
+`GET /app` renders a strip of session chips over a single `/term` iframe, generating an
+8-hex-char `tabid` per render. `web-term.sh attach|open` writes `$(tty)` to
+`~/.cache/webterm-clients/<tabid>` before attaching — that file is the only link between a
+browser tab and the tmux client currently living in its iframe (stale files older than a
+day are pruned on write; a ttyd reconnect just overwrites it, self-healing). Tapping a chip
+posts to `/a/switch`, which reads the tty back out of that file and runs `tmux
+switch-client -c "$tty" -t "=<to>"` — tmux repaints the *same* client onto a different
+session; the `/term` iframe is never reloaded, never re-fetches ttyd's bundle, never reopens
+the WebSocket. Before switching, `web-term.sh switch` runs `tmux detach-client -s "=<to>"`:
+the same take-over semantics `attach -d` already has today, so a session mid-switch just
+gets forcibly detached from wherever else it was live, not shared. A missing tab file (409)
+or an unresolvable target (404) both fall back to one `/term` reload with an explicit
+`arg=open` — the one case a switch does touch the iframe.
 
 ### The "app" feel is platform features, not a framework
 

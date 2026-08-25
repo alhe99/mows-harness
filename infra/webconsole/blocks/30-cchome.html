@@ -1,8 +1,8 @@
-<script id="cchome-js">/*cchome-v1: home button in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console*/(function(){
+<script id="cchome-js">/*cchome-v2: home button in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console; inside the /app shell iframe, home means open the drawer instead of navigating the terminal away*/(function(){
 var kb=document.getElementById('cckb');if(!kb)return;
 var b=document.createElement('button');b.type='button';b.textContent='\u2302';
 b.style.color='#3fb950';b.style.fontWeight='700';
-b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();location.href='/';});
+b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();if(window.parent!==window){parent.postMessage({home:1},location.origin);}else{location.href='/';}});
 kb.insertBefore(b,kb.firstChild);
 /*ccpwa: one-shot geometry beacon -> shows in the server access log as /z?t=...
    deferred 900ms: iOS reports env()/innerHeight wrong until layout settles */

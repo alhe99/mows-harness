@@ -281,6 +281,14 @@ steps and `/term` 404s for every visitor, indefinitely — it is not created by 
 
 Note: `/term`'s "new session" launcher flow relies on `fleet/bin/cc` (installed via `./install.sh --fleet`).
 
+The persistent shell at `/app` (`lite.mjs`'s `GET /app`, `POST /a/switch`) reads and writes
+tab-to-tty mappings through this same `web-term.sh`, so a deploy that touches any of
+`lite.mjs`, `web-term.sh`, or the blocks that feed `make-term-index.sh` must redeploy all
+three together — `sudo install` the two files above and re-run `make-term-index.sh`, then
+`sudo systemctl restart claude-dash-lite`. Self-check before trusting `switch` on a live
+box: `bash infra/webconsole/web-term-selfcheck.sh` (throwaway `wt-selfcheck-*` sessions
+only, cleans up after itself).
+
 #### Terminal color themes
 
 `blocks/46-cctheme.html` ships 12 xterm color schemes (Material family, Nord, Catppuccin

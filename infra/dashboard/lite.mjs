@@ -27,6 +27,7 @@ import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import net from 'node:net';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -215,12 +216,12 @@ const sh = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }
 async function tmuxLive() {
   if (Date.now() - tmuxCache.t < 3000) return tmuxCache.list;
   const out = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-panes', '-a', '-F',
-    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{pane_pid}\t#{pane_current_path}\t#{@label}']);
+    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{pane_pid}\t#{pane_current_path}\t#{@sid}\t#{@label}']);
   const list = [];
   for (const l of out.trim().split('\n').filter(Boolean)) {
-    const [name, att, created, pid, cwd, ...rest] = l.split('\t'); // @label last: user text may hold tabs
+    const [name, att, created, pid, cwd, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
     if (list.some(x => x.name === name)) continue; // first pane per session
-    list.push({ name, attached: att === '1', created: +created * 1000, pid: +pid, cwd, label: rest.join(' ').trim(), paused: false });
+    list.push({ name, sid, attached: att === '1', created: +created * 1000, pid: +pid, cwd, label: rest.join(' ').trim(), paused: false });
   }
   if (list.length) { // paused = the leader's descendants (claude) are in state T
     const st = await sh('ps', ['-eo', 'pid=,ppid=,stat=']);
@@ -251,6 +252,10 @@ async function tmuxLive() {
 // pause/kill answer 400 for exactly those sessions. Only the length moved; the character
 // class is the guard, and the name is matched against the live session list below anyway.
 const NAME_RE = /^[\w.:@-]{1,64}$/;
+// which transcript a live session is: web-term.sh stamps @sid on the sessions it starts
+// (2026-08-25; names are cc-<profile>-<dir> now, shared with the cc CLI). Sessions from
+// before that are still named web-<sid8> — keep reading those until they are gone.
+const liveSid8 = l => (l.sid || (l.name.startsWith('web-') ? l.name.slice(4) : '')).slice(0, 8);
 async function descendants(root) {
   const out = await sh('ps', ['-eo', 'pid=,ppid=']);
   const kids = new Map();
@@ -308,7 +313,7 @@ async function delSession(req, res) {
   if (!BY_ID[a] || !/^[0-9a-f-]{8,64}$/.test(sid)) { res.writeHead(400); return res.end('bad id'); }
   const e = index.find(x => x.a === a && x.sid === sid);
   if (!e) { res.writeHead(404); return res.end('not found'); }
-  if ((await tmuxLive()).some(l => l.name === 'web-' + sid.slice(0, 8))) {
+  if ((await tmuxLive()).some(l => liveSid8(l) === sid.slice(0, 8))) {
     res.writeHead(409); return res.end('session is live — kill it first');
   }
   try { await fsp.unlink(e.path); } catch {}
@@ -316,6 +321,23 @@ async function delSession(req, res) {
   counts[a] = Math.max(0, (counts[a] || 1) - 1);
   titleCache.delete(e.path); parseCache.delete(e.path);
   res.writeHead(303, { location: back }); res.end();
+}
+
+// ---------- /a/switch: tmux switch-client for the shell's single terminal iframe (§2) ----------
+async function switchAction(req, res) {
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  const b = await readBody(req);
+  const tab = b.tab || '', to = b.to || '';
+  const j = o => { res.writeHead(res.statusCode, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+  if (!/^[0-9a-f]{8}$/.test(tab)) { res.statusCode = 400; return j({ err: 'bad tab' }); }
+  const live = await tmuxLive();
+  if (!(live.some(l => l.name === to) || /^[0-9a-f]{8}$/.test(to))) { res.statusCode = 400; return j({ err: 'bad to' }); }
+  const code = await runAsCode([], WEBTERM_SH, ['switch', tab, to], 20000);
+  if (code === 0) { res.statusCode = 200; return j({ ok: true, current: to }); }
+  if (code === 2) { res.statusCode = 409; return j({ err: 'tab not attached' }); }
+  if (code === 3) { res.statusCode = 404; return j({ err: 'unknown session' }); }
+  res.statusCode = 500; return j({ err: 'switch failed' });
 }
 
 // ---------- QA watch: noVNC view of the shared headless browser ----------
@@ -645,6 +667,14 @@ const RUN_PATH = `${TMUX_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin`;
 const runAs = (envs, cmd, args, t = 30000) => new Promise(r =>
   execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
     { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out)));
+// runAs swallows the exit code (needed by callers that only want stdout-or-empty); /a/switch
+// needs the real code to tell "tab not attached" (2) from "unknown session" (3) apart.
+const runAsCode = (envs, cmd, args, t = 30000) => new Promise(r =>
+  execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
+    { timeout: t, maxBuffer: 32e6 }, (e) => r(e ? (typeof e.code === 'number' ? e.code : 1) : 0)));
+// terminal-shell page (§1/§2 of the persistent-terminal-shell design): all switching logic
+// lives in this one script, called the same way every other tmux-mutating action is.
+const WEBTERM_SH = process.env.WEBTERM_SH || '/opt/claude-dashboard/web-term.sh';
 const jp = s => { try { return JSON.parse(s); } catch { return null; } };
 const mshort = m => String(m).replace(/^claude-/, '');
 async function collectUsage(force) {
@@ -1159,11 +1189,14 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 @media(prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
 form.busy{pointer-events:none}form.busy button,form.busy summary{animation:busy 1s ease-in-out infinite}
 @keyframes busy{50%{opacity:.35}}
+/* embed mode (§3): this page is the drawer iframe inside /app — its own nav is dead weight */
+body.embed{padding:8px}
+body.embed .tabs,body.embed footer,body.embed .navdup{display:none}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
-<a class="tb" href="/term/?v=3"><span class="ti">⌨</span>terminal</a>
+<a class="tb" href="/app"><span class="ti">⌨</span>terminal</a>
 <a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
 <a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a>
 <a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings"><span class="ti">⚙</span>settings</a></nav>`;
@@ -1176,7 +1209,7 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/settings","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
-${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/term/?v=3">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/app">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
 document.addEventListener('submit',function(e){e.target.classList.add('busy')});
@@ -1189,9 +1222,22 @@ addEventListener('pageshow',function(){document.querySelectorAll('form.busy').fo
    (data-nw), so clicking one twice reuses its window instead of opening a rival tmux
    client, which would detach the first (attach -d). Deliberately no rel=noopener: with
    it the spec ignores the window name and every click spawns another window, and the page
-   opened is our own /term on this origin. JS off => in place, exactly as before. */
-if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700)
-  document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw});
+   opened is our own /term on this origin. JS off => in place, exactly as before. Their href
+   is now /app?s=…/?open=… (§4, so phone/PWA lands in the shell) with the original /term/…
+   form stashed in data-term for exactly this rewrite; embed mode (the drawer) never rewrites
+   — clicks there postMessage the parent shell instead, below. */
+if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700&&!document.body.classList.contains('embed'))
+  document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw;if(a.dataset.term)a.href=a.dataset.term});
+/* embed mode (§3): a[data-sw] here is a switch link (attach/>_) meant for the shell's single
+   terminal iframe, not this iframe — hand it to the parent instead of navigating in place.
+   But if this page ever loads unframed (long-press "open in new tab", a bookmarked/shared
+   embed=1 URL), window.parent===window and postMessage would just talk to ourselves with no
+   listener — fall back to a normal navigation instead, as 30-cchome.html's home button does. */
+if(document.body.classList.contains('embed'))
+  document.addEventListener('click',function(e){var a=e.target.closest('a[data-sw]');if(!a)return;
+    e.preventDefault();
+    if(window.parent!==window)parent.postMessage({sw:a.dataset.sw},location.origin);
+    else location.href=a.href});
 /* ccdiag: install-mode + safe-area readout in the footer (e.g. "app · sat59 sab34")
    so device rendering issues can be diagnosed without guessing */
 (function(){var o=document.getElementById('envout');if(!o)return;
@@ -1223,6 +1269,123 @@ function send(req, res, status, html, type = 'text/html; charset=utf-8') {
 const qs = o => { const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v) p.set(k, v);
   const s = p.toString(); return s ? '?' + s : ''; };
+
+// ---------- /app: the persistent terminal shell (§1) — its own tiny page, NOT page():
+// the shell must never render page()'s .tabs bar or footer (the strip below is its nav).
+function appPage(body) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>mows terminal</title><style>
+:root{color-scheme:dark;--bg:#0a0a0a;--card:#141416;--fg:#fafafa;--mut:#a1a1aa;
+--bd:rgba(255,255,255,.09);--bd2:rgba(255,255,255,.16);--ok:#34d399;--ok-bg:rgba(52,211,153,.1);--ok-bd:rgba(52,211,153,.4)}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);height:100%}
+body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+.strip{display:flex;gap:6px;align-items:center;padding:calc(4px + env(safe-area-inset-top,0)) 8px 4px;overflow-x:auto;flex-shrink:0}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--bd);background:var(--card);border-radius:999px;
+padding:5px 12px;min-height:30px;color:var(--mut);white-space:nowrap;font-size:13px;text-decoration:none;flex-shrink:0}
+.chip.on{border-color:var(--ok-bd);color:var(--fg);background:var(--ok-bg)}
+.chips{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0}
+.dtoggle{flex-shrink:0}.dtoggle summary{list-style:none;cursor:pointer;color:var(--fg);font-size:19px;
+padding:2px 9px;min-height:30px;display:flex;align-items:center;border-radius:999px}
+.dtoggle summary::-webkit-details-marker{display:none}
+.drawer{display:none}
+.dtoggle[open] .drawer{display:block;position:fixed;inset:0;z-index:30;background:var(--bg)}
+.drawer iframe{width:100%;height:100%;border:0}
+.term{flex:1;width:100%;border:0}
+</style></head><body>${body}</body></html>`;
+}
+// §1 initial-session rule: ?s=<name> if live; else ~/.cache/webterm-last if live; else the
+// first live session; else '' (no attach — ttyd shows web-term.sh's own menu).
+async function initialSession(url, live, liveNames) {
+  const req = url.searchParams.get('s') || '';
+  if (liveNames.has(req)) return req;
+  let last = '';
+  try { last = (await fsp.readFile(path.join(TMUX_HOME, '.cache', 'webterm-last'), 'utf8')).trim(); } catch {}
+  if (liveNames.has(last)) return last;
+  return (live[0] || {}).name || '';
+}
+async function appView(req, res, url) {
+  const live = await tmuxLive();
+  const liveNames = new Set(live.map(l => l.name));
+  const tabid = randomBytes(4).toString('hex');
+  const openSid = url.searchParams.get('open') || '';
+  let src, current = '';
+  if (/^[0-9a-f]{8}$/.test(openSid)) {
+    src = `/term/?arg=open&arg=${openSid}&arg=${tabid}&v=3`;
+  } else {
+    current = await initialSession(url, live, liveNames);
+    src = current ? `/term/?arg=attach&arg=${encodeURIComponent(current)}&arg=${tabid}&v=3` : '/term/?v=3';
+  }
+  const chips = live.map(l => `<a class="chip${l.name === current ? ' on' : ''}" data-sw="${esc(l.name)}"
+href="/app${qs({ s: l.name })}">${esc(l.label || l.name)}</a>`).join('');
+  const body = `<div class="strip">
+<details id="menu" class="dtoggle"><summary>&#9776;</summary><div class="drawer"><iframe id="d" loading="lazy" src="/?embed=1" title="dashboard"></iframe></div></details>
+<div id="chips" class="chips">${chips}</div>
+<a class="chip" href="/term/?v=3" target="t">+</a>
+</div>
+<iframe id="t" name="t" class="term" src="${src}" title="terminal"></iframe>
+<script>
+var TAB='${tabid}';
+function sw(to){
+  var b=new URLSearchParams();b.set('tab',TAB);b.set('to',to);
+  fetch('/a/switch',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:b}).then(function(r){
+    if(r.ok){mark(to);document.getElementById('menu').open=false}
+    else fallback(to);
+  }).catch(function(){fallback(to)});
+}
+function fallback(to){ // one reload, never a dead end: a sid8 re-opens, a live name re-attaches
+  document.getElementById('t').src='/term/?arg='+(/^[0-9a-f]{8}$/.test(to)?'open':'attach')+'&arg='+encodeURIComponent(to)+'&arg='+TAB+'&v=3';
+}
+function mark(to){document.querySelectorAll('#chips a').forEach(function(a){a.classList.toggle('on',a.dataset.sw===to)})}
+document.getElementById('chips').addEventListener('click',function(e){
+  var a=e.target.closest('a[data-sw]');if(!a)return;e.preventDefault();sw(a.dataset.sw);
+});
+addEventListener('message',function(e){
+  if(e.origin!==location.origin||!e.data)return;
+  if(e.data.sw)sw(e.data.sw);else if(e.data.home)document.getElementById('menu').open=true;
+});
+function poll(){
+  if(document.visibilityState!=='visible')return;
+  fetch('/app/live.json?tab='+TAB).then(function(r){return r.json()}).then(function(list){
+    var box=document.getElementById('chips');box.textContent='';var any=false;
+    list.forEach(function(s){
+      var a=document.createElement('a');a.className='chip'+(s.current?' on':'');
+      a.href='/app'+(s.current?'':'?s='+encodeURIComponent(s.name));a.dataset.sw=s.name;a.textContent=s.label||s.name;
+      if(s.current)any=true;box.appendChild(a);
+    });
+    if(!any&&list.length)document.getElementById('t').src='/term/?arg=attach&arg='+encodeURIComponent(list[0].name)+'&arg='+TAB+'&v=3';
+  }).catch(function(){});
+}
+setInterval(poll,10000);document.addEventListener('visibilitychange',poll);
+</script>`;
+  send(req, res, 200, appPage(body));
+}
+// GET /app/live.json?tab= (§2): the chip list this tab's poll refreshes itself with.
+async function liveJson(req, res, url) {
+  const tab = url.searchParams.get('tab') || '';
+  // no-store, not send()'s usual no-cache: this must never be revalidated, only re-fetched
+  if (!/^[0-9a-f]{8}$/.test(tab)) {
+    res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({ err: 'bad tab' }));
+  }
+  const live = await tmuxLive();
+  let tty = '';
+  try { tty = (await fsp.readFile(path.join(TMUX_HOME, '.cache', 'webterm-clients', tab), 'utf8')).trim(); } catch {}
+  let cur = '';
+  if (tty) {
+    const out = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-clients', '-F', '#{client_tty}\t#{session_name}']);
+    for (const l of out.trim().split('\n')) { const [t, n] = l.split('\t'); if (t === tty) { cur = n; break; } }
+  }
+  const buf = Buffer.from(JSON.stringify(live.map(l => ({ name: l.name, label: l.label || '', current: l.name === cur }))));
+  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': buf.length });
+  res.end(buf);
+}
 
 // ---------- PWA: manifest + drawn icons + minimal service worker ----------
 // note: every /term link carries v=3 — a cache-key bust of phone HTTP caches (bump when a term fix must land NOW)
@@ -1291,7 +1454,7 @@ function manifest(req, res) {
   send(req, res, 200, JSON.stringify({
     id: '/', name: a ? `mows · ${a.label}` : 'mows sessions',
     short_name: a ? a.label : 'mows',
-    start_url: '/', scope: '/', display: 'standalone',
+    start_url: '/app', scope: '/', display: 'standalone',
     background_color: '#0a0a0a', theme_color: '#0a0a0a',
     description: 'mows harness: agent sessions, web terminal, QA watch, android console',
     icons: [
@@ -1327,20 +1490,21 @@ async function listView(req, res, url) {
   const q = (url.searchParams.get('q') || '').toLowerCase().slice(0, 80);
   const d = url.searchParams.get('d') || '';
   const s = url.searchParams.get('s') || '';
+  const embed = url.searchParams.get('embed') === '1'; // §3: this page is the shell's drawer iframe
   const live = await tmuxLive();
-  const liveNames = new Set(live.map(l => l.name));
+  const liveBySid = new Map(live.map(l => [liveSid8(l), l]).filter(([k]) => k)); // sid8 -> live session
   let rows = index;
   if (acct && BY_ID[acct]) rows = rows.filter(e => e.a === acct);
   if (q) rows = rows.filter(e => e.proj.toLowerCase().includes(q) || e.sid.startsWith(q));
   const CUT = { today: new Date(new Date().toISOString().slice(0, 10)).getTime(),
     '7d': Date.now() - 7 * 86400e3, '30d': Date.now() - 30 * 86400e3 };
   if (CUT[d]) rows = rows.filter(e => e.mt >= CUT[d]);
-  if (s === 'live') rows = rows.filter(e => liveNames.has('web-' + e.sid.slice(0, 8)));
+  if (s === 'live') rows = rows.filter(e => liveBySid.has(e.sid.slice(0, 8)));
   const max = Math.max(1, Math.ceil(rows.length / PAGE));
   const cur = Math.min(max, Math.max(1, +(url.searchParams.get('page') || 1) || 1));
   const slice = rows.slice((cur - 1) * PAGE, cur * PAGE);
   const titles = await Promise.all(slice.map(titleOf));
-  const P = { acct, q, d, s };
+  const P = { acct, q, d, s, embed: embed ? '1' : '' };
   const back = url.pathname + url.search;
 
   const chip = (over, label, on) => `<a class="chip${on ? ' on' : ''}" href="/${qs({ ...P, ...over })}">${label}</a>`;
@@ -1350,10 +1514,10 @@ async function listView(req, res, url) {
   const dchips = [['', 'all time'], ['today', 'today'], ['7d', '7 days'], ['30d', '30 days']]
     .map(([v, l]) => chip({ d: v }, l, d === v)).join('')
     + chip({ s: s === 'live' ? '' : 'live' },
-      `<span class="dot" style="background:#34d399"></span>live <b>${live.filter(l => l.name.startsWith('web-')).length}</b>`, s === 'live');
+      `<span class="dot" style="background:#34d399"></span>live <b>${liveBySid.size}</b>`, s === 'live');
 
   const liveHtml = live.length ? `<div class="lp">` + (await Promise.all(live.map(async l => {
-    const sid8 = l.name.startsWith('web-') ? l.name.slice(4, 12) : '';
+    const sid8 = liveSid8(l);
     const row = sid8 ? index.find(e => TERM_IDS.has(e.a) && e.sid.startsWith(sid8)) : null;
     const nm = row ? `<a href="/s/${row.a}/${row.sid}">${esc(l.name)}</a>` : `<span style="color:#34d399">${esc(l.name)}</span>`;
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
@@ -1362,9 +1526,11 @@ async function listView(req, res, url) {
     const tsrc = row || (l.cwd ? index.filter(e => e.proj === l.cwd.replace(/[/.]/g, '-') && e.mt >= l.created)
       .reduce((a, e) => (!a || e.mt > a.mt ? e : a), null) : null);
     const title = tsrc ? (await titleOf(tsrc)).title : '';
+    // href is /app now (§4: phone/PWA lands in the persistent shell); data-term keeps the
+    // /term/… form for the desktop-browser rewrite in page(), data-sw for the embed-mode postMessage
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
 <span class="ln">${nm}</span>${l.label ? `<span class="lb">${esc(l.label)}</span>` : ''}<span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
-<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
+<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" data-sw="${esc(l.name)}" data-term="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3" href="/app${qs({ s: l.name })}">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
   }))).join('') + `</div>` : '';
 
   let lastDay = '', items = '';
@@ -1372,12 +1538,16 @@ async function listView(req, res, url) {
     const dl = dayLbl(e.mt);
     if (dl !== lastDay) { items += `<div class="day">${dl}</div>`; lastDay = dl; }
     const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
-    const isLive = liveNames.has('web-' + sid8);
+    const isLive = liveBySid.has(sid8);
     const t = titles[i].title;
-    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
+    // §4: href is /app?open=<sid8> (phone/PWA lands in the shell); data-term/data-sw as above.
+    // Already-live sessions route through /app?s=<name> instead — appView's initialSession()
+    // only recognizes that form, so the chip strip highlights the session on first paint
+    // rather than waiting for the next live.json poll.
+    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" data-sw="${sid8}" data-term="/term/?arg=open&amp;arg=${sid8}&amp;v=3" href="${isLive ? `/app${qs({ s: liveBySid.get(sid8).name })}` : `/app?open=${sid8}`}" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
     // delete = same no-JS <details> confirm as kill; hidden on live sessions (kill first)
     const del = isLive ? '' : `<details class="kx del"><summary class="dx" title="delete transcript" aria-label="delete transcript ${sid8}">✕</summary><div class="kc"><div>delete <b>${sid8}</b>?</div><span class="muted">removes the transcript from disk — no undo.</span><form class="af" method="post" action="/a/del"><input type="hidden" name="a" value="${e.a}"><input type="hidden" name="sid" value="${esc(e.sid)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab danger">delete it</button></form></div></details>`;
-    items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}">
+    items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}${qs({ embed: embed ? '1' : '' })}">
 <span class="t">${rel(e.mt)}</span>
 <span class="acct" style="color:${a.color}">${a.label}</span>
 <span class="proj">${esc(projName(e.proj))}</span>
@@ -1405,15 +1575,15 @@ async function listView(req, res, url) {
 <details class="sys flt"${fOn ? ' open' : ''}><summary><span class="syst">🔍 filter</span><span class="syss">${fState} · <b>${rows.length}</b>${fOn ? ` of ${index.length}` : ''} sessions</span></summary>
 <div class="sysbody"><div class="bar">${chips}</div>
 <div class="bar">${dchips}
-<form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
+<form action="/" method="get">${['acct', 'd', 's', 'embed'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
-<div class="bar navdup"><a class="chip" href="/term/?v=3">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
+<div class="bar navdup"><a class="chip" href="/app">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
 ${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen, rec)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
   send(req, res, 200, page('mows sessions', body,
-    sysOpen && usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', '', 'sessions'));
+    sysOpen && usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', embed ? 'embed' : '', 'sessions'));
 }
 
 async function detailView(req, res, a, sid) {
@@ -1424,11 +1594,13 @@ async function detailView(req, res, a, sid) {
   try { s = await loadSession(e); }
   catch (err) { return send(req, res, 500, page('error', `<p>could not read transcript: ${esc(err.message)}</p>`)); }
   const acct = BY_ID[a], sid8 = sid.slice(0, 8);
+  const url = new URL(req.url, 'http://x');
+  const embed = url.searchParams.get('embed') === '1'; // §3: this page is the shell's drawer iframe
   const n = s.msgs.length, max = Math.max(1, Math.ceil(n / MSG_PAGE));
-  const cur = Math.min(max, Math.max(1, +(new URL(req.url, 'http://x').searchParams.get('page') || 1) || 1));
+  const cur = Math.min(max, Math.max(1, +(url.searchParams.get('page') || 1) || 1));
   // page 1 = newest slice; render chronologically within the page
   const end = n - (cur - 1) * MSG_PAGE, start = Math.max(0, end - MSG_PAGE);
-  const lv = (await tmuxLive()).find(l => l.name === 'web-' + sid8);
+  const lv = (await tmuxLive()).find(l => liveSid8(l) === sid8);
   const live = !!lv;
 
   const msgs = s.msgs.slice(start, end).map(m => {
@@ -1445,12 +1617,12 @@ async function detailView(req, res, a, sid) {
 
   const term = acct.term
     ? (canResume(e.mt, live)
-      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" href="/term/?arg=open&amp;arg=${sid8}&amp;v=3">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
+      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" data-sw="${sid8}" data-term="/term/?arg=open&amp;arg=${sid8}&amp;v=3" href="${live ? `/app${qs({ s: lv.name })}` : `/app?open=${sid8}`}">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
       : `<p class="muted" style="margin:8px 0">resume disabled — idle ${rel(e.mt)} (cutoff ${RESUME_DAYS}d). transcript stays readable; resume manually with <span style="font-family:var(--mono)">cc -r</span> if you really need it.</p>`)
     : '';
-  const pgr = pager(`/s/${a}/${sid}`, {}, cur, max,
+  const pgr = pager(`/s/${a}/${sid}`, { embed: embed ? '1' : '' }, cur, max,
     `<span class="muted">${n} items · newest first</span>`);
-  const body = `<h1><a href="/">← sessions</a></h1>
+  const body = `<h1><a href="/${qs({ embed: embed ? '1' : '' })}">← sessions</a></h1>
 <div class="meta">
 <div>session</div><div>${esc(sid)} ${live ? '<b style="color:#34d399">● live</b>' : ''}</div>
 <div>account</div><div style="color:${acct.color}">${acct.label}</div>
@@ -1462,7 +1634,7 @@ async function detailView(req, res, a, sid) {
 ${term}
 ${s.truncated ? '<div class="note">large transcript — showing the most recent 8MB window.</div>' : ''}
 ${pgr}${msgs || '<p class="muted">no displayable messages.</p>'}${pgr}`;
-  send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', '', 'sessions'));
+  send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', embed ? 'embed' : '', 'sessions'));
 }
 
 // ---------- server ----------
@@ -1498,6 +1670,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await delSession(req, res);
     }
+    if (p === '/a/switch') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+      return await switchAction(req, res);
+    }
     if (p.startsWith('/a/')) {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await action(req, res, url);
@@ -1528,6 +1704,8 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await reclaimAction(req, res);
     }
+    if (p === '/app') return await appView(req, res, url);
+    if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/settings') return await settingsView(req, res);
     if (p === '/' ) {
       if (url.searchParams.get('fresh')) { // ↻ button: force usage re-collect, then bounce back (PRG)
