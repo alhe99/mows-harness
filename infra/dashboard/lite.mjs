@@ -409,7 +409,7 @@ var _t=setInterval(function(){if(_w().rfb)clearInterval(_t);else _x()},1200);
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · run a QA journey in <b>watched</b> mode; when the agent needs you (a login/OTP, or an eyeball on a UI change) it pauses and the browser shows up here — take over right in the frame, then tell the agent <b>continue</b> in the <a href="/term/?v=3">terminal</a>. on a phone use the buttons under the view — <b>⌨ keys</b> to type, <b>⬆ ⬇ scroll</b>, <b>⟵ back</b>, <b>↻ reload</b> — no gestures needed; rotate to <b>landscape ↔</b> for a bigger view.</div>
 ${script}`;
-  send(req, res, 200, page('watch · qa browser', body, up ? '' : '<meta http-equiv="refresh" content="4">', up ? 'watchlive' : '', 'watch'));
+  send(req, res, 200, page('watch · qa browser', body, up ? '' : '<meta http-equiv="refresh" content="4">', (up ? 'watchlive' : '') + (isEmbed(req) ? ' embed' : ''), 'watch'));
 }
 
 // ---------- /droid/touchtest: on-device touch diagnostic (iOS debugging) ----------
@@ -504,7 +504,7 @@ async function droidView(req, res) {
 <div class="bar"><span class="chip${live ? ' on' : ''}"><span class="dot" style="background:${dot}"></span>emulator ${st}</span>${btn}<a class="chip" href="/droid">↻ refresh</a><a class="chip" href="/droidview/" target="_blank" rel="noopener">⧉ console</a></div>
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · an Android container (<b>redroid</b>, native-arch, no KVM) streams here through ws-scrcpy — interact directly in the frame; the slim toolbar inside it has power/volume/back/home and a keyboard toggle. install an apk from the <a href="/term/?v=3">terminal</a>: <b>adb -s ${DROID_UDID} install app.apk</b> · run a QA flow: <b>maestro --device ${DROID_UDID} test flow.yaml</b> · <b>⧉ console</b> opens the raw ws-scrcpy page (other video decoders, web adb shell, file browser).</div>`;
-  send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
+  send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', (live ? 'watchlive' : '') + (isEmbed(req) ? ' embed' : ''), 'droid'));
 }
 
 // ---------- /settings: global terminal theme configuration + live preview ----------
@@ -629,7 +629,7 @@ async function settingsView(req, res) {
   });
 })();
 </script>`;
-  send(req, res, 200, page('settings · terminal theme', body, '', '', 'settings'));
+  send(req, res, 200, page('settings · terminal theme', body, '', isEmbed(req) ? 'embed' : '', 'settings'));
 }
 
 // ---------- system + usage panel (host metrics, claude/agy limits, spend) ----------
@@ -1190,16 +1190,20 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 form.busy{pointer-events:none}form.busy button,form.busy summary{animation:busy 1s ease-in-out infinite}
 @keyframes busy{50%{opacity:.35}}
 /* embed mode (§3): this page is the drawer iframe inside /app — its own nav is dead weight */
-body.embed{padding:8px}
-body.embed .tabs,body.embed footer,body.embed .navdup{display:none}
+body.embed{padding:8px 8px 72px} /* iframes get no safe-area env(): the terminal page insets the frame instead */
+body.embed footer,body.embed .navdup{display:none}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
+  // embed = this page is the ≡ drawer inside the terminal page. Same chrome as standalone
+  // (header, tab bar) so the two never look like different apps; the tabs stay embedded,
+  // and the terminal tab means "back to the terminal" (data-close → postMessage, below).
+  const embed = /\bembed\b/.test(bodyClass), e = embed ? '?embed=1' : '';
   const tabs = `<nav class="tabs">
-<a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
-<a class="tb" href="/app"><span class="ti">⌨</span>terminal</a>
-<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
-<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a>
-<a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings"><span class="ti">⚙</span>settings</a></nav>`;
+<a class="tb${tab === 'sessions' ? ' on' : ''}" href="/${e}"><span class="ti">▤</span>sessions</a>
+<a class="tb" href="/app"${embed ? ' data-close="1"' : ''}><span class="ti">⌨</span>terminal</a>
+<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch${e}"><span class="ti">🖥</span>watch</a>
+<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid${e}"><span class="ti">📱</span>android</a>
+<a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings${e}"><span class="ti">⚙</span>settings</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
@@ -1233,7 +1237,8 @@ if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700&&!document.bod
    embed=1 URL), window.parent===window and postMessage would just talk to ourselves with no
    listener — fall back to a normal navigation instead, as 30-cchome.html's home button does. */
 if(document.body.classList.contains('embed'))
-  document.addEventListener('click',function(e){var a=e.target.closest('a[data-sw]');if(!a)return;
+  document.addEventListener('click',function(e){var c=e.target.closest('a[data-close]');if(c&&window.parent!==window){e.preventDefault();parent.postMessage({close:1},location.origin);return}
+    var a=e.target.closest('a[data-sw]');if(!a)return;
     e.preventDefault();
     if(window.parent!==window)parent.postMessage({sw:a.dataset.sw},location.origin);
     else location.href=a.href});
@@ -1265,6 +1270,7 @@ function send(req, res, status, html, type = 'text/html; charset=utf-8') {
     res.writeHead(status, h); res.end(gz);
   } else { h['content-length'] = buf.length; res.writeHead(status, h); res.end(buf); }
 }
+const isEmbed = req => /[?&]embed=1(&|$)/.test(req.url || '');
 const qs = o => { const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v) p.set(k, v);
   const s = p.toString(); return s ? '?' + s : ''; };

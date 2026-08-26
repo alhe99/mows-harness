@@ -1,4 +1,4 @@
-<style id="ccsess-css">/*ccsess-v2: session switcher inside the terminal page (2026-08-26).
+<style id="ccsess-css">/*ccsess-v3: session switcher inside the terminal page (2026-08-26).
 v1 of the shell wrapped /term in an iframe (broke every iOS viewport trick in the blocks
 above); v1 of this block added a second bar of chips above the key bar (crowded, tiny
 targets). v2: ONE bar. The key bar's first key is ‹ (cchome v4) = back to the session list,
@@ -29,11 +29,13 @@ padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;overfl
 #ccsheet .row.act{color:#c9d1d9}
 #ccdrawer{position:fixed;inset:0;z-index:80;background:#0a0a0a;display:none}
 #ccdrawer.open{display:block}
-#ccdrawer iframe{width:100%;height:100%;border:0;background:#0a0a0a}
-#ccdrawer .x{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
-width:54px;height:54px;border-radius:50%;background:#238636;color:#fff;border:0;font:700 22px/1 sans-serif;z-index:81;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+/* iframes get env(safe-area-*) = 0 on iOS, so the frame is inset here and the drawer bg fills the
+   status-bar / home-indicator bands — the embedded dashboard then sits exactly where the standalone
+   one does (header under the status bar, tab bar above the indicator). No extra close control: the
+   dashboard's own 'terminal' tab is the way back (it postMessages {close}). */
+#ccdrawer iframe{position:absolute;left:0;right:0;top:env(safe-area-inset-top,0px);bottom:env(safe-area-inset-bottom,0px);width:100%;height:auto;border:0;background:#0a0a0a}
 </style>
-<script id="ccsess-js">/*ccsess-v2*/(function(){
+<script id="ccsess-js">/*ccsess-v3*/(function(){
 var kb=document.getElementById('cckb');if(!kb)return;
 if(!matchMedia('(pointer:coarse)').matches)return;   /* desktop browsers use one window per session (dashboard data-nw) */
 var args=new URLSearchParams(location.search).getAll('arg');
@@ -47,10 +49,8 @@ function short(n){return n.replace(/^cc-[^-]+-/,'').replace(/^web-/,'')}
 function label(s){return s.label||short(s.name)}
 /* the drawer: the dashboard itself (?embed=1), full-screen; its attach/>_ links postMessage {sw} */
 var dr=document.createElement('div');dr.id='ccdrawer';var fr=null;
-function openDrawer(){closeSheet();if(!fr){fr=document.createElement('iframe');fr.src='/?embed=1';fr.title='sessions';dr.insertBefore(fr,dr.firstChild)}dr.classList.add('open')}
+function openDrawer(){closeSheet();if(!fr){fr=document.createElement('iframe');fr.src='/?embed=1';fr.title='sessions';dr.appendChild(fr)}dr.classList.add('open')}
 function closeDrawer(){dr.classList.remove('open')}
-var x=document.createElement('button');x.type='button';x.className='x';x.textContent='✕';x.setAttribute('aria-label','close');
-x.addEventListener('click',closeDrawer);dr.appendChild(x);
 window.ccsess={open:openDrawer,close:closeDrawer}; /* cchome's ‹ calls this instead of leaving the page */
 /* the pill: current session, second key of the bar */
 var pill=document.createElement('button');pill.type='button';pill.id='ccsess-pill';pill.textContent=cur?short(cur):'sessions';
@@ -69,7 +69,7 @@ function renderSheet(){pan.textContent='';
  var sep=document.createElement('div');sep.className='sep';pan.appendChild(sep);
  pan.appendChild(row('＋  new session','','act',function(){location.href='/term/?v=3'}));
  pan.appendChild(row('all sessions  ›','','act',openDrawer))}
-function openSheet(){renderSheet();sh.classList.add('open')}
+function openSheet(){renderSheet();sh.classList.add('open');poll()} /* refresh while it is open: the list is at most a few seconds stale */
 function closeSheet(){sh.classList.remove('open')}
 function sw(to){closeSheet();if(to===cur)return;
  if(!TAB){go('attach',to);return}  /* the menu page has no tabid: one reload, persistent from then on */
@@ -81,7 +81,7 @@ function poll(){if(document.visibilityState!=='visible')return;
   var c=l.filter(function(s){return s.current})[0];if(c)cur=c.name;
   var me=l.filter(function(s){return s.name===cur})[0];pill.textContent=me?label(me):(cur?short(cur):'sessions');
   if(sh.classList.contains('open'))renderSheet()}).catch(function(){})}
-addEventListener('message',function(e){if(e.origin!==location.origin||!e.data||!e.data.sw)return;sw(String(e.data.sw))});
+addEventListener('message',function(e){if(e.origin!==location.origin||!e.data)return;if(e.data.close)closeDrawer();else if(e.data.sw)sw(String(e.data.sw))});
 document.body.appendChild(sh);document.body.appendChild(dr);
 poll();setInterval(poll,10000);document.addEventListener('visibilitychange',poll);
 })()</script>
