@@ -1222,12 +1222,11 @@ addEventListener('pageshow',function(){document.querySelectorAll('form.busy').fo
    (data-nw), so clicking one twice reuses its window instead of opening a rival tmux
    client, which would detach the first (attach -d). Deliberately no rel=noopener: with
    it the spec ignores the window name and every click spawns another window, and the page
-   opened is our own /term on this origin. JS off => in place, exactly as before. Their href
-   is now /app?s=…/?open=… (§4, so phone/PWA lands in the shell) with the original /term/…
-   form stashed in data-term for exactly this rewrite; embed mode (the drawer) never rewrites
-   — clicks there postMessage the parent shell instead, below. */
+   opened is our own /term on this origin. JS off => in place, exactly as before. Embed mode
+   (the ≡ drawer inside the terminal page) never rewrites — clicks there postMessage the
+   terminal page instead, below. */
 if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700&&!document.body.classList.contains('embed'))
-  document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw;if(a.dataset.term)a.href=a.dataset.term});
+  document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw});
 /* embed mode (§3): a[data-sw] here is a switch link (attach/>_) meant for the shell's single
    terminal iframe, not this iframe — hand it to the parent instead of navigating in place.
    But if this page ever loads unframed (long-press "open in new tab", a bookmarked/shared
@@ -1270,37 +1269,15 @@ const qs = o => { const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v) p.set(k, v);
   const s = p.toString(); return s ? '?' + s : ''; };
 
-// ---------- /app: the persistent terminal shell (§1) — its own tiny page, NOT page():
-// the shell must never render page()'s .tabs bar or footer (the strip below is its nav).
-function appPage(body) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
-<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
-<link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>mows terminal</title><style>
-:root{color-scheme:dark;--bg:#0a0a0a;--card:#141416;--fg:#fafafa;--mut:#a1a1aa;
---bd:rgba(255,255,255,.09);--bd2:rgba(255,255,255,.16);--ok:#34d399;--ok-bg:rgba(52,211,153,.1);--ok-bd:rgba(52,211,153,.4)}
-*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{background:var(--bg);height:100%}
-body{font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
-.strip{display:flex;gap:6px;align-items:center;padding:calc(4px + env(safe-area-inset-top,0)) 8px 4px;overflow-x:auto;flex-shrink:0}
-.chip{display:inline-flex;align-items:center;border:1px solid var(--bd);background:var(--card);border-radius:999px;
-padding:5px 12px;min-height:30px;color:var(--mut);white-space:nowrap;font-size:13px;text-decoration:none;flex-shrink:0}
-.chip.on{border-color:var(--ok-bd);color:var(--fg);background:var(--ok-bg)}
-.chips{display:flex;gap:6px;overflow-x:auto;flex:1;min-width:0}
-.dtoggle{flex-shrink:0}.dtoggle summary{list-style:none;cursor:pointer;color:var(--fg);font-size:19px;
-padding:2px 9px;min-height:30px;display:flex;align-items:center;border-radius:999px}
-.dtoggle summary::-webkit-details-marker{display:none}
-.drawer{display:none}
-.dtoggle[open] .drawer{display:block;position:fixed;inset:0;z-index:30;background:var(--bg)}
-.drawer iframe{width:100%;height:100%;border:0}
-.term{flex:1;width:100%;border:0}
-</style></head><body>${body}</body></html>`;
-}
-// §1 initial-session rule: ?s=<name> if live; else ~/.cache/webterm-last if live; else the
+// ---------- /app: entry point of the persistent terminal (spec 2026-08-25, execution v2) ----------
+// v1 wrapped /term in an iframe. On iOS that broke every keyboard / safe-area trick in
+// infra/webconsole/blocks (they assume the terminal is the top-level document): keyboard over
+// the input line, lag on every key. Now /term IS the shell — blocks/35-ccsess.html draws the
+// session row and the ≡ drawer inside the terminal page — and /app only mints the tabid (the
+// key web-term.sh uses to find this browser tab's tmux client) and redirects.
+const tabid = () => randomBytes(4).toString('hex');
+const termHref = (kind, name) => `/term/?arg=${kind}&arg=${encodeURIComponent(name)}&arg=${tabid()}&v=3`;
+// initial session S: ?s= if live, else the last one web-term.sh marked if live, else the
 // first live session; else '' (no attach — ttyd shows web-term.sh's own menu).
 async function initialSession(url, live, liveNames) {
   const req = url.searchParams.get('s') || '';
@@ -1312,59 +1289,11 @@ async function initialSession(url, live, liveNames) {
 }
 async function appView(req, res, url) {
   const live = await tmuxLive();
-  const liveNames = new Set(live.map(l => l.name));
-  const tabid = randomBytes(4).toString('hex');
   const openSid = url.searchParams.get('open') || '';
-  let src, current = '';
-  if (/^[0-9a-f]{8}$/.test(openSid)) {
-    src = `/term/?arg=open&arg=${openSid}&arg=${tabid}&v=3`;
-  } else {
-    current = await initialSession(url, live, liveNames);
-    src = current ? `/term/?arg=attach&arg=${encodeURIComponent(current)}&arg=${tabid}&v=3` : '/term/?v=3';
-  }
-  const chips = live.map(l => `<a class="chip${l.name === current ? ' on' : ''}" data-sw="${esc(l.name)}"
-href="/app${qs({ s: l.name })}">${esc(l.label || l.name)}</a>`).join('');
-  const body = `<div class="strip">
-<details id="menu" class="dtoggle"><summary>&#9776;</summary><div class="drawer"><iframe id="d" loading="lazy" src="/?embed=1" title="dashboard"></iframe></div></details>
-<div id="chips" class="chips">${chips}</div>
-<a class="chip" href="/term/?v=3" target="t">+</a>
-</div>
-<iframe id="t" name="t" class="term" src="${src}" title="terminal"></iframe>
-<script>
-var TAB='${tabid}';
-function sw(to){
-  var b=new URLSearchParams();b.set('tab',TAB);b.set('to',to);
-  fetch('/a/switch',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:b}).then(function(r){
-    if(r.ok){mark(to);document.getElementById('menu').open=false}
-    else fallback(to);
-  }).catch(function(){fallback(to)});
-}
-function fallback(to){ // one reload, never a dead end: a sid8 re-opens, a live name re-attaches
-  document.getElementById('t').src='/term/?arg='+(/^[0-9a-f]{8}$/.test(to)?'open':'attach')+'&arg='+encodeURIComponent(to)+'&arg='+TAB+'&v=3';
-}
-function mark(to){document.querySelectorAll('#chips a').forEach(function(a){a.classList.toggle('on',a.dataset.sw===to)})}
-document.getElementById('chips').addEventListener('click',function(e){
-  var a=e.target.closest('a[data-sw]');if(!a)return;e.preventDefault();sw(a.dataset.sw);
-});
-addEventListener('message',function(e){
-  if(e.origin!==location.origin||!e.data)return;
-  if(e.data.sw)sw(e.data.sw);else if(e.data.home)document.getElementById('menu').open=true;
-});
-function poll(){
-  if(document.visibilityState!=='visible')return;
-  fetch('/app/live.json?tab='+TAB).then(function(r){return r.json()}).then(function(list){
-    var box=document.getElementById('chips');box.textContent='';var any=false;
-    list.forEach(function(s){
-      var a=document.createElement('a');a.className='chip'+(s.current?' on':'');
-      a.href='/app'+(s.current?'':'?s='+encodeURIComponent(s.name));a.dataset.sw=s.name;a.textContent=s.label||s.name;
-      if(s.current)any=true;box.appendChild(a);
-    });
-    if(!any&&list.length)document.getElementById('t').src='/term/?arg=attach&arg='+encodeURIComponent(list[0].name)+'&arg='+TAB+'&v=3';
-  }).catch(function(){});
-}
-setInterval(poll,10000);document.addEventListener('visibilitychange',poll);
-</script>`;
-  send(req, res, 200, appPage(body));
+  let to;
+  if (/^[0-9a-f]{8}$/.test(openSid)) to = termHref('open', openSid);
+  else { const s = await initialSession(url, live, new Set(live.map(l => l.name))); to = s ? termHref('attach', s) : '/term/?v=3'; }
+  res.writeHead(302, { location: to, 'cache-control': 'no-store' }); res.end();
 }
 // GET /app/live.json?tab= (§2): the chip list this tab's poll refreshes itself with.
 async function liveJson(req, res, url) {
@@ -1526,11 +1455,10 @@ async function listView(req, res, url) {
     const tsrc = row || (l.cwd ? index.filter(e => e.proj === l.cwd.replace(/[/.]/g, '-') && e.mt >= l.created)
       .reduce((a, e) => (!a || e.mt > a.mt ? e : a), null) : null);
     const title = tsrc ? (await titleOf(tsrc)).title : '';
-    // href is /app now (§4: phone/PWA lands in the persistent shell); data-term keeps the
-    // /term/… form for the desktop-browser rewrite in page(), data-sw for the embed-mode postMessage
+    // data-sw: in embed mode (the ≡ drawer) this becomes a switch instead of a navigation
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
 <span class="ln">${nm}</span>${l.label ? `<span class="lb">${esc(l.label)}</span>` : ''}<span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
-<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" data-sw="${esc(l.name)}" data-term="/term/?arg=attach&amp;arg=${esc(l.name)}&amp;v=3" href="/app${qs({ s: l.name })}">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
+<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" data-sw="${esc(l.name)}" href="${esc(termHref('attach', l.name))}">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
   }))).join('') + `</div>` : '';
 
   let lastDay = '', items = '';
@@ -1540,11 +1468,8 @@ async function listView(req, res, url) {
     const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
     const isLive = liveBySid.has(sid8);
     const t = titles[i].title;
-    // §4: href is /app?open=<sid8> (phone/PWA lands in the shell); data-term/data-sw as above.
-    // Already-live sessions route through /app?s=<name> instead — appView's initialSession()
-    // only recognizes that form, so the chip strip highlights the session on first paint
-    // rather than waiting for the next live.json poll.
-    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" data-sw="${sid8}" data-term="/term/?arg=open&amp;arg=${sid8}&amp;v=3" href="${isLive ? `/app${qs({ s: liveBySid.get(sid8).name })}` : `/app?open=${sid8}`}" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
+    // href carries a fresh tabid (termHref); data-sw: embed mode switches instead of navigating
+    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" data-sw="${sid8}" href="${esc(isLive ? termHref('attach', liveBySid.get(sid8).name) : termHref('open', sid8))}" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
     // delete = same no-JS <details> confirm as kill; hidden on live sessions (kill first)
     const del = isLive ? '' : `<details class="kx del"><summary class="dx" title="delete transcript" aria-label="delete transcript ${sid8}">✕</summary><div class="kc"><div>delete <b>${sid8}</b>?</div><span class="muted">removes the transcript from disk — no undo.</span><form class="af" method="post" action="/a/del"><input type="hidden" name="a" value="${e.a}"><input type="hidden" name="sid" value="${esc(e.sid)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab danger">delete it</button></form></div></details>`;
     items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}${qs({ embed: embed ? '1' : '' })}">
@@ -1617,7 +1542,7 @@ async function detailView(req, res, a, sid) {
 
   const term = acct.term
     ? (canResume(e.mt, live)
-      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" data-sw="${sid8}" data-term="/term/?arg=open&amp;arg=${sid8}&amp;v=3" href="${live ? `/app${qs({ s: lv.name })}` : `/app?open=${sid8}`}">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
+      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" data-sw="${sid8}" href="${esc(live ? termHref('attach', lv.name) : termHref('open', sid8))}">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
       : `<p class="muted" style="margin:8px 0">resume disabled — idle ${rel(e.mt)} (cutoff ${RESUME_DAYS}d). transcript stays readable; resume manually with <span style="font-family:var(--mono)">cc -r</span> if you really need it.</p>`)
     : '';
   const pgr = pager(`/s/${a}/${sid}`, { embed: embed ? '1' : '' }, cur, max,

@@ -1,0 +1,72 @@
+<style id="ccsess-css">/*ccsess-v1: the persistent-terminal shell, drawn INSIDE the terminal page (2026-08-26).
+v1 of the shell wrapped /term in an iframe from a separate /app page; on iOS that defeated
+every viewport trick in the blocks above (they assume the terminal is the top-level
+document): keyboard over the input line, lag per keystroke. So the shell is a block now.
+Session row: one button per live tmux session, directly ABOVE the key bar — thumb-reachable
+on a Pro Max, unlike the top of the screen — and hidden while the OS keyboard is up
+(body.ccsess-kb, set from visualViewport like cckb does). Tapping a session POSTs
+/a/switch; web-term.sh switch-clients this tab's tmux client; tmux repaints the SAME
+terminal — no reload, no new WebSocket. ≡ opens the dashboard (?embed=1) full-screen as a
+drawer; its attach/>_ links postMessage {sw} here instead of navigating. */
+#ccsess{display:none;position:fixed;left:0;right:0;bottom:calc(46px + env(safe-area-inset-bottom,0px));height:40px;box-sizing:border-box;z-index:49;
+background:#161b22;border-top:1px solid #30363d;align-items:center;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+padding:4px calc(6px + env(safe-area-inset-right,0px)) 4px calc(6px + env(safe-area-inset-left,0px))}
+#ccsess button{flex:0 0 auto;height:32px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:999px;
+font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:0 12px;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsess button.on{border-color:#2ea043;color:#e6edf3;background:#12261a}
+#ccsess button.ico{min-width:40px;padding:0;font-size:17px;font-weight:700;color:#3fb950}
+#ccsess button:active{background:#238636}
+body.nozone #ccsess{bottom:46px}
+body.ccsess-kb #ccsess{display:none!important}
+@media(pointer:coarse){#ccsess{display:flex}
+/* same shape as ccpwa's rule, minus this row's 40px; cckb's keyboard branch sets an inline
+   height while typing (row hidden then), and clears it on dismiss so this applies again */
+#terminal-container{height:calc(100% - 48px - 40px - env(safe-area-inset-bottom,0px))}
+body.nozone #terminal-container{height:calc(100% - 48px - 40px)}}
+#ccdrawer{position:fixed;inset:0;z-index:60;background:#0a0a0a;display:none}
+#ccdrawer.open{display:block}
+#ccdrawer iframe{width:100%;height:100%;border:0;background:#0a0a0a}
+#ccdrawer .x{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
+width:54px;height:54px;border-radius:50%;background:#238636;color:#fff;border:0;font:700 22px/1 sans-serif;z-index:61;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+</style>
+<script id="ccsess-js">/*ccsess-v1*/(function(){
+if(!matchMedia('(pointer:coarse)').matches)return;   /* desktop browsers use one window per session (dashboard data-nw) */
+var args=new URLSearchParams(location.search).getAll('arg');
+var TAB=/^[0-9a-f]{8}$/.test(args[2]||'')?args[2]:'';  /* minted by /app or a dashboard link; web-term.sh attach wrote this tab's tty under it */
+var cur=args[0]==='attach'?(args[1]||''):'';
+function mint(){var a=new Uint8Array(4);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(x){return('0'+x.toString(16)).slice(-2)}).join('')}
+function go(kind,to){location.href='/term/?arg='+kind+'&arg='+encodeURIComponent(to)+'&arg='+(TAB||mint())+'&v=3'}
+function fallback(to){go(/^[0-9a-f]{8}$/.test(to)?'open':'attach',to)} /* one reload, never a dead end */
+var row=document.createElement('div');row.id='ccsess';
+var dr=document.createElement('div');dr.id='ccdrawer';var fr=null;
+function openDrawer(){if(!fr){fr=document.createElement('iframe');fr.src='/?embed=1';fr.title='sessions';dr.insertBefore(fr,dr.firstChild)}dr.classList.add('open')}
+function closeDrawer(){dr.classList.remove('open')}
+var x=document.createElement('button');x.type='button';x.className='x';x.textContent='✕';x.setAttribute('aria-label','close');
+x.addEventListener('click',closeDrawer);dr.appendChild(x);
+window.ccsess={open:openDrawer,close:closeDrawer}; /* cchome's ⌂ calls this instead of leaving the page */
+function short(n){return n.replace(/^cc-[^-]+-/,'').replace(/^web-/,'')}
+function btn(txt,cls,fn){var b=document.createElement('button');b.type='button';b.textContent=txt;if(cls)b.className=cls;
+ b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();fn()}); /* pointerdown+preventDefault: keeps the terminal's focus, like cckb */
+ return b}
+function render(list){row.textContent='';
+ row.appendChild(btn('☰','ico',openDrawer));
+ list.forEach(function(s){var b=btn(s.label||short(s.name),(s.current||(!s.someCurrent&&s.name===cur))?'on':'',function(){sw(s.name)});b.title=s.name;row.appendChild(b)});
+ row.appendChild(btn('+','ico',function(){location.href='/term/?v=3'}))}
+function sw(to){if(to===cur)return;
+ if(!TAB){go('attach',to);return}  /* the menu page has no tabid: one reload, persistent from then on */
+ var b=new URLSearchParams();b.set('tab',TAB);b.set('to',to);
+ fetch('/a/switch',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:b}).then(function(r){
+  if(r.ok){cur=to;closeDrawer();poll()}else fallback(to)}).catch(function(){fallback(to)})}
+function poll(){if(document.visibilityState!=='visible')return;
+ fetch('/app/live.json?tab='+(TAB||'00000000')).then(function(r){return r.json()}).then(function(l){
+  var any=l.some(function(s){return s.current});l.forEach(function(s){s.someCurrent=any});
+  if(any)cur=l.filter(function(s){return s.current})[0].name;
+  render(l)}).catch(function(){})}
+addEventListener('message',function(e){if(e.origin!==location.origin||!e.data||!e.data.sw)return;sw(String(e.data.sw))});
+/* keyboard up -> hide the row before cckb's vfit (120/520 ms) measures the terminal box */
+var vv=window.visualViewport;
+if(vv){var kb=function(){var open=window.innerHeight-vv.height>60||vv.offsetTop>2;document.body.classList.toggle('ccsess-kb',open)};
+ vv.addEventListener('resize',kb);vv.addEventListener('scroll',kb)}
+document.body.appendChild(row);document.body.appendChild(dr);
+render([]);poll();setInterval(poll,10000);document.addEventListener('visibilitychange',poll);
+})()</script>

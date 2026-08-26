@@ -141,6 +141,7 @@ infra/webconsole/blocks/10-cckb.html
 infra/webconsole/blocks/15-ccu11.html
 infra/webconsole/blocks/20-ccpwa.html
 infra/webconsole/blocks/30-cchome.html
+infra/webconsole/blocks/35-ccsess.html
 infra/webconsole/blocks/40-ccimg.html
 infra/webconsole/blocks/45-ccfont.html
 infra/webconsole/blocks/46-cctheme.html
