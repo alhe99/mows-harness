@@ -1,6 +1,6 @@
-<script id="cchome-js">/*cchome-v3: home button in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console; when the ccsess block (35) is present, home opens its sessions drawer in place instead of leaving the terminal (v3, 2026-08-26) */(function(){
+<script id="cchome-js">/*cchome-v4: back key (‹) in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console; v4 (2026-08-26): the glyph is ‹ (back), and when the ccsess block (75) is present it opens the session list over the terminal instead of leaving it */(function(){
 var kb=document.getElementById('cckb');if(!kb)return;
-var b=document.createElement('button');b.type='button';b.textContent='\u2302';
+var b=document.createElement('button');b.type='button';b.textContent='\u2039';b.setAttribute('aria-label','sessions');b.style.fontSize='22px';b.style.lineHeight='1';
 b.style.color='#3fb950';b.style.fontWeight='700';
 b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();if(window.ccsess){window.ccsess.open();}else{location.href='/';}});
 kb.insertBefore(b,kb.firstChild);

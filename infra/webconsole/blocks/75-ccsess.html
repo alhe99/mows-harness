@@ -1,0 +1,87 @@
+<style id="ccsess-css">/*ccsess-v2: session switcher inside the terminal page (2026-08-26).
+v1 of the shell wrapped /term in an iframe (broke every iOS viewport trick in the blocks
+above); v1 of this block added a second bar of chips above the key bar (crowded, tiny
+targets). v2: ONE bar. The key bar's first key is ‹ (cchome v4) = back to the session list,
+drawn full-screen over the terminal so the terminal never reloads; the second key is a
+pill with the current session's name; tapping it opens a bottom sheet with one 52 px row
+per live session, then "new session" and "all sessions". Switching POSTs /a/switch and
+tmux switch-clients this tab's client — the terminal repaints in place.
+Spliced as 75-: blocks 40/60/70 insert their keys at fixed child indexes, so this one has
+to run after them to land right after ‹.
+Also here: iOS never draws xterm's scrollbar, so the fit addon falls back to reserving
+15 px for it — the terminal stopped short of the right edge. Oversize the container by
+exactly that (coarse pointers only; desktop scrollbars are real). */
+@media(pointer:coarse){#terminal-container{width:calc(100% + 15px)}}
+#ccsess-pill{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3fb950!important;font-weight:600}
+#ccsess-pill::after{content:' \25BE';color:#8b949e;font-weight:400}
+#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.55)}
+#ccsheet.open{display:block}
+#ccsheet .pan{position:absolute;left:0;right:0;bottom:0;background:#161b22;border-top:1px solid #30363d;border-radius:16px 16px 0 0;
+padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#ccsheet .hd{color:#8b949e;font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:8px 18px 6px}
+#ccsheet .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 18px;color:#e6edf3;font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#ccsheet .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .row .nm small{display:block;color:#8b949e;font-size:12px;font-family:ui-monospace,monospace}
+#ccsheet .row.on{color:#3fb950}
+#ccsheet .row.on::after{content:'\2713';font-weight:700}
+#ccsheet .row:active{background:#21262d}
+#ccsheet .sep{border-top:1px solid #30363d;margin:6px 0}
+#ccsheet .row.act{color:#c9d1d9}
+#ccdrawer{position:fixed;inset:0;z-index:80;background:#0a0a0a;display:none}
+#ccdrawer.open{display:block}
+#ccdrawer iframe{width:100%;height:100%;border:0;background:#0a0a0a}
+#ccdrawer .x{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
+width:54px;height:54px;border-radius:50%;background:#238636;color:#fff;border:0;font:700 22px/1 sans-serif;z-index:81;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+</style>
+<script id="ccsess-js">/*ccsess-v2*/(function(){
+var kb=document.getElementById('cckb');if(!kb)return;
+if(!matchMedia('(pointer:coarse)').matches)return;   /* desktop browsers use one window per session (dashboard data-nw) */
+var args=new URLSearchParams(location.search).getAll('arg');
+var TAB=/^[0-9a-f]{8}$/.test(args[2]||'')?args[2]:'';  /* minted by /app or a dashboard link; web-term.sh attach wrote this tab's tty under it */
+var cur=args[0]==='attach'?(args[1]||''):'';
+var list=[];
+function mint(){var a=new Uint8Array(4);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(x){return('0'+x.toString(16)).slice(-2)}).join('')}
+function go(kind,to){location.href='/term/?arg='+kind+'&arg='+encodeURIComponent(to)+'&arg='+(TAB||mint())+'&v=3'}
+function fallback(to){go(/^[0-9a-f]{8}$/.test(to)?'open':'attach',to)} /* one reload, never a dead end */
+function short(n){return n.replace(/^cc-[^-]+-/,'').replace(/^web-/,'')}
+function label(s){return s.label||short(s.name)}
+/* the drawer: the dashboard itself (?embed=1), full-screen; its attach/>_ links postMessage {sw} */
+var dr=document.createElement('div');dr.id='ccdrawer';var fr=null;
+function openDrawer(){closeSheet();if(!fr){fr=document.createElement('iframe');fr.src='/?embed=1';fr.title='sessions';dr.insertBefore(fr,dr.firstChild)}dr.classList.add('open')}
+function closeDrawer(){dr.classList.remove('open')}
+var x=document.createElement('button');x.type='button';x.className='x';x.textContent='✕';x.setAttribute('aria-label','close');
+x.addEventListener('click',closeDrawer);dr.appendChild(x);
+window.ccsess={open:openDrawer,close:closeDrawer}; /* cchome's ‹ calls this instead of leaving the page */
+/* the pill: current session, second key of the bar */
+var pill=document.createElement('button');pill.type='button';pill.id='ccsess-pill';pill.textContent=cur?short(cur):'sessions';
+pill.addEventListener('click',function(){openSheet()}); /* a plain click: the keyboard may close — choosing a session is a break from typing anyway */
+kb.insertBefore(pill,kb.children[1]||null);
+/* the sheet */
+var sh=document.createElement('div');sh.id='ccsheet';var pan=document.createElement('div');pan.className='pan';sh.appendChild(pan);
+sh.addEventListener('click',function(e){if(e.target===sh)closeSheet()});
+function row(txt,sub,cls,fn){var r=document.createElement('div');r.className='row'+(cls?' '+cls:'');r.setAttribute('role','button');
+ var nm=document.createElement('span');nm.className='nm';nm.textContent=txt;if(sub){var sm=document.createElement('small');sm.textContent=sub;nm.appendChild(sm)}
+ r.appendChild(nm);r.addEventListener('click',fn);return r}
+function renderSheet(){pan.textContent='';
+ var h=document.createElement('div');h.className='hd';h.textContent='live sessions';pan.appendChild(h);
+ if(!list.length){var e=document.createElement('div');e.className='row act';e.textContent='none running';pan.appendChild(e)}
+ list.forEach(function(s){pan.appendChild(row(label(s),s.label?s.name:'',s.name===cur?'on':'',function(){sw(s.name)}))});
+ var sep=document.createElement('div');sep.className='sep';pan.appendChild(sep);
+ pan.appendChild(row('＋  new session','','act',function(){location.href='/term/?v=3'}));
+ pan.appendChild(row('all sessions  ›','','act',openDrawer))}
+function openSheet(){renderSheet();sh.classList.add('open')}
+function closeSheet(){sh.classList.remove('open')}
+function sw(to){closeSheet();if(to===cur)return;
+ if(!TAB){go('attach',to);return}  /* the menu page has no tabid: one reload, persistent from then on */
+ var b=new URLSearchParams();b.set('tab',TAB);b.set('to',to);
+ fetch('/a/switch',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:b}).then(function(r){
+  if(r.ok){cur=to;pill.textContent=label(list.filter(function(s){return s.name===to})[0]||{name:to});closeDrawer();poll()}else fallback(to)}).catch(function(){fallback(to)})}
+function poll(){if(document.visibilityState!=='visible')return;
+ fetch('/app/live.json?tab='+(TAB||'00000000')).then(function(r){return r.json()}).then(function(l){list=l;
+  var c=l.filter(function(s){return s.current})[0];if(c)cur=c.name;
+  var me=l.filter(function(s){return s.name===cur})[0];pill.textContent=me?label(me):(cur?short(cur):'sessions');
+  if(sh.classList.contains('open'))renderSheet()}).catch(function(){})}
+addEventListener('message',function(e){if(e.origin!==location.origin||!e.data||!e.data.sw)return;sw(String(e.data.sw))});
+document.body.appendChild(sh);document.body.appendChild(dr);
+poll();setInterval(poll,10000);document.addEventListener('visibilitychange',poll);
+})()</script>
