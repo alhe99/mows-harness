@@ -300,9 +300,11 @@ DASH=http://127.0.0.1:3099 TERM_PAGE=/tmp/term-index.html \
   WEBTERM_SH=$PWD/infra/webconsole/web-term.sh node infra/webconsole/mobile-journey.mjs
 ```
 
-`mobile-journey.mjs` is the phone-layout suite (110 assertions over four geometries: 17 Pro
+`mobile-journey.mjs` is the phone-layout suite (114 assertions over four geometries: 17 Pro
 Max, 15, SE, landscape). It measures geometry — element edges against the viewport — because
-existence checks passed a dashboard that was 150 px tall. It cannot see the iOS keyboard,
+existence checks passed a dashboard that was 150 px tall. Its contexts run with
+`reducedMotion: 'reduce'` so geometry is measured settled, not mid-slide; one motion-enabled
+scenario then checks that the session sheet's slide actually lands flush and closes. It cannot see the iOS keyboard,
 real `env()` insets, or scroll feel: those stay a device test, so say "needs a device check"
 rather than "verified" for anything touching them.
 

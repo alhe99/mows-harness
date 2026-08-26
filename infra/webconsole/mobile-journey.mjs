@@ -69,7 +69,7 @@ try {
   ok(await ensureClient(A), `pty client attached to ${A} on ${tty}`);
 
   const br = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
-  const phone = async (name, extra = {}) => { const p = PHONES[name]; const ctx = await br.newContext({ viewport: { width: p.w, height: p.h }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, ...extra }); await ctx.route('**/term/**', route); const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => { if (!IGNORE.test(String(e))) errs.push(String(e)); }); page.on('console', m => m.type() === 'error' && !IGNORE.test(m.text()) && errs.push(m.text())); return { ctx, page, errs, p }; };
+  const phone = async (name, extra = {}) => { const p = PHONES[name]; const ctx = await br.newContext({ viewport: { width: p.w, height: p.h }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, reducedMotion: 'reduce', ...extra }); await ctx.route('**/term/**', route); const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => { if (!IGNORE.test(String(e))) errs.push(String(e)); }); page.on('console', m => m.type() === 'error' && !IGNORE.test(m.text()) && errs.push(m.text())); return { ctx, page, errs, p }; };
   // Not ours: /term/ws + /term/token are stubbed 404 by this harness (no ttyd), and "Transition was
   // skipped" is Chrome rejecting its OWN cross-document view-transition promise when a second
   // navigation starts before the first finishes — no API exists to catch it, and it is cosmetic.
@@ -182,7 +182,7 @@ try {
     await ctx.close();
   }
   { // short viewport (what the layout sees while the keyboard is up): everything still reachable
-    const ctx = await br.newContext({ viewport: { width: 440, height: 520 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }); await ctx.route('**/term/**', route);
+    const ctx = await br.newContext({ viewport: { width: 440, height: 520 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, reducedMotion: 'reduce' }); await ctx.route('**/term/**', route);
     const page = await ctx.newPage(); await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
     const g = await page.evaluate(() => ({ kbBottom: Math.round(document.getElementById('cckb').getBoundingClientRect().bottom), ih: innerHeight, tcH: document.getElementById('terminal-container').getBoundingClientRect().height, rows: window.term.rows }));
     ok(g.kbBottom === g.ih && g.tcH > 300 && g.rows >= 10, `short viewport 520px: key bar at the bottom, terminal ${Math.round(g.tcH)}px / ${g.rows} rows`);
@@ -192,10 +192,27 @@ try {
     await ctx.close();
   }
   { // desktop / fine pointer: no pill, no sheet; ‹ leaves for the dashboard
-    const ctx = await br.newContext({ viewport: { width: 1280, height: 800 } }); await ctx.route('**/term/**', route);
+    const ctx = await br.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' }); await ctx.route('**/term/**', route);
     const page = await ctx.newPage(); await page.goto(url); await page.waitForTimeout(800);
     ok((await page.$('#ccsess-pill')) === null && (await page.$('#ccsheet')) === null, 'desktop: no pill, no sheet');
     await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 5000 }), page.dispatchEvent('#cckb > button:first-child', 'pointerdown')]).then(() => ok(true, 'desktop: ‹ navigates to the dashboard'), e => ok(false, 'desktop ‹: ' + e.message.split('\n')[0]));
+    await ctx.close();
+  }
+  { // motion enabled (every other context runs reducedMotion:'reduce' so geometry asserts the
+    // SETTLED state): the sheet must slide in and end flush, and slide out back to display:none.
+    // Guards the allow-discrete/@starting-style block in 75-ccsess.html — if a parse error ever
+    // drops it, the transitionProperty check fails; if the geometry breaks mid-flight, settle fails.
+    const { ctx, page, errs } = await phone('iPhone 15', { reducedMotion: 'no-preference' });
+    await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
+    const t = await page.$eval('#ccsheet .pan', el => getComputedStyle(el).transitionProperty).catch(() => '');
+    ok(/transform/.test(t), `motion on: pan slide transition wired (${t})`);
+    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
+    const settled = await page.waitForFunction(() => Math.abs(document.querySelector('#ccsheet .pan').getBoundingClientRect().bottom - innerHeight) < 1, null, { timeout: 1500 }).then(() => true, () => false);
+    ok(settled, 'motion on: sheet slides in and settles flush with the bottom edge');
+    await page.mouse.click(10, 10); // backdrop, far from the pan
+    const closed = await page.waitForFunction(() => getComputedStyle(document.getElementById('ccsheet')).display === 'none', null, { timeout: 2000 }).then(() => true, () => false);
+    ok(closed, 'motion on: backdrop tap slides the sheet out, display returns to none');
+    ok(errs.length === 0, `motion on: no page errors ${JSON.stringify(errs).slice(0, 200)}`);
     await ctx.close();
   }
   { // no embed/iframe/postMessage machinery left anywhere in the dashboard or the terminal page

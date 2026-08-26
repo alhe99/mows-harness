@@ -235,6 +235,13 @@ bundle). It still feels like an installed app because three browser features do 
   scan) are excluded by selector. Chrome only; Safari relies on bfcache.
 - **bfcache**: pages send `cache-control: no-cache` (never `no-store`) and register no `unload`
   handlers, so back/forward restore instantly.
+- **motion is CSS-only and compositor-only** (2026-08-26): the new screen rises 6 px under the
+  pinned tab bar (`vt-in`), every control shrinks to `scale(.96)` on `:active`, `<details>`
+  content fades in, and the terminal's session sheet slides up/down via `transition-behavior:
+  allow-discrete` + `@starting-style` (`blocks/75-ccsess.html`). Only `transform` and `opacity`
+  are ever animated — nothing triggers layout, no JS timers — and every rule sits behind
+  `prefers-reduced-motion: no-preference`. Browsers without `allow-discrete` drop those
+  declarations and toggle instantly, which is exactly the pre-motion behavior.
 
 Actions stay POST → 303 → GET; a two-line `submit` listener marks the form `.busy` while it runs
 and `pageshow` clears it on a bfcache restore. Proof under automation stops at the prerender

@@ -20,10 +20,22 @@ for it — the terminal stopped short of the right edge. Oversize the container 
 @media(pointer:coarse){#terminal-container{width:calc(100% + 15px)}}
 #ccsess-pill{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3fb950!important;font-weight:600}
 #ccsess-pill::after{content:' \25BE';color:#8b949e;font-weight:400}
-#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.55)}
-#ccsheet.open{display:block}
+#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.55);opacity:0}
+#ccsheet.open{display:block;opacity:1}
 #ccsheet .pan{position:absolute;left:0;right:0;bottom:0;background:#161b22;border-top:1px solid #30363d;border-radius:16px 16px 0 0;
-padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch}
+padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateY(100%)}
+#ccsheet.open .pan{transform:translateY(0)}
+/* motion (2026-08-26): backdrop fades, sheet slides — transform/opacity only, no JS timers.
+   display sits in the transition with allow-discrete so the slide-out plays before display flips
+   to none, and @starting-style gives the slide-in a from-state on the none->block flip. Browsers
+   without either drop these declarations and toggle instantly — exactly the old behavior. */
+@media(prefers-reduced-motion:no-preference){
+#ccsheet{transition:opacity .2s ease,display .25s allow-discrete}
+#ccsheet .pan{transition:transform .25s cubic-bezier(.32,.72,0,1)}
+@starting-style{#ccsheet.open{opacity:0}#ccsheet.open .pan{transform:translateY(100%)}}
+#cckb button{transition:transform .1s ease,opacity .1s ease}
+#cckb button:active{transform:scale(.9);opacity:.6}
+}
 #ccsheet .hd{color:#8b949e;font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:8px 18px 6px}
 #ccsheet .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 18px;color:#e6edf3;font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
 #ccsheet .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -1185,10 +1185,24 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
    Chrome 126+/Safari 18.2+; older browsers just navigate. */
 @view-transition{navigation:auto}
 .tabs{view-transition-name:tabs}
-::view-transition-old(root),::view-transition-new(root){animation-duration:.16s}
+::view-transition-old(root){animation:.12s ease both vt-out}
+::view-transition-new(root){animation:.18s cubic-bezier(.2,.7,.3,1) both vt-in}
+@keyframes vt-out{to{opacity:0}}
+@keyframes vt-in{from{opacity:0;transform:translateY(6px)}}
 @media(prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
 form.busy{pointer-events:none}form.busy button,form.busy summary{animation:busy 1s ease-in-out infinite}
 @keyframes busy{50%{opacity:.35}}
+/* motion pass (2026-08-26): press feedback + content entrances. transform/opacity ONLY — nothing
+   here can trigger layout — and all of it behind prefers-reduced-motion (view transitions are
+   already killed for reduce above). The new screen rises 6px under the pinned tab bar, so a
+   navigation reads as content sliding into place, not a repaint. */
+@media(prefers-reduced-motion:no-preference){
+:is(button,summary,.chip,.tabs a){transition:background-color .15s,border-color .15s,color .15s,transform .1s ease,opacity .1s ease}
+:is(button,summary,.chip,.tabs a):active{transform:scale(.96)}
+details>*:not(summary){transform-origin:top center}
+details[open]>*:not(summary){animation:pop-in .18s ease}
+@keyframes pop-in{from{opacity:0;transform:translateY(-4px)}}
+}
 `;
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
