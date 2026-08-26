@@ -33,7 +33,9 @@ padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;overfl
    status-bar / home-indicator bands — the embedded dashboard then sits exactly where the standalone
    one does (header under the status bar, tab bar above the indicator). No extra close control: the
    dashboard's own 'terminal' tab is the way back (it postMessages {close}). */
-#ccdrawer iframe{position:absolute;left:0;right:0;top:env(safe-area-inset-top,0px);bottom:env(safe-area-inset-bottom,0px);width:100%;height:auto;border:0;background:#0a0a0a}
+/* explicit height: an iframe is a replaced element — top+bottom with height:auto does NOT stretch it,
+   it falls back to the intrinsic 150px (2026-08-26, seen on the device: tab bar 150px from the top) */
+#ccdrawer iframe{position:absolute;left:0;top:env(safe-area-inset-top,0px);width:100%;height:calc(100% - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));border:0;background:#0a0a0a}
 </style>
 <script id="ccsess-js">/*ccsess-v3*/(function(){
 var kb=document.getElementById('cckb');if(!kb)return;
