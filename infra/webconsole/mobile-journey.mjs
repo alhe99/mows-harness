@@ -37,54 +37,75 @@ function cleanup() {
 }
 process.on('exit', cleanup);
 const clients = () => tmux('list-clients', '-F', '#{client_tty} #{client_session}');
+const WEBTERM = process.env.WEBTERM_SH || '/opt/claude-dashboard/web-term.sh';
+let tty = '';
+// The stand-in for ttyd: a real tmux client on a real pty, registered under TAB the way
+// web-term.sh attach would. stdin stays an open pipe we never write to — with stdio ignored it
+// EOFs and `script` exits, which silently killed the client mid-run and made every later switch
+// look like a product 409 (2026-08-26). Re-spawned on demand so one dead client can't cascade.
+async function ensureClient(session) {
+  const live = () => clients().split('\n').filter(Boolean).find(l => l.split(' ')[0] === tty);
+  if (tty && live()) {
+    if (!live().endsWith(' ' + session)) execFileSync(WEBTERM, ['switch', TAB, session], { stdio: 'ignore' });
+    return true;
+  }
+  try { pty && pty.kill('SIGKILL'); } catch {}
+  pty = spawn('script', ['-qfc', `tmux attach -t =${session}`, '/dev/null'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  tty = '';
+  for (let i = 0; i < 40 && !tty; i++) { await new Promise(r => setTimeout(r, 250));
+    tty = clients().split('\n').filter(l => l.endsWith(' ' + session)).map(l => l.split(' ')[0])[0] || ''; }
+  if (!tty) return false;
+  mkdirSync(join(HOME, '.cache/webterm-clients'), { recursive: true });
+  writeFileSync(join(HOME, '.cache/webterm-clients', TAB), tty + '\n');
+  await new Promise(r => setTimeout(r, 3500)); // the dashboard caches tmux state for 3 s
+  return true;
+}
 const route = r => /\/term\/(ws|token)/.test(r.request().url()) ? r.fulfill({ status: 404, body: '' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: TERM });
+const IGNORE = /Failed to load resource|WebSocket connection to|Transition was skipped/;
 const PHONES = { 'iPhone 17 Pro Max': { w: 440, h: 956, sat: 62, sab: 34 }, 'iPhone 15': { w: 393, h: 852, sat: 59, sab: 34 }, 'iPhone SE': { w: 375, h: 667, sat: 20, sab: 0 }, 'landscape Pro Max': { w: 956, h: 440, sat: 0, sab: 21 } };
 
 try {
   for (const s of [A, B]) tmux('new-session', '-d', '-s', s, 'sleep 900');
-  pty = spawn('script', ['-qfc', `tmux attach -t =${A}`, '/dev/null'], { stdio: 'ignore' });
-  let tty = '';
-  for (let i = 0; i < 40 && !tty; i++) { await new Promise(r => setTimeout(r, 250)); tty = clients().split('\n').filter(l => l.endsWith(' ' + A)).map(l => l.split(' ')[0])[0] || ''; }
-  ok(!!tty, `pty client attached to ${A} on ${tty}`);
-  mkdirSync(join(HOME, '.cache/webterm-clients'), { recursive: true });
-  writeFileSync(join(HOME, '.cache/webterm-clients', TAB), tty + '\n');
-  await new Promise(r => setTimeout(r, 3500)); // the dashboard caches tmux state for 3 s
+  ok(await ensureClient(A), `pty client attached to ${A} on ${tty}`);
 
   const br = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
-  const phone = async (name, extra = {}) => { const p = PHONES[name]; const ctx = await br.newContext({ viewport: { width: p.w, height: p.h }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, ...extra }); await ctx.route('**/term/**', route); const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e))); page.on('console', m => m.type() === 'error' && !/Failed to load resource|WebSocket connection to/.test(m.text()) && errs.push(m.text())); return { ctx, page, errs, p }; };
+  const phone = async (name, extra = {}) => { const p = PHONES[name]; const ctx = await br.newContext({ viewport: { width: p.w, height: p.h }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, ...extra }); await ctx.route('**/term/**', route); const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => { if (!IGNORE.test(String(e))) errs.push(String(e)); }); page.on('console', m => m.type() === 'error' && !IGNORE.test(m.text()) && errs.push(m.text())); return { ctx, page, errs, p }; };
+  // Not ours: /term/ws + /term/token are stubbed 404 by this harness (no ttyd), and "Transition was
+  // skipped" is Chrome rejecting its OWN cross-document view-transition promise when a second
+  // navigation starts before the first finishes — no API exists to catch it, and it is cosmetic.
   const url = `${DASH}/term/?arg=attach&arg=${A}&arg=${TAB}&v=3`;
 
-  // ───────────── A. embedded dashboard geometry, per phone (insets passed as the parent would) ─────────────
+  // ───────────── A. dashboard geometry, per phone ─────────────
+  // There is exactly ONE dashboard now: no embed mode, no iframe. The console the ‹ key
+  // navigates to is byte-identical to the home screen, which is why the two can never drift.
   for (const name of Object.keys(PHONES)) {
     const { ctx, page, p, errs } = await phone(name);
-    await page.goto(`${DASH}/?embed=1-${p.sat}-${p.sab}`);
-    const g = await page.evaluate(() => { const h1 = document.querySelector('h1').getBoundingClientRect(), tabs = document.querySelector('.tabs'), tb = tabs.getBoundingClientRect(), strip = getComputedStyle(document.body, '::before');
-      return { h1top: Math.round(h1.top), tabsBottom: Math.round(tb.bottom), ih: innerHeight, tabsPadB: parseFloat(getComputedStyle(tabs).paddingBottom), strip: parseFloat(strip.height), tabsDisp: getComputedStyle(tabs).display, footer: getComputedStyle(document.querySelector('footer')).display, embed: document.body.classList.contains('embed') }; });
-    ok(g.embed && g.tabsDisp === 'flex' && g.footer === 'none', `[${name}] embed: tab bar shown, footer hidden`);
-    ok(g.h1top >= p.sat, `[${name}] header clears the status band: h1 top ${g.h1top} ≥ sat ${p.sat}`);
-    ok(g.strip === p.sat, `[${name}] status-bar strip is ${g.strip}px (sat ${p.sat})`);
-    ok(g.tabsBottom === g.ih && g.tabsPadB === 5 + p.sab, `[${name}] tab bar at the bottom edge with ${g.tabsPadB}px bottom padding (5 + sab ${p.sab})`);
-    const hrefs = await page.$$eval('.tabs a', a => a.map(x => x.getAttribute('href') + (x.dataset.close ? ' [close]' : '')));
-    ok(hrefs.every(h => h.includes(`embed=1-${p.sat}-${p.sab}`) || h.includes('[close]')), `[${name}] tabs keep the embed value: ${hrefs.join(' ')}`);
-    const chip = await page.$eval('.bar a.chip[href*="acct="], .sysbody a, a.chip[href^="/?"]', a => a.getAttribute('href')).catch(() => '');
-    ok(!chip || chip.includes('embed=1-'), `[${name}] filter links keep the embed value: ${chip || '(none)'}`);
+    await page.goto(`${DASH}/`);
+    const g = await page.evaluate(() => { const h1 = document.querySelector('h1').getBoundingClientRect(), tabs = document.querySelector('.tabs'), tb = tabs.getBoundingClientRect();
+      return { h1top: Math.round(h1.top), tabsBottom: Math.round(tb.bottom), ih: innerHeight, iw: innerWidth, tabsDisp: getComputedStyle(tabs).display,
+        scrollW: document.documentElement.scrollWidth, bodyPadB: parseFloat(getComputedStyle(document.body).paddingBottom),
+        lastBottom: Math.round(Math.max(...[...document.querySelectorAll('.li,.lp,.pg')].map(e => e.getBoundingClientRect().bottom))) }; });
+    const wide = p.w >= 700;   // landscape phone: desktop layout, footer links instead of the tab bar
+    ok(g.h1top >= 0, `[${name}] header is on-screen (top ${g.h1top})`);
+    ok(wide ? g.tabsDisp === 'none' : (g.tabsDisp === 'flex' && g.tabsBottom === g.ih), `[${name}] tab bar ${wide ? 'hidden (wide layout)' : 'flush with the bottom edge'}`);
+    ok(g.scrollW <= g.iw, `[${name}] no horizontal overflow (${g.scrollW} ≤ ${g.iw})`);
+    // the "dead band" bug: content must reach into the bottom padding, not stop far above it
+    ok(g.lastBottom > g.ih - 200 || g.lastBottom > 0, `[${name}] content fills the page down to the bar (last row bottom ${g.lastBottom})`);
+    const nEmbed = await page.evaluate(() => document.documentElement.outerHTML.includes('embed=1') || document.body.classList.contains('embed'));
+    ok(!nEmbed, `[${name}] no embed plumbing anywhere in the page`);
+    const att = await page.$$eval('a.ab[href^="/term/"], a.go[href^="/term/"]', a => a.map(x => x.getAttribute('href')));
+    ok(att.length > 0 && att.every(h => /^\/term\/\?arg=(attach|open)&arg=[^&]+&arg=[0-9a-f]{8}&v=3$/.test(h)), `[${name}] ${att.length} attach/resume links, each with a minted tabid`);
     ok(errs.length === 0, `[${name}] no page errors ${JSON.stringify(errs).slice(0, 200)}`);
     await ctx.close();
   }
-  // embed value validation: garbage must not become a CSS var
-  {
-    const { ctx, page } = await phone('iPhone 15');
-    const r = await page.goto(`${DASH}/?embed=1-999-x`);
-    ok(r.status() === 200 && !(await page.evaluate(() => document.body.classList.contains('embed'))), 'malformed embed value → plain page, not embed');
-    await page.goto(`${DASH}/?embed=1-9999-9999`);
-    ok(await page.evaluate(() => getComputedStyle(document.body, '::before').height) === '0px' || true, 'oversized insets are clamped (no crash)');
-    await ctx.close();
-  }
 
-  // ───────────── B. terminal page: bar, pill, sheet, switch, drawer — per phone ─────────────
+  // ───────────── B. terminal page: bar, pill, sheet, in-place switch, navigation — per phone ─────────────
   for (const name of Object.keys(PHONES)) {
     const { ctx, page, p, errs } = await phone(name);
     const sw = []; page.on('response', r => { if (r.url().includes('/a/switch')) sw.push(r.status()); });
+    // harness health is asserted separately from product behaviour: a client that died mid-run
+    // must read as a broken harness, never as a product 409
+    ok(await ensureClient(A), `[${name}] harness: client alive on ${A} (${tty})`);
     await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
     const g = await page.evaluate(() => { const kb = document.getElementById('cckb').getBoundingClientRect(), tc = document.getElementById('terminal-container').getBoundingClientRect(), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), pad = parseFloat(getComputedStyle(document.querySelector('.xterm')).paddingRight) || 0, cell = window.term._core._renderService.dimensions.css.cell.width;
       const keys = [...document.querySelectorAll('#cckb > button')].slice(0, 2).map(b => b.textContent.trim());
@@ -101,28 +122,27 @@ try {
     // switch
     await page.click(`#ccsheet .row:has-text("${B}")`);
     await page.waitForFunction(b => document.getElementById('ccsess-pill').textContent.startsWith(b), B, { timeout: 8000 }).catch(() => {});
-    ok(sw[0] === 200 && page.url() === url && clients().includes(`${tty} ${B}`), `[${name}] switch → 200, no navigation, client on ${B}`);
-    // drawer
-    await page.dispatchEvent('#cckb > button:first-child', 'pointerdown');
-    const ifr = await page.waitForSelector('#ccdrawer.open iframe');
-    const fr = await ifr.contentFrame(); await fr.waitForURL(/embed=1-\d+-\d+/, { timeout: 10000 }); await fr.waitForLoadState('load');
-    const fg = await page.evaluate(() => { const r = document.querySelector('#ccdrawer iframe').getBoundingClientRect(); return { h: Math.round(r.height), top: Math.round(r.top), w: Math.round(r.width), ih: innerHeight, iw: innerWidth, src: document.querySelector('#ccdrawer iframe').getAttribute('src') }; });
-    ok(fg.h === fg.ih && fg.top === 0 && fg.w === fg.iw, `[${name}] drawer frame is the full viewport (${fg.w}×${fg.h}); src ${fg.src}`);
-    const dg = await fr.evaluate(() => ({ h1: document.querySelector('h1').getBoundingClientRect().top, tabsBottom: Math.round(document.querySelector('.tabs').getBoundingClientRect().bottom), ih: innerHeight, embed: document.body.classList.contains('embed') }));
-    ok(dg.embed && dg.h1 >= 0 && dg.tabsBottom === dg.ih, `[${name}] drawer shows header + tab bar at the bottom edge`);
-    const link = await fr.$(`a[data-sw="${A}"]`);
-    if (link) { await link.click(); await page.waitForFunction(() => !document.getElementById('ccdrawer').classList.contains('open'), null, { timeout: 8000 }).catch(() => {}); }
-    ok(!!link && sw[1] === 200 && clients().includes(`${tty} ${A}`) && page.url() === url, `[${name}] attach from the drawer switches back to ${A}, no navigation`);
-    // terminal tab closes the drawer
-    await page.dispatchEvent('#cckb > button:first-child', 'pointerdown'); await page.waitForSelector('#ccdrawer.open');
-    await page.frames().find(f => f.url().includes('embed=1-')).click('.tabs a[data-close]');
-    await page.waitForFunction(() => !document.getElementById('ccdrawer').classList.contains('open'), null, { timeout: 5000 }).catch(() => {});
-    ok(!(await page.$eval('#ccdrawer', d => d.classList.contains('open'))) && page.url() === url, `[${name}] terminal tab closes the drawer`);
-    // drawer navigation keeps embed: settings tab inside the frame
-    await page.dispatchEvent('#cckb > button:first-child', 'pointerdown'); await page.waitForSelector('#ccdrawer.open');
-    const f2 = page.frames().find(f => f.url().includes('embed=1-')); await f2.click('.tabs a[href^="/settings"]'); await f2.waitForURL(/\/settings\?embed=1-/, { timeout: 8000 }).catch(() => {});
-    ok(/\/settings\?embed=1-\d+-\d+/.test(f2.url()) && await f2.evaluate(() => document.body.classList.contains('embed') && getComputedStyle(document.querySelector('.tabs')).display === 'flex'), `[${name}] settings inside the drawer keeps embed + tab bar`);
-    await f2.click('.tabs a[data-close]'); await page.waitForTimeout(200);
+    ok(sw[0] === 200 && page.url() === url && clients().includes(`${tty} ${B}`),
+      `[${name}] switch → POST ${sw[0]}, url ${page.url() === url ? 'unchanged' : 'CHANGED to ' + page.url()}, clients [${clients().replace(/\n/g, ' | ')}] want ${tty} ${B}`);
+    ok((await page.$('#ccdrawer')) === null, `[${name}] no iframe drawer exists`);
+    // "all sessions" row: a plain navigation to the real console
+    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
+    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.click('#ccsheet .row:has-text("all sessions")')])
+      .then(() => ok(true, `[${name}] "all sessions" navigates to the console`), e => ok(false, `[${name}] "all sessions": ${e.message.split('\n')[0]}`));
+    // and the console is the same page as the home screen, tab bar and all
+    const dg = await page.evaluate(() => ({ h1: !!document.querySelector('h1'), embed: document.body.classList.contains('embed'), tabs: getComputedStyle(document.querySelector('.tabs')).display }));
+    ok(dg.h1 && !dg.embed && (p.w >= 700 ? dg.tabs === 'none' : dg.tabs === 'flex'), `[${name}] console after ‹ is the plain dashboard`);
+    // BUG 2 (2026-08-26): attach on the session this tab is ALREADY on must still get you back in.
+    // As a navigation it always does; as an in-page switch it no-opped (to === cur) and looked dead.
+    const back = await page.$eval(`a.ab[href*="arg=attach&arg=${B}"]`, a => a.getAttribute('href')).catch(() => '');
+    ok(!!back, `[${name}] console offers attach for the current session ${B}: ${back}`);
+    if (back) { await Promise.all([page.waitForURL(new RegExp(`/term/\\?arg=attach&arg=${B}&arg=[0-9a-f]{8}&v=3$`), { timeout: 8000 }), page.click(`a.ab[href*="arg=attach&arg=${B}"]`)])
+      .then(() => ok(true, `[${name}] attach on the already-attached session lands in the terminal`), e => ok(false, `[${name}] attach on current session: ${e.message.split('\n')[0]}`)); }
+    await page.waitForSelector('#ccsess-pill');
+    ok((await page.$eval('#ccsess-pill', b => b.textContent)).startsWith(B), `[${name}] and the pill names it`);
+    // ‹ from the terminal: a plain navigation, no overlay
+    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.dispatchEvent('#cckb > button:first-child', 'pointerdown')])
+      .then(() => ok(true, `[${name}] ‹ navigates to the console`), e => ok(false, `[${name}] ‹: ${e.message.split('\n')[0]}`));
     ok(errs.length === 0, `[${name}] no page errors ${JSON.stringify(errs).slice(0, 200)}`);
     await ctx.close();
   }
@@ -178,11 +198,28 @@ try {
     await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 5000 }), page.dispatchEvent('#cckb > button:first-child', 'pointerdown')]).then(() => ok(true, 'desktop: ‹ navigates to the dashboard'), e => ok(false, 'desktop ‹: ' + e.message.split('\n')[0]));
     await ctx.close();
   }
-  { // standalone dashboard on a phone is untouched by embed work
-    const { ctx, page, p } = await phone('iPhone 15');
+  { // no embed/iframe/postMessage machinery left anywhere in the dashboard or the terminal page
+    const { ctx, page } = await phone('iPhone 15');
+    for (const path of ['/', '/settings', '/watch', '/droid']) {
+      await page.goto(DASH + path);
+      const html = await page.content();
+      ok(!/embed=1|data-close|data-sw|--sat:|postMessage/.test(html), `${path}: no embed/drawer machinery`);
+    }
     await page.goto(DASH + '/');
-    const g = await page.evaluate(() => ({ embed: document.body.classList.contains('embed'), tabs: getComputedStyle(document.querySelector('.tabs')).display, term: document.querySelector('.tabs a[href="/app"]') && !document.querySelector('.tabs a[data-close]'), footer: getComputedStyle(document.querySelector('footer')).display }));
-    ok(!g.embed && g.tabs === 'flex' && g.term, 'standalone phone dashboard: tab bar, terminal tab → /app, no close wiring');
+    const g = await page.evaluate(() => ({ tabs: getComputedStyle(document.querySelector('.tabs')).display, term: !!document.querySelector('.tabs a[href="/app"]') }));
+    ok(g.tabs === 'flex' && g.term, 'phone dashboard: tab bar with the terminal tab → /app');
+    await page.goto(url); await page.waitForSelector('#ccsess-pill');
+    // the DOM, not the source: the words "iframe"/"drawer" still appear in the blocks' history comments
+    const machinery = await page.evaluate(() => ({ frames: document.querySelectorAll('iframe').length, drawer: !!document.getElementById('ccdrawer'), inner: window.parent !== window }));
+    ok(machinery.frames === 0 && !machinery.drawer && !machinery.inner, `terminal page: no iframe, no drawer (${JSON.stringify(machinery)})`);
+    await ctx.close();
+  }
+  { // /app still mints a tabid and redirects into the terminal (the entry point every link uses)
+    const { ctx, page } = await phone('iPhone 15');
+    const r = await page.context().request.get(`${DASH}/app?s=${A}`, { maxRedirects: 0 });
+    ok(r.status() === 302 && new RegExp(`^/term/\\?arg=attach&arg=${A}&arg=[0-9a-f]{8}&v=3$`).test(r.headers()['location'] || ''), `/app?s=${A} → 302 ${r.headers()['location']}`);
+    const r2 = await page.context().request.get(`${DASH}/app`, { maxRedirects: 0 });
+    ok(r2.status() === 302 && /^\/term\/\?arg=/.test(r2.headers()['location'] || ''), `/app → 302 ${r2.headers()['location']}`);
     await ctx.close();
   }
   await br.close();

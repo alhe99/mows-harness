@@ -285,9 +285,26 @@ The persistent shell at `/app` (`lite.mjs`'s `GET /app`, `POST /a/switch`) reads
 tab-to-tty mappings through this same `web-term.sh`, so a deploy that touches any of
 `lite.mjs`, `web-term.sh`, or the blocks that feed `make-term-index.sh` must redeploy all
 three together — `sudo install` the two files above and re-run `make-term-index.sh`, then
-`sudo systemctl restart claude-dash-lite`. Self-check before trusting `switch` on a live
-box: `bash infra/webconsole/web-term-selfcheck.sh` (throwaway `wt-selfcheck-*` sessions
-only, cleans up after itself).
+`sudo systemctl restart claude-dash-lite`.
+
+Two checks before trusting a terminal-page or dashboard change on a live box — both use
+throwaway `wt-*` tmux sessions only and clean up after themselves:
+
+```bash
+bash infra/webconsole/web-term-selfcheck.sh          # switch/exit-code contract, real pty client
+# then, against a scratch instance (never :3005) and a freshly built page:
+infra/webconsole/make-term-index.sh /tmp/term-index.html
+SETTINGS_FILE=/tmp/s.json WEBTERM_SH=$PWD/infra/webconsole/web-term.sh \
+  node infra/dashboard/lite.mjs --port 3099 --host 127.0.0.1 &
+DASH=http://127.0.0.1:3099 TERM_PAGE=/tmp/term-index.html \
+  WEBTERM_SH=$PWD/infra/webconsole/web-term.sh node infra/webconsole/mobile-journey.mjs
+```
+
+`mobile-journey.mjs` is the phone-layout suite (110 assertions over four geometries: 17 Pro
+Max, 15, SE, landscape). It measures geometry — element edges against the viewport — because
+existence checks passed a dashboard that was 150 px tall. It cannot see the iOS keyboard,
+real `env()` insets, or scroll feel: those stay a device test, so say "needs a device check"
+rather than "verified" for anything touching them.
 
 #### Terminal color themes
 

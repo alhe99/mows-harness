@@ -409,7 +409,7 @@ var _t=setInterval(function(){if(_w().rfb)clearInterval(_t);else _x()},1200);
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · run a QA journey in <b>watched</b> mode; when the agent needs you (a login/OTP, or an eyeball on a UI change) it pauses and the browser shows up here — take over right in the frame, then tell the agent <b>continue</b> in the <a href="/term/?v=3">terminal</a>. on a phone use the buttons under the view — <b>⌨ keys</b> to type, <b>⬆ ⬇ scroll</b>, <b>⟵ back</b>, <b>↻ reload</b> — no gestures needed; rotate to <b>landscape ↔</b> for a bigger view.</div>
 ${script}`;
-  send(req, res, 200, page('watch · qa browser', body, up ? '' : '<meta http-equiv="refresh" content="4">', (up ? 'watchlive' : '') + (embedReq(req) ? ' embed' : ''), 'watch', embedReq(req)));
+  send(req, res, 200, page('watch · qa browser', body, up ? '' : '<meta http-equiv="refresh" content="4">', up ? 'watchlive' : '', 'watch'));
 }
 
 // ---------- /droid/touchtest: on-device touch diagnostic (iOS debugging) ----------
@@ -504,7 +504,7 @@ async function droidView(req, res) {
 <div class="bar"><span class="chip${live ? ' on' : ''}"><span class="dot" style="background:${dot}"></span>emulator ${st}</span>${btn}<a class="chip" href="/droid">↻ refresh</a><a class="chip" href="/droidview/" target="_blank" rel="noopener">⧉ console</a></div>
 ${view}
 <div class="note" style="border-color:#3f3f46;color:#a1a1aa"><b>how it works</b> · an Android container (<b>redroid</b>, native-arch, no KVM) streams here through ws-scrcpy — interact directly in the frame; the slim toolbar inside it has power/volume/back/home and a keyboard toggle. install an apk from the <a href="/term/?v=3">terminal</a>: <b>adb -s ${DROID_UDID} install app.apk</b> · run a QA flow: <b>maestro --device ${DROID_UDID} test flow.yaml</b> · <b>⧉ console</b> opens the raw ws-scrcpy page (other video decoders, web adb shell, file browser).</div>`;
-  send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', (live ? 'watchlive' : '') + (embedReq(req) ? ' embed' : ''), 'droid', embedReq(req)));
+  send(req, res, 200, page('android · emulator', body, st === 'booting' ? '<meta http-equiv="refresh" content="4">' : '', live ? 'watchlive' : '', 'droid'));
 }
 
 // ---------- /settings: global terminal theme configuration + live preview ----------
@@ -629,7 +629,7 @@ async function settingsView(req, res) {
   });
 })();
 </script>`;
-  send(req, res, 200, page('settings · terminal theme', body, '', embedReq(req) ? 'embed' : '', 'settings', embedReq(req)));
+  send(req, res, 200, page('settings · terminal theme', body, '', '', 'settings'));
 }
 
 // ---------- system + usage panel (host metrics, claude/agy limits, spend) ----------
@@ -1189,31 +1189,14 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 @media(prefers-reduced-motion:reduce){::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}}
 form.busy{pointer-events:none}form.busy button,form.busy summary{animation:busy 1s ease-in-out infinite}
 @keyframes busy{50%{opacity:.35}}
-/* embed mode (§3): this page is the drawer iframe inside /app — its own nav is dead weight */
-body.embed{padding:calc(8px + var(--sat,0px)) 8px calc(72px + var(--sab,0px))} /* insets come from the parent as px vars, never env() */
-body.embed::before{height:var(--sat,0px)}
-body.embed .tabs{padding-bottom:calc(5px + var(--sab,0px))}
-body.embed footer,body.embed .navdup{display:none}
-/* the drawer keeps the phone tab bar at ANY width (a landscape phone is >700px and would otherwise
-   lose its only way back — found by mobile-journey.mjs, 2026-08-26) */
-body.embed .tabs{position:fixed;bottom:0;left:0;right:0;z-index:20;display:flex;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--bd);padding:5px 0 calc(5px + var(--sab,0px))}
-body.embed .tb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:48px;color:var(--dim);font-size:11px}
-body.embed .tb .ti{font-size:18px;line-height:1.2}
-body.embed .tb.on{color:var(--ok)}
-body.embed::before{content:'';position:fixed;top:0;left:0;right:0;background:rgba(10,10,10,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;pointer-events:none}
 `;
-function page(title, body, head = '', bodyClass = '', tab = '', emb = null) {
-  // embed = this page is the ≡ drawer inside the terminal page. Same chrome as standalone
-  // (header, tab bar) so the two never look like different apps; the tabs stay embedded,
-  // and the terminal tab means "back to the terminal" (data-close → postMessage, below).
-  const embed = !!emb, e = embed ? '?embed=' + emb.v : '';
-  const bstyle = embed ? ` style="--sat:${emb.sat}px;--sab:${emb.sab}px"` : '';
+function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
-<a class="tb${tab === 'sessions' ? ' on' : ''}" href="/${e}"><span class="ti">▤</span>sessions</a>
-<a class="tb" href="/app"${embed ? ' data-close="1"' : ''}><span class="ti">⌨</span>terminal</a>
-<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch${e}"><span class="ti">🖥</span>watch</a>
-<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid${e}"><span class="ti">📱</span>android</a>
-<a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings${e}"><span class="ti">⚙</span>settings</a></nav>`;
+<a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
+<a class="tb" href="/app"><span class="ti">⌨</span>terminal</a>
+<a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
+<a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a>
+<a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings"><span class="ti">⚙</span>settings</a></nav>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0a">
@@ -1222,7 +1205,7 @@ function page(title, body, head = '', bodyClass = '', tab = '', emb = null) {
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/settings","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
-<title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}"${bstyle}>${body}
+<title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
 ${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/app">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
@@ -1237,21 +1220,13 @@ addEventListener('pageshow',function(){document.querySelectorAll('form.busy').fo
    client, which would detach the first (attach -d). Deliberately no rel=noopener: with
    it the spec ignores the window name and every click spawns another window, and the page
    opened is our own /term on this origin. JS off => in place, exactly as before. Embed mode
-   (the ≡ drawer inside the terminal page) never rewrites — clicks there postMessage the
-   terminal page instead, below. */
-if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700&&!document.body.classList.contains('embed'))
+   JS off => in place, exactly as before. */
+if(matchMedia('(display-mode: browser)').matches&&innerWidth>=700&&matchMedia('(pointer:fine)').matches)
   document.querySelectorAll('a[data-nw]').forEach(function(a){a.target=a.dataset.nw});
-/* embed mode (§3): a[data-sw] here is a switch link (attach/>_) meant for the shell's single
-   terminal iframe, not this iframe — hand it to the parent instead of navigating in place.
-   But if this page ever loads unframed (long-press "open in new tab", a bookmarked/shared
-   embed=1 URL), window.parent===window and postMessage would just talk to ourselves with no
-   listener — fall back to a normal navigation instead, as 30-cchome.html's home button does. */
-if(document.body.classList.contains('embed'))
-  document.addEventListener('click',function(e){var c=e.target.closest('a[data-close]');if(c&&window.parent!==window){e.preventDefault();parent.postMessage({close:1},location.origin);return}
-    var a=e.target.closest('a[data-sw]');if(!a)return;
-    e.preventDefault();
-    if(window.parent!==window)parent.postMessage({sw:a.dataset.sw},location.origin);
-    else location.href=a.href});
+/* pointer:fine is load-bearing, not decoration: a phone in landscape is >=700px wide, and without
+   it the attach link there opened a second window instead of navigating, so the session looked
+   unreachable (found by mobile-journey.mjs's landscape case, 2026-08-26). Named windows are a
+   mouse affordance; a touch device has no second window to put them in. */
 /* ccdiag: install-mode + safe-area readout in the footer (e.g. "app · sat59 sab34")
    so device rendering issues can be diagnosed without guessing */
 (function(){var o=document.getElementById('envout');if(!o)return;
@@ -1280,12 +1255,6 @@ function send(req, res, status, html, type = 'text/html; charset=utf-8') {
     res.writeHead(status, h); res.end(gz);
   } else { h['content-length'] = buf.length; res.writeHead(status, h); res.end(buf); }
 }
-// embed mode = this page is the drawer iframe inside the terminal page. The value carries the
-// parent's safe-area insets in px, embed=1-<top>-<bottom> (plain embed=1 = 0/0): an iframe
-// cannot be trusted with env() on iOS (2026-08-26: it disagreed with the parent both ways), so
-// the terminal page measures once, top-level, and this page lays out from the numbers.
-const embedOf = url => { const m = /^1(?:-(\d{1,3})-(\d{1,3}))?$/.exec(url.searchParams.get('embed') || ''); return m ? { v: m[0], sat: Math.min(+(m[1] || 0), 200), sab: Math.min(+(m[2] || 0), 200) } : null; };
-const embedReq = req => embedOf(new URL(req.url || '/', 'http://x'));
 const qs = o => { const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v) p.set(k, v);
   const s = p.toString(); return s ? '?' + s : ''; };
@@ -1440,7 +1409,6 @@ async function listView(req, res, url) {
   const q = (url.searchParams.get('q') || '').toLowerCase().slice(0, 80);
   const d = url.searchParams.get('d') || '';
   const s = url.searchParams.get('s') || '';
-  const emb = embedOf(url), embed = !!emb; // this page is the drawer iframe inside the terminal page
   const live = await tmuxLive();
   const liveBySid = new Map(live.map(l => [liveSid8(l), l]).filter(([k]) => k)); // sid8 -> live session
   let rows = index;
@@ -1454,7 +1422,7 @@ async function listView(req, res, url) {
   const cur = Math.min(max, Math.max(1, +(url.searchParams.get('page') || 1) || 1));
   const slice = rows.slice((cur - 1) * PAGE, cur * PAGE);
   const titles = await Promise.all(slice.map(titleOf));
-  const P = { acct, q, d, s, embed: embed ? emb.v : '' };
+  const P = { acct, q, d, s };
   const back = url.pathname + url.search;
 
   const chip = (over, label, on) => `<a class="chip${on ? ' on' : ''}" href="/${qs({ ...P, ...over })}">${label}</a>`;
@@ -1476,10 +1444,9 @@ async function listView(req, res, url) {
     const tsrc = row || (l.cwd ? index.filter(e => e.proj === l.cwd.replace(/[/.]/g, '-') && e.mt >= l.created)
       .reduce((a, e) => (!a || e.mt > a.mt ? e : a), null) : null);
     const title = tsrc ? (await titleOf(tsrc)).title : '';
-    // data-sw: in embed mode (the ≡ drawer) this becomes a switch instead of a navigation
     return `<div class="lr"><span class="dot" style="background:${l.paused ? '#fbbf24' : '#34d399'}"></span>
 <span class="ln">${nm}</span>${l.label ? `<span class="lb">${esc(l.label)}</span>` : ''}<span class="muted">${esc(proj)} · ${l.paused ? 'paused' : l.attached ? 'attached' : 'detached'} · ${rel(l.created)}</span>
-<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" data-sw="${esc(l.name)}" href="${esc(termHref('attach', l.name))}">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
+<span class="la"><a class="ab" data-nw="t-${esc(l.name)}" href="${esc(termHref('attach', l.name))}">attach</a>${actForms(l, back)}</span>${title ? `<span class="lt">${esc(title)}</span>` : ''}</div>`;
   }))).join('') + `</div>` : '';
 
   let lastDay = '', items = '';
@@ -1489,11 +1456,11 @@ async function listView(req, res, url) {
     const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
     const isLive = liveBySid.has(sid8);
     const t = titles[i].title;
-    // href carries a fresh tabid (termHref); data-sw: embed mode switches instead of navigating
-    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" data-sw="${sid8}" href="${esc(isLive ? termHref('attach', liveBySid.get(sid8).name) : termHref('open', sid8))}" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
+    // href carries a fresh tabid (termHref)
+    const go = a.term && canResume(e.mt, isLive) ? `<a class="go" data-nw="t-${sid8}" href="${esc(isLive ? termHref('attach', liveBySid.get(sid8).name) : termHref('open', sid8))}" title="${isLive ? 'attach (live)' : 'resume in terminal'}" aria-label="${isLive ? 'attach in terminal (live)' : 'resume in terminal'}">&gt;_</a>` : '';
     // delete = same no-JS <details> confirm as kill; hidden on live sessions (kill first)
     const del = isLive ? '' : `<details class="kx del"><summary class="dx" title="delete transcript" aria-label="delete transcript ${sid8}">✕</summary><div class="kc"><div>delete <b>${sid8}</b>?</div><span class="muted">removes the transcript from disk — no undo.</span><form class="af" method="post" action="/a/del"><input type="hidden" name="a" value="${e.a}"><input type="hidden" name="sid" value="${esc(e.sid)}"><input type="hidden" name="back" value="${esc(back)}"><button class="ab danger">delete it</button></form></div></details>`;
-    items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}${qs({ embed: embed ? emb.v : '' })}">
+    items += `<div class="li"><a class="row" href="/s/${e.a}/${e.sid}">
 <span class="t">${rel(e.mt)}</span>
 <span class="acct" style="color:${a.color}">${a.label}</span>
 <span class="proj">${esc(projName(e.proj))}</span>
@@ -1521,7 +1488,7 @@ async function listView(req, res, url) {
 <details class="sys flt"${fOn ? ' open' : ''}><summary><span class="syst">🔍 filter</span><span class="syss">${fState} · <b>${rows.length}</b>${fOn ? ` of ${index.length}` : ''} sessions</span></summary>
 <div class="sysbody"><div class="bar">${chips}</div>
 <div class="bar">${dchips}
-<form action="/" method="get">${['acct', 'd', 's', 'embed'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
+<form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
 <div class="bar navdup"><a class="chip" href="/app">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
 ${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen, rec)}
@@ -1529,7 +1496,7 @@ ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
 ${pager('/', P, cur, max, `<span class="muted">${rows.length}</span>`)}`;
   send(req, res, 200, page('mows sessions', body,
-    sysOpen && usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', embed ? 'embed' : '', 'sessions', emb));
+    sysOpen && usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', '', 'sessions'));
 }
 
 async function detailView(req, res, a, sid) {
@@ -1541,7 +1508,6 @@ async function detailView(req, res, a, sid) {
   catch (err) { return send(req, res, 500, page('error', `<p>could not read transcript: ${esc(err.message)}</p>`)); }
   const acct = BY_ID[a], sid8 = sid.slice(0, 8);
   const url = new URL(req.url, 'http://x');
-  const emb = embedOf(url), embed = !!emb; // this page is the drawer iframe inside the terminal page
   const n = s.msgs.length, max = Math.max(1, Math.ceil(n / MSG_PAGE));
   const cur = Math.min(max, Math.max(1, +(url.searchParams.get('page') || 1) || 1));
   // page 1 = newest slice; render chronologically within the page
@@ -1563,12 +1529,12 @@ async function detailView(req, res, a, sid) {
 
   const term = acct.term
     ? (canResume(e.mt, live)
-      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" data-sw="${sid8}" href="${esc(live ? termHref('attach', lv.name) : termHref('open', sid8))}">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
+      ? `<div class="la" style="justify-content:flex-start"><a class="btn" data-nw="t-${sid8}" href="${esc(live ? termHref('attach', lv.name) : termHref('open', sid8))}">&gt;_ ${live ? (lv.paused ? 'attach — paused' : 'attach — live now') : 'open in terminal'}</a>${lv ? actForms(lv, `/s/${a}/${sid}`) : ''}</div>`
       : `<p class="muted" style="margin:8px 0">resume disabled — idle ${rel(e.mt)} (cutoff ${RESUME_DAYS}d). transcript stays readable; resume manually with <span style="font-family:var(--mono)">cc -r</span> if you really need it.</p>`)
     : '';
-  const pgr = pager(`/s/${a}/${sid}`, { embed: embed ? emb.v : '' }, cur, max,
+  const pgr = pager(`/s/${a}/${sid}`, {}, cur, max,
     `<span class="muted">${n} items · newest first</span>`);
-  const body = `<h1><a href="/${qs({ embed: embed ? emb.v : '' })}">← sessions</a></h1>
+  const body = `<h1><a href="/">← sessions</a></h1>
 <div class="meta">
 <div>session</div><div>${esc(sid)} ${live ? '<b style="color:#34d399">● live</b>' : ''}</div>
 <div>account</div><div style="color:${acct.color}">${acct.label}</div>
@@ -1580,7 +1546,7 @@ async function detailView(req, res, a, sid) {
 ${term}
 ${s.truncated ? '<div class="note">large transcript — showing the most recent 8MB window.</div>' : ''}
 ${pgr}${msgs || '<p class="muted">no displayable messages.</p>'}${pgr}`;
-  send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', embed ? 'embed' : '', 'sessions', emb));
+  send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', 'sessions'));
 }
 
 // ---------- server ----------

@@ -1,8 +1,8 @@
-<script id="cchome-js">/*cchome-v4: back key (‹) in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console; v4 (2026-08-26): the glyph is ‹ (back), and when the ccsess block (75) is present it opens the session list over the terminal instead of leaving it */(function(){
+<script id="cchome-js">/*cchome-v5: back key (‹) in the key bar — an installed PWA has no browser chrome, so the terminal needs its own way back to the console. v4 opened the console as an iframe over the terminal (ccsess "drawer"); iOS never agreed with us about safe areas inside that frame, so v5 goes back to a plain navigation. Session switching does NOT come through here — that is the pill + sheet next to this key, and it never leaves the page. */(function(){
 var kb=document.getElementById('cckb');if(!kb)return;
 var b=document.createElement('button');b.type='button';b.textContent='\u2039';b.setAttribute('aria-label','sessions');b.style.fontSize='22px';b.style.lineHeight='1';
 b.style.color='#3fb950';b.style.fontWeight='700';
-b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();if(window.ccsess){window.ccsess.open();}else{location.href='/';}});
+b.addEventListener('pointerdown',function(e){e.preventDefault();e.stopPropagation();location.href='/';});
 kb.insertBefore(b,kb.firstChild);
 /*ccpwa: one-shot geometry beacon -> shows in the server access log as /z?t=...
    deferred 900ms: iOS reports env()/innerHeight wrong until layout settles */

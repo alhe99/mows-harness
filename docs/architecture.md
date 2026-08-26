@@ -191,21 +191,33 @@ reboot loses the sessions but not their names.
   anything — and the rule simply doesn't match, falling through to an interactive password
   prompt (fail closed, not open).
 
-### One terminal, tmux switches it — the `/app` shell
+### One terminal, tmux switches it — and no iframe anywhere
 
-`GET /app` renders a strip of session chips over a single `/term` iframe, generating an
-8-hex-char `tabid` per render. `web-term.sh attach|open` writes `$(tty)` to
-`~/.cache/webterm-clients/<tabid>` before attaching — that file is the only link between a
-browser tab and the tmux client currently living in its iframe (stale files older than a
-day are pruned on write; a ttyd reconnect just overwrites it, self-healing). Tapping a chip
-posts to `/a/switch`, which reads the tty back out of that file and runs `tmux
-switch-client -c "$tty" -t "=<to>"` — tmux repaints the *same* client onto a different
-session; the `/term` iframe is never reloaded, never re-fetches ttyd's bundle, never reopens
-the WebSocket. Before switching, `web-term.sh switch` runs `tmux detach-client -s "=<to>"`:
-the same take-over semantics `attach -d` already has today, so a session mid-switch just
-gets forcibly detached from wherever else it was live, not shared. A missing tab file (409)
-or an unresolvable target (404) both fall back to one `/term` reload with an explicit
-`arg=open` — the one case a switch does touch the iframe.
+Switching sessions on a phone never reloads the terminal, but the console is a plain page.
+
+`GET /app` mints an 8-hex `tabid` and 302s into `/term/?arg=attach&arg=<session>&arg=<tabid>`;
+every dashboard attach/resume link carries its own freshly minted tabid. `web-term.sh
+attach|open` writes `$(tty)` to `~/.cache/webterm-clients/<tabid>` before attaching — that
+file is the only link between a browser tab and its tmux client (files older than a day are
+pruned on write; a ttyd reconnect overwrites it, self-healing). The `75-ccsess.html` block
+draws a pill with the current session's name in the key bar; it opens a bottom sheet, and
+choosing a session posts `/a/switch`, which reads the tty back out and runs `tmux
+switch-client -c "$tty" -t "=<to>"`. tmux repaints the *same* client onto another session:
+no reload, no second WebSocket, no xterm re-boot, none of the `blocks/` viewport machinery
+disturbed. `web-term.sh switch` first runs `tmux detach-client -s "=<to>"` — the take-over
+semantics `attach -d` already has — **unless the client is already on that session**, where
+detaching would kill the client we are about to switch (a 409 and a pointless reload). A
+missing tab file (409) or unresolvable target (404) fall back to exactly one `/term` reload.
+
+The `‹` key and the sheet's last row **navigate** to `/`. Earlier versions put `/term` in an
+iframe (v1), then the dashboard in an iframe "drawer" (v2–v4); on iOS the frame and the page
+never agreed about `env(safe-area-*)` in either direction — keyboard over the input line,
+a 150 px-tall dashboard, dead bands, compacted content. There is now exactly one dashboard
+and it is never framed, so there is no second layout to keep consistent. Getting back into a
+session is `attach` on a row: a normal page load, which works even when that tab is already
+attached to it. `infra/webconsole/mobile-journey.mjs` asserts this geometrically (measured
+edges, not element presence) across four phone geometries; run it before any deploy that
+touches the terminal page or the dashboard.
 
 ### The "app" feel is platform features, not a framework
 

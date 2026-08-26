@@ -254,6 +254,12 @@ case "${1-}" in
     else
       exit 3
     fi
+    # already here? say so and stop. detach-client below takes over the TARGET session, which
+    # when the target is where we already are means detaching ourselves: the client dies, the
+    # switch fails, the browser gets a 409 and reloads for nothing (2026-08-26).
+    if [ "$(tmux display-message -p -c "$tty" '#{client_session}' 2>/dev/null)" = "$n" ]; then
+      mark "$n" >/dev/null; echo "$n"; exit 0
+    fi
     tmux detach-client -s "=$n" 2>/dev/null || true   # take-over semantics, same as attach -d
     tmux switch-client -c "$tty" -t "=$n" || exit 2
     mark "$n" >/dev/null   # discard mark()'s OSC title-stamp: our own stdout here is the caller's `to` value, not a terminal
