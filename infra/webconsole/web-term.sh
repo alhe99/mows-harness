@@ -231,6 +231,11 @@ case "${1-}" in
   run) run_session "${2-default}" "${3-$HOME}" "${4-}"; exit 0 ;;
   list) recent | while IFS=$'\t' read -r ts p sid cwd; do printf '%s %s %s %s\n' "$(date -d "@$ts" '+%F %H:%M')" "$p" "${sid:0:8}" "$cwd"; done; exit 0 ;;
   attach) [ -n "${2-}" ] && mark "$2"; register_tab "${3-}"; tmux attach -d -t "${2-}" 2>/dev/null || true ;;
+  # explicit "show me the picker" — the dashboard's terminal nav links here. Registers this
+  # tab (so the in-terminal switcher works right away), then falls through to the menu loop.
+  # Having a $1 at all is what skips the sticky re-attach below: a deliberate click on
+  # "terminal" means the user wants to choose, not to be thrown back where they last were.
+  menu) register_tab "${3-}" ;;
   resume) [ -n "${4-}" ] && do_resume "${2-default}" "${3-$HOME}" "${4}" ;;
   resolve) resolve "${2-}"; exit $? ;;
   open) # dashboard deep link: /term/?arg=open&arg=<sid8>[&arg=<tabid>]

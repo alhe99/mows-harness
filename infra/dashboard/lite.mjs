@@ -302,6 +302,61 @@ async function action(req, res, url) {
   res.writeHead(303, { location: back }); res.end();
 }
 
+// ---------- /a/restartall: respawn every live pane in one press ----------
+// The chore this kills: Claude Code prints "Update installed · Restart to update" and every
+// live session has to be bounced by hand. Same move as the terminal's ⟳ key (70-ccrst) but
+// server-side and for all of them — tmux re-runs each pane's ORIGINAL command.
+//
+// Plain respawn is only 1:1 for web-* panes, whose command already carries their session id.
+// Bare cc/ccw panes were started with no -c/-r, so respawning them verbatim opens a FRESH
+// chat — so those get `--resume <sid>` appended, pinned to their own transcript: freshest in
+// the pane's cwd, same account, started since the pane did, and not a sid another pane owns
+// (that last filter is what stops two panes landing on one conversation and interleaving it).
+// ponytail: active pane per session only, exactly like ⟳; extra windows are left alone.
+async function restartAll(req, res) {
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  const b = await readBody(req);
+  const bk = b.back || '/';
+  const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/';
+  tmuxCache.t = 0;
+  const live = await tmuxLive();
+  const claimed = new Set(live.map(l => l.sid).filter(Boolean));
+  // Pane id (%NN), not '=name': tmux resolves '=' for SESSION targets (kill-session above),
+  // but respawn-pane wants a pane and answers "can't find pane: =<name>" for it.
+  // #{pane_start_command} arrives wrapped in double quotes with inner ones backslash-escaped.
+  // ponytail: string append, not an argv rebuild — the wrapper paths have no spaces in them.
+  const panes = new Map();
+  const raw = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-panes', '-a', '-F', '#{session_name}\t#{pane_id}\t#{pane_start_command}']);
+  for (const line of raw.trim().split('\n').filter(Boolean)) {
+    const [name, id, ...rest] = line.split('\t');
+    if (name && id && !panes.has(name)) panes.set(name, { id, cmd: rest.join('\t').replace(/^"|"$/g, '').replace(/\\(.)/g, '$1').trim() });
+  }
+  let n = 0;
+  for (const l of live) {
+    // a SIGSTOPped pane is continued first: SIGKILL would land either way, but its stopped
+    // children would linger holding the cwd and the MCP sockets the fresh claude wants.
+    if (l.paused) { const k = await descendants(l.pid); if (k.length) await sh('kill', ['-CONT', '--', ...k.map(String)]); }
+    const pane = panes.get(l.name);
+    if (!pane) continue; // vanished between the two tmux calls
+    const cmd = pane.cmd;
+    let arg = [];
+    if (!l.sid && cmd && !/--resume|--continue|(?:^|\s)-[cr](?:\s|$)/.test(cmd)) {
+      const cfg = (/CLAUDE_CONFIG_DIR=(\S+)/.exec(cmd) || [])[1];
+      const acct = ACCTS.find(a => a.home === cfg);
+      const proj = (l.cwd || '').replace(/[/.]/g, '-');
+      const e = acct && index.filter(x => x.a === acct.id && x.proj === proj && x.mt >= l.created && !claimed.has(x.sid))
+        .reduce((a, x) => (!a || x.mt > a.mt ? x : a), null);
+      if (e) { claimed.add(e.sid); arg = [cmd + ' --resume ' + e.sid]; }
+    }
+    await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'respawn-pane', '-k', '-t', pane.id, ...arg]);
+    n++;
+  }
+  tmuxCache.t = 0;
+  const u = new URL(back, 'http://x'); u.searchParams.set('rs', String(n)); // set, not append: re-presses don't stack rs=
+  res.writeHead(303, { location: u.pathname + u.search }); res.end();
+}
+
 // ---------- delete one session transcript (list-row ✕, confirmed via <details>) ----------
 async function delSession(req, res) {
   const host = req.headers.host || '';
@@ -385,7 +440,7 @@ async function watchView(req, res) {
     // gestures: scroll=PageUp/Dn, back/fwd=Alt+Arrow, reload=F5. We reach noVNC's live RFB
     // by re-importing ui.js in the same-origin iframe (ES-module singleton → same UI.rfb);
     // ⌨ keys clicks noVNC's own keyboard button to pop the phone keyboard.
-    view = `<div class="watchwrap"><iframe id="vf" class="vnc" title="QA browser (noVNC remote view)" src="/vnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;path=vnc/websockify" allow="clipboard-read;clipboard-write"></iframe>
+    view = `<div class="watchwrap"><iframe id="vf" class="vnc" title="QA browser (noVNC remote view)" src="/vnc/vnc.html?autoconnect=1&amp;resize=scale&amp;reconnect=1&amp;quality=9&amp;compression=6&amp;path=vnc/websockify" allow="clipboard-read;clipboard-write"></iframe>
 <div class="wbar"><button class="kbd" onclick="kb()">⌨ keys</button><button onclick="pst()">📋 paste</button><button onclick="k(0xff56,'PageDown')">⬇ scroll</button><button onclick="k(0xff55,'PageUp')">⬆ scroll</button><button onclick="nav(1)">⟵ back</button><button onclick="nav(0)">fwd ⟶</button><button onclick="k(0xffc2,'F5')">↻ reload</button><button onclick="k(0xff1b,'Escape')">Esc</button></div></div>`;
     script = `<script>
 function _v(){return document.getElementById('vf')}
@@ -533,6 +588,8 @@ async function termThemeAction(req, res) {
 
 async function settingsView(req, res) {
   const s = await readSettings();
+  const live = await tmuxLive();
+  const rsN = +(new URL(req.url, 'http://x').searchParams.get('rs')) || 0;
   const curTheme = typeof s.termTheme === 'string' ? s.termTheme : '';
   const names = Object.keys(THEME_MAP);
   const mapJson = JSON.stringify(THEME_MAP);
@@ -541,8 +598,9 @@ async function settingsView(req, res) {
     .join('');
 
   const body = `<h1><a href="/">← sessions</a> <span class="muted">· ⚙ settings</span></h1>
+<div class="sect">Terminal</div>
 <div class="lp" style="max-width:640px">
-  <div style="font-weight:600;font-size:14px;color:var(--fg)">Terminal color theme</div>
+  <div class="cardh">Terminal color theme</div>
   <div class="lr" style="gap:10px;align-items:center">
     <label for="themesel" style="font-size:13px;color:var(--mut)">Global theme:</label>
     <select id="themesel" class="li2" style="max-width:200px;height:34px;background:var(--card2);border:1px solid var(--bd);border-radius:var(--r);color:var(--fg);padding:0 8px;font:13px var(--sans)">
@@ -552,14 +610,25 @@ async function settingsView(req, res) {
     <span id="savemsg" style="font-size:13px;transition:opacity .2s;opacity:0"></span>
   </div>
   <p class="muted" style="font-size:12.5px;margin-top:2px">Applies to all terminal tabs (open tabs within ~30 s). A theme picked inside a terminal's key bar overrides this on that device.</p>
-</div>
-<div style="font-weight:600;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin:18px 4px 8px">Live Preview</div>
-<div id="prevcard" style="border:1px solid var(--bd);border-radius:var(--r-lg);padding:14px 16px;font:13px/1.5 var(--mono);max-width:640px;box-shadow:0 4px 16px rgba(0,0,0,.3);transition:background .15s,color .15s">
+  <div class="subl">Live preview</div>
+<div id="prevcard" style="border:1px solid var(--bd);border-radius:var(--r);padding:14px 16px;font:13px/1.5 var(--mono);transition:background .15s,color .15s">
   <div style="margin-bottom:6px"><span>you@harness:~$ ls</span></div>
   <div style="margin-bottom:8px"><span style="opacity:.9">Desktop  Documents  Downloads  src  config.json</span></div>
   <div style="display:flex;gap:4px;margin-bottom:4px" id="prev-norm"></div>
   <div style="display:flex;gap:4px;margin-bottom:10px" id="prev-bright"></div>
   <div><span>you@harness:~$ </span><span id="prev-cursor" style="display:inline-block;width:8px;height:15px;vertical-align:-2px"></span></div>
+</div>
+</div>
+<div class="sect">Sessions</div>
+<div class="lp set" style="max-width:640px">
+  <div class="cardh">Restart every live session</div>
+  <div class="lr" style="gap:10px;align-items:center">
+    ${live.length
+      ? `<details class="kx"><summary class="ab">⟳ restart all${live.length > 1 ? ` (${live.length})` : ''}</summary><div class="kc"><div>restart all <b>${live.length}</b> live session${live.length > 1 ? 's' : ''}?</div><span class="muted">whatever is running right now is killed — including the session you are reading this from.</span><form class="af" method="post" action="/a/restartall"><input type="hidden" name="back" value="/settings"><button class="ab danger">restart them</button></form></div></details>`
+      : `<span class="muted">no live sessions.</span>`}
+    ${rsN ? `<span class="chip on"><span class="dot" style="background:#34d399"></span>restarted ${rsN}</span>` : ''}
+  </div>
+  <p class="muted" style="font-size:12.5px;margin-top:2px">For the “Update installed · Restart to update” notice: every pane re-runs the command it was born with, on the new build, and comes back on the same conversation — instead of bouncing each session by hand. Multi-window sessions restart their active pane only, same as the terminal's ⟳ key.</p>
 </div>
 <script>
 (function(){
@@ -1058,6 +1127,12 @@ button{background:var(--card2);border:1px solid var(--bd);border-radius:var(--r)
 button:hover{background:var(--pop);border-color:var(--bd2)}
 .lp{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:10px 12px;margin:4px 0 14px;display:flex;flex-direction:column;gap:10px}
 .lr{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;min-height:36px}
+/* settings groups: every top-level group gets a .sect label, so a group's own
+   sub-parts (the live preview) can't read as a sibling group of their own. */
+.sect{font:600 11px var(--sans);color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin:22px 4px 8px}
+.sect:first-of-type{margin-top:6px}
+.cardh{font-weight:600;font-size:14px;color:var(--fg)}
+.subl{font-size:12px;color:var(--dim);margin:2px 0 -4px}
 .ln a,.ln span{color:var(--ok);font:600 13px var(--mono)}
 .la{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
 .lt{flex-basis:100%;margin:-2px 0 0 18px;font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1086,6 +1161,11 @@ button:hover{background:var(--pop);border-color:var(--bd2)}
 .sid{color:var(--dim);font:12px var(--mono);flex-shrink:0}
 .go{display:flex;align-items:center;padding:0 14px;color:var(--ok);border-left:1px solid var(--hair);font:700 13px var(--mono)}
 .go:hover{background:var(--ok-bg)}
+/* .kc is a right-anchored popover, which works where it hangs off a button at the RIGHT
+   edge of a wide session row. A settings card puts its button at the LEFT edge, so right:0
+   threw a 250px panel to x=-116 on a phone — off-screen. In cards the confirm opens INLINE
+   instead: it's a <details> disclosure, the column is full-width, and it cannot overflow. */
+.set .kc{position:static;width:auto;background:var(--card2);box-shadow:none;margin-top:2px}
 .kx.del{display:flex;align-items:stretch}
 .dx{display:flex;align-items:center;padding:0 13px;color:var(--dim);border-left:1px solid var(--hair);cursor:pointer;font-size:13px;min-height:44px}
 .dx:hover{background:rgba(248,113,113,.08);color:var(--bad)}
@@ -1114,6 +1194,16 @@ details pre{background:#050506;border:1px solid var(--bd);border-radius:var(--r)
 .vnc{width:100%;height:72vh;border:1px solid var(--bd);border-radius:var(--r-lg);background:#050506;margin:2px 0;display:block}
 .wbar{display:none}
 .wblank{border:1px dashed var(--bd2);border-radius:var(--r-lg);padding:44px 16px;text-align:center;display:flex;flex-direction:column;gap:6px;color:var(--mut);margin:2px 0}
+/* watch: the remote is a fixed 1920x1080. A box that isn't 16:9 letterboxes with
+   dead bands, and a box far narrower than 1920 is a blurry downscale — so the
+   watch page breaks the 1100px column and takes the biggest 16:9 box that fits. */
+body.watchlive{max-width:none}
+body.watchlive>.note{max-width:1100px;margin-left:auto;margin-right:auto}
+.watchwrap{display:flex;flex-direction:column;gap:6px}
+.watchwrap .vnc{width:min(100%,calc((100dvh - 315px) * 16 / 9));aspect-ratio:16/9;height:auto;min-height:170px;margin:0 auto}
+.wbar{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.wbar button{flex:0 0 auto;min-width:56px;min-height:46px;padding:6px 10px}
+.wbar .kbd{background:#059669;border-color:#059669;color:#fff;font-weight:600}
 footer{padding:18px 0;color:var(--dim);display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px}
 footer a{color:var(--mut)}
 footer a:hover{color:var(--fg2)}
@@ -1130,13 +1220,8 @@ footer a:hover{color:var(--fg2)}
 /* installed app: content scrolls under the translucent status bar — back it
    with a blur strip (tab bar's top counterpart). 0-height in browser tabs. */
 body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);background:rgba(10,10,10,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;pointer-events:none}
-.watchwrap{display:flex;flex-direction:column;gap:6px}
-/* portrait: iframe hugs the 16:9 remote so there are no dead black bars, leaving
-   room below for the key toolbar + hint. landscape (below) goes immersive. */
-.watchwrap .vnc{width:100%;aspect-ratio:16/9;height:auto;min-height:170px;margin:0}
-.wbar{display:flex;flex-wrap:wrap;gap:6px}
-.wbar button{flex:0 0 auto;min-width:56px;min-height:46px;padding:6px 10px}
-.wbar .kbd{background:#059669;border-color:#059669;color:#fff;font-weight:600}}
+/* portrait: full column width; the 16:9 ratio comes from the base rule. */
+.watchwrap .vnc{width:100%;margin:0}}
 @media(max-width:700px) and (orientation:landscape){body.watchlive h1,body.watchlive>.bar,body.watchlive>.note,body.watchlive footer,body.watchlive .tabs{display:none}body.watchlive{padding:4px}.watchwrap .vnc{aspect-ratio:auto;height:calc(100dvh - 74px)}}
 /* system + usage panel */
 .sys{margin:2px 0 12px;border:1px solid var(--bd);border-radius:var(--r-lg);background:var(--card)}
@@ -1207,7 +1292,7 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 function page(title, body, head = '', bodyClass = '', tab = '') {
   const tabs = `<nav class="tabs">
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">▤</span>sessions</a>
-<a class="tb" href="/app"><span class="ti">⌨</span>terminal</a>
+<a class="tb" href="${termHref('menu', '')}"><span class="ti">⌨</span>terminal</a>
 <a class="tb${tab === 'watch' ? ' on' : ''}" href="/watch"><span class="ti">🖥</span>watch</a>
 <a class="tb${tab === 'droid' ? ' on' : ''}" href="/droid"><span class="ti">📱</span>android</a>
 <a class="tb${tab === 'settings' ? ' on' : ''}" href="/settings"><span class="ti">⚙</span>settings</a></nav>`;
@@ -1220,7 +1305,7 @@ function page(title, body, head = '', bodyClass = '', tab = '') {
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/settings","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${body}
-${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="/app">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}<footer><a class="navdup" href="/">sessions</a><a class="navdup" href="${termHref('menu', '')}">terminal</a><a class="navdup" href="/watch">watch</a><a class="navdup" href="/droid">android</a><a class="navdup" href="/settings">settings</a><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
 document.addEventListener('submit',function(e){e.target.classList.add('busy')});
@@ -1504,7 +1589,7 @@ async function listView(req, res, url) {
 <div class="bar">${dchips}
 <form action="/" method="get">${['acct', 'd', 's'].map(k => P[k] ? `<input type="hidden" name="${k}" value="${esc(P[k])}">` : '').join('')}
 <input type="search" name="q" value="${esc(q)}" placeholder="filter path / id…" aria-label="Filter by project path or session id"></form></div></div></details>
-<div class="bar navdup"><a class="chip" href="/app">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
+<div class="bar navdup"><a class="chip" href="${esc(termHref('menu', ''))}">⌨ terminal</a><a class="chip" href="/watch">🖥 watch</a><a class="chip" href="/droid">📱 android</a><a class="chip" href="/settings">⚙ settings</a></div>
 ${sysPanel('/' + qs({ ...P, fresh: 1 }), sysOpen, rec)}
 ${liveHtml}
 ${items || '<p class="muted" style="padding:20px 0">no sessions match.</p>'}
@@ -1595,6 +1680,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/a/del') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await delSession(req, res);
+    }
+    if (p === '/a/restartall') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+      return await restartAll(req, res);
     }
     if (p === '/a/switch') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
