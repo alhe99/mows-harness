@@ -64,8 +64,17 @@ LAST="$HOME/.cache/webterm-last"
 # client mirrors it into the browser-tab title, so many /term windows stay tellable
 # apart. tmux's own set-titles (infra/os/tmux.conf) takes over once attached; this
 # covers the moment of attach and every pre-attach state.
-mark() { mkdir -p "${LAST%/*}"; printf '%s\n' "$1" >"$LAST"; printf '\033]2;%s\007' "$1"; }
+# It also records the session PER TAB ($CLIENTS_DIR/<tabid>.sess): a ttyd reconnect
+# re-runs this script with the tab's ORIGINAL url args, so the url only says where the
+# tab STARTED — after an in-page switch it's stale, and the global LAST file is whatever
+# session ANY tab marked most recently. With many tabs both send a reconnect to the
+# wrong (usually the newest) session; the .sess file says where THIS tab actually is.
+mark() {
+  mkdir -p "${LAST%/*}"; printf '%s\n' "$1" >"$LAST"; printf '\033]2;%s\007' "$1"
+  if [[ "${TABID-}" =~ ^[0-9a-f]{8}$ ]]; then mkdir -p "$CLIENTS_DIR"; printf '%s' "$1" >"$CLIENTS_DIR/$TABID.sess"; fi
+}
 lastn() { cat "$LAST" 2>/dev/null || true; }   # missing file is the normal first-ever-run case, not an error
+tab_sess() { [[ "${TABID-}" =~ ^[0-9a-f]{8}$ ]] || return 0; cat "$CLIENTS_DIR/$TABID.sess" 2>/dev/null || true; }
 
 # per-tab client registry, for the /app shell's server-side switch (design doc §2): each
 # browser shell tab gets an 8-hex tabid; we record which tty its ttyd-spawned web-term.sh
@@ -209,7 +218,11 @@ menu() {
       printf '   [%2d] %s %-10s %-30s %s%s\n' "$i" "$(date -d "@$ts" '+%b%d %H:%M')" "$p" "$(basename "$cwd")" "${sid:0:8}" "$tag"
     done
   fi
-  local ln; ln=$(lastn)
+  # Enter target: this tab's own session first; the global last is only a fallback for
+  # tabs with no identity (plain /term, no url args) — it's whatever session ANY tab
+  # marked most recently, which with many tabs open is usually the wrong one.
+  local ln; ln=$(tab_sess)
+  [ -n "$ln" ] && tmux has-session -t "=$ln" 2>/dev/null || ln=$(lastn)
   if [ -n "$ln" ] && tmux has-session -t "=$ln" 2>/dev/null; then
     printf '   [Enter] re-attach %s    [n] new    [s] shell    [q] quit\n' "$ln"
   else
@@ -230,18 +243,40 @@ menu() {
 case "${1-}" in
   run) run_session "${2-default}" "${3-$HOME}" "${4-}"; exit 0 ;;
   list) recent | while IFS=$'\t' read -r ts p sid cwd; do printf '%s %s %s %s\n' "$(date -d "@$ts" '+%F %H:%M')" "$p" "${sid:0:8}" "$cwd"; done; exit 0 ;;
-  attach) [ -n "${2-}" ] && mark "$2"; register_tab "${3-}"; tmux attach -d -t "${2-}" 2>/dev/null || true ;;
+  attach)
+    TABID="${3-}"; register_tab "$TABID"
+    # a reconnect replays the url this tab was OPENED with; if the tab has since switched
+    # sessions in-page, its .sess record is the truth and the url arg is history.
+    _n="${2-}"; _t=$(tab_sess)
+    [ -n "$_t" ] && tmux has-session -t "=$_t" 2>/dev/null && _n="$_t"
+    [ -n "$_n" ] && mark "$_n"
+    tmux attach -d -t "$_n" 2>/dev/null || true ;;
   # explicit "show me the picker" — the dashboard's terminal nav links here. Registers this
   # tab (so the in-terminal switcher works right away), then falls through to the menu loop.
   # Having a $1 at all is what skips the sticky re-attach below: a deliberate click on
   # "terminal" means the user wants to choose, not to be thrown back where they last were.
-  menu) register_tab "${3-}" ;;
+  # A fresh click always mints a brand-new tabid, so a .sess record for THIS tabid can only
+  # mean a reconnect of a tab that already attached somewhere — jump back to that exact
+  # session (only if detached, same rule as the no-arg path, same 2s escape to the menu).
+  menu)
+    TABID="${3-}"; register_tab "$TABID"
+    _t=$(tab_sess)
+    if [ -n "$_t" ] && tmux has-session -t "=$_t" 2>/dev/null &&
+       [ "$(tmux display -p -t "$_t" '#{session_attached}' 2>/dev/null)" = 0 ]; then   # no '=': display -t is pane-style, '=name' resolves to empty
+      printf '\n \033[1;32m↩ re-attaching %s\033[0m — press any key for the menu… ' "$_t"
+      if ! read -t 2 -n 1 -s -r; then echo; mark "$_t"; tmux attach -d -t "=$_t" || true; else echo; fi
+    fi ;;
   resume) [ -n "${4-}" ] && do_resume "${2-default}" "${3-$HOME}" "${4}" ;;
   resolve) resolve "${2-}"; exit $? ;;
   open) # dashboard deep link: /term/?arg=open&arg=<sid8>[&arg=<tabid>]
-    if r=$(resolve "${2-}"); then
+    TABID="${3-}"; register_tab "$TABID"
+    _t=$(tab_sess)
+    if [ -n "$_t" ] && tmux has-session -t "=$_t" 2>/dev/null; then
+      # reconnect of a tab that already resumed (and possibly switched): skip the sid
+      # lookup and go back to the tab's own session.
+      mark "$_t"; tmux attach -d -t "=$_t" || true
+    elif r=$(resolve "${2-}"); then
       IFS=$'\t' read -r p cwd sid <<<"$r"
-      register_tab "${3-}"
       do_resume "$p" "$cwd" "$sid"
     else
       printf ' no session matches "%s"\n' "${2-}"; sleep 2
@@ -267,6 +302,7 @@ case "${1-}" in
     fi
     tmux detach-client -s "=$n" 2>/dev/null || true   # take-over semantics, same as attach -d
     tmux switch-client -c "$tty" -t "=$n" || exit 2
+    printf '%s' "$n" >"$CLIENTS_DIR/$tab.sess"   # the tab moved: its reconnects must follow the switch, not the original url
     mark "$n" >/dev/null   # discard mark()'s OSC title-stamp: our own stdout here is the caller's `to` value, not a terminal
     echo "$n"
     exit 0 ;;

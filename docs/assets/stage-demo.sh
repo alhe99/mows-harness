@@ -23,7 +23,7 @@ mkdir -p "$H/.local/bin" "$STAGE/bin" "$STAGE/opt"
 # ---- fake transcripts -------------------------------------------------------
 # lite.mjs reads the FIRST user message of each .jsonl as the session's title, and takes
 # the project label from the escaped-cwd directory name. Both are invented here.
-mk() { # mk <config-dir> <project-dir> <uuid> <age-minutes> <first user message>
+mk() { # mk <config-dir> <project-dir> <uuid> <age-minutes> <first user message> [last assistant message]
   local d="$H/$1/projects/$2" f
   mkdir -p "$d"; f="$d/$3.jsonl"
   local ts; ts=$(date -u -d "-$4 minutes" +%Y-%m-%dT%H:%M:%S.000Z)
@@ -31,14 +31,20 @@ mk() { # mk <config-dir> <project-dir> <uuid> <age-minutes> <first user message>
     for i in $(seq 1 40); do
       printf '{"type":"assistant","timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":"working on it (%s)"}]}}\n' "$ts" "$i"
     done
+    [ -n "${6:-}" ] && printf '{"type":"assistant","timestamp":"%s","message":{"role":"assistant","content":[{"type":"text","text":%s}]}}\n' "$ts" "$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$6")"
   } > "$f"
   touch -d "-$4 minutes" "$f"
 }
-mk .claude      -home-demo-Projects-ledger-api      7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11  3  "the settlement job double-counts refunds when a batch retries — find out why"
-mk .claude      -home-demo-Projects-storefront-web  2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602  26 "add a dark-mode toggle to the account page and persist the choice"
+mk .claude      -home-demo-Projects-ledger-api      7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11  3  "the settlement job double-counts refunds when a batch retries — find out why" \
+  "Found it: the retry path re-emits the refund event without the idempotency key. Writing the failing test now."
+mk .claude      -home-demo-Projects-storefront-web  2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602  26 "add a dark-mode toggle to the account page and persist the choice" \
+  "Toggle wired to localStorage and the prefers-color-scheme fallback — running the visual checks."
 mk .claude      -home-demo-Projects-mows-harness    9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740  95 "implement spec.md — the terminal theme wave"
-mk .claude-work -home-demo-Projects-ledger-api      4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98  12 "write the migration for the new payouts table, then dry-run it"
+mk .claude-work -home-demo-Projects-ledger-api      4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98  12 "write the migration for the new payouts table, then dry-run it" \
+  "Migration drafted. I need a confirmation before running it against the dev database."
 mk .claude-work -home-demo-Projects-infra-runbooks  6e0b3f45-1d29-4c86-a37e-95c4f7b21d03  240 "draft the on-call runbook for a wedged deploy"
+mk .claude      -home-demo-Projects-storefront-web  8a4c2e96-7b31-4d58-a92f-6c05d1e8b374  1560 "profile the checkout page — LCP regressed after the banner change"
+mk .claude-work -home-demo-Projects-ledger-api      3f7d9c25-4e81-4a06-b53c-8d29f0a67e12  2980 "reconcile last week's chargeback file against the ledger"
 
 # ---- shims ------------------------------------------------------------------
 # lite.mjs shells out through `runuser -u <user> -- env HOME=.. PATH=.. <cmd>`; that needs
@@ -49,14 +55,38 @@ cat > "$STAGE/bin/runuser" <<'EOF'
 shift 3   # -u <user> --
 exec "$@"
 EOF
-# canned live-session list: name \t attached \t created \t pid \t cwd \t @label
+# canned tmux: the fleet page runs `list-panes -a -F` with the 9-field format
+# (name, attached, created, activity, pane_pid, cwd, pane_id, @sid, @label) and then one
+# `capture-pane -t %N` per live session to classify it (working / needs-you / idle) —
+# each fake pane tail below is crafted to land in a different state, and each @sid points
+# at one of the fake transcripts above so cards pick up real titles/projects/snippets.
 cat > "$STAGE/bin/tmux" <<EOF
 #!/usr/bin/env bash
-[ "\${1:-}" = "list-panes" ] || exit 0
 now=\$(date +%s)
-printf 'cc-demo-ledger-api\t1\t%s\t424242\t/demo/Projects/ledger-api\trefund double-count\n' \$((now-1080))
-printf 'cc-work-runbooks\t0\t%s\t424243\t/demo/Projects/infra-runbooks\ton-call runbook\n' \$((now-780))
-printf 'cc-demo-storefront-web\t0\t%s\t424244\t/demo/Projects/storefront-web\t\n' \$((now-1620))
+case "\${1:-}" in
+  list-panes)
+    for last; do :; done
+    if [[ "\$last" == *session_attached* ]]; then
+      printf 'cc-demo-ledger-api\t1\t%s\t%s\t424242\t/demo/Projects/ledger-api\t%%1\t7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11\trefund double-count\n' \$((now-1080)) \$((now-8))
+      printf 'cc-work-payouts\t0\t%s\t%s\t424243\t/demo/Projects/ledger-api\t%%2\t4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98\tpayouts migration\n' \$((now-780)) \$((now-95))
+      printf 'cc-demo-storefront-web\t0\t%s\t%s\t424244\t/demo/Projects/storefront-web\t%%3\t2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602\t\n' \$((now-1620)) \$((now-1520))
+    fi
+    ;;
+  capture-pane)
+    for last; do :; done
+    case "\$last" in
+      %1) printf 'Diffing the retry path in settlement.go\n* Simmering... (esc to interrupt)\n' ;;
+      %2) printf 'Do you want to run this migration against the dev database?\n> 1. Yes\n  2. No\n' ;;
+      %3) printf '> \n? for shortcuts\n' ;;
+    esac
+    ;;
+esac
+exit 0
+EOF
+# /system's Environment card runs `claude --version` (via RUN_PATH = ~/.local/bin:…)
+cat > "$H/.local/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "3.6.2 (Claude Code)"
 EOF
 cat > "$H/.local/bin/claude-quota" <<'EOF'
 #!/usr/bin/env bash

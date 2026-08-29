@@ -20,7 +20,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Port | Bound to | Service | Notes |
 |---|---|---|---|
 | 443 | public | Caddy | TLS termination + reverse proxy — the only thing this box exposes to the Internet and the only thing that terminates TLS |
-| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; PWA-installable session list, `/term` companion, QA-watch view, `/settings` (global terminal theme, persisted to `/opt/claude-dashboard/settings.json`), `POST /sys/reclaim` (measured cache/disk prune behind a mandatory preview), and the persistent shell — `GET /app`, `POST /a/switch`, `GET /app/live.json` (see caveat below) |
+| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; the PWA-installable **mows control** app — `/` Sessions (live fleet cards, pane-content state classifier, SSE updates, pull-to-refresh), `/history` (day-grouped, filterable, paginated), `/system` (metrics, environment, per-account usage/spend, `POST /sys/reclaim` behind a mandatory preview, restart-all), `/device` (Android emulator + QA-watch noVNC stages; old `/settings`, `/watch`, `/droid` URLs 302 here), the global terminal theme endpoints (`/settings/term-theme{,.json}`, persisted to `/opt/claude-dashboard/settings.json`), `/term` companion, and the persistent shell — `GET /app`, `POST /a/switch`, `GET /app/live.json` (see caveat below) |
 | 7681 | 127.0.0.1 | `ttyd` (`/term`) | Only `/term/ws` and `/term/token` reach `ttyd` through Caddy's `reverse_proxy`; plain `GET /term` and `/term/` are intercepted earlier and served by Caddy's own `file_server` from `term-index.html` (see `infra/webconsole/make-term-index.sh`) |
 | 4180 | 127.0.0.1 | oauth2-proxy | Caddy's `forward_auth` target for every protected route, plus a `reverse_proxy` for `/oauth2/*` |
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |
@@ -230,7 +230,7 @@ bundle). It still feels like an installed app because three browser features do 
   anything older just navigates.
 - **Speculation Rules** (`<script type="speculationrules">`, `eagerness: moderate`): dashboard
   links are prerendered on hover/touch-start, so the tap lands on a page that already exists.
-  The rule lists `/`, `/?*`, `/settings`, `/s/*` only — never `/term*` (a prerender would spawn
+  The rule lists `/`, `/?*`, `/history`, `/history?*`, `/system`, `/device`, `/s/*` only — never `/term*` (a prerender would spawn
   a ttyd → tmux attach), and links carrying `fresh=1` (20 s quota refresh) or `reclaim=1` (disk
   scan) are excluded by selector. Chrome only; Safari relies on bfcache.
 - **bfcache**: pages send `cache-control: no-cache` (never `no-store`) and register no `unload`

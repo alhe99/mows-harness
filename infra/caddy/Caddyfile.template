@@ -81,6 +81,23 @@
     }
 }
 
+# --- /events (Fleet Redesign §3, SSE fleet stream): must reach the browser unbuffered.
+# flush_interval -1 tells reverse_proxy to flush the upstream's own writes straight through
+# instead of coalescing on Caddy's default timer — lite.mjs already paces writes itself
+# (only on a real diff, or the 25s heartbeat), so nothing here should batch further.
+# Compression is the other half: gzip/zstd frame buffering holds a chunk until enough bytes
+# accumulate, which is exactly wrong for a stream meant to arrive as it's written — the
+# site's `encode` line below excludes this path (@nosse) rather than excluding it here, since
+# `encode` wraps the whole site ahead of `route`. Import this BEFORE the catch-all dashboard
+# handle in every site block that proxies to the dashboard. ---
+(sse) {
+    handle /events {
+        reverse_proxy 127.0.0.1:3005 {
+            flush_interval -1
+        }
+    }
+}
+
 # --- primary dashboard vhost: default session view + /term web terminal ---
 {{DOMAIN}} {
     log {
@@ -89,12 +106,17 @@
             roll_keep 3
         }
     }
-    encode zstd gzip
+    # @nosse: encode wraps the whole site ahead of `route`, so excluding /events here
+    # (rather than inside the sse snippet's own handle) is the only way to keep this
+    # stream out of gzip/zstd's buffering — see the (sse) snippet's comment above.
+    @nosse not path /events
+    encode @nosse zstd gzip
     route {
         import pwa
         import gauth
         import vncproxy
         import droidproxy
+        import sse
         # web terminal (ttyd) — start/continue Claude Code sessions.
         # /term HTML is served by Caddy's own file_server (the same file ttyd -I uses):
         # ttyd itself sends no-store + no ETag, so relying on ttyd's headers alone means
@@ -127,12 +149,14 @@
 # upstream — only the hostname differs, so Caddy requests one certificate per label. ---
 {{EXAMPLE_SUB}}.{{DOMAIN}} {
     log
-    encode zstd gzip
+    @nosse not path /events
+    encode @nosse zstd gzip
     route {
         import pwa
         import gauth
         import vncproxy
         import droidproxy
+        import sse
         reverse_proxy 127.0.0.1:3005
     }
 }

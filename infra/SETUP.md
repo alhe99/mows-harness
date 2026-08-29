@@ -319,7 +319,7 @@ Three ways to pick one, in precedence order:
 |---|---|---|
 | the `/term` key bar | the theme dropdown (mobile; the bar is hidden on desktop) | that browser, persisted in `localStorage` |
 | `/term` URL or console | `/term/?theme=Nord`, `?theme=default` to clear, or `cctheme("Nord")` | same — writes the same `localStorage` key |
-| the dashboard | `/settings` → **Global theme** → Save | every terminal tab on every device, picked up by open tabs within ~30 s |
+| the dashboard API | `POST /settings/term-theme` (form field `theme=<name>`; no page UI since the mows-control redesign) | every terminal tab on every device, picked up by open tabs within ~30 s |
 
 A device-local pick always wins over the global one; "Auto (global)" in the key bar clears
 it and follows the dashboard again. With nothing set anywhere, `ttyd`'s stock palette
@@ -330,8 +330,7 @@ any fetch resolves) — **keep the two in sync when adding a scheme.**
 The dashboard persists the global choice to `/opt/claude-dashboard/settings.json`
 (`--settings-file` overrides the path; created on first Save, `{"termTheme":"<name>"}`) and
 serves it back at `GET /settings/term-theme.json`. Install `themes.json` next to `lite.mjs`
-so the `/settings` preview and the validation of `POST /settings/term-theme` see the same
-map:
+so the validation of `POST /settings/term-theme` sees the same map:
 
 ```bash
 sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json
@@ -356,7 +355,7 @@ sudo apt install -y xvfb fluxbox x11vnc websockify novnc xdotool
 then install `claude-qa-watch.service` per that guide. **It ships disabled on purpose** —
 the sudoers grant for it covers only `start`/`stop`, not `enable`/`disable`, because a
 screen-sharing debug stack has no business auto-starting at boot. The `qa` skill (or the
-dashboard's own `/watch` view, which runs as root and needs no sudo at all) starts and stops
+dashboard's own `/device` page (Web segment), which runs as root and needs no sudo at all) starts and stops
 it on demand:
 
 ```bash
@@ -398,7 +397,7 @@ curl -s localhost:9222/json/version   # Chrome's own CDP handshake — a JSON bl
 ### 13. Android web console (optional)
 
 A containerized Android device (redroid) streamed and touch-controllable from the
-dashboard's `/droid` page, for mobile QA (adb + maestro + APK installs from `/term`).
+dashboard's `/device` page (Mobile segment; the old `/droid` URL redirects there), for mobile QA (adb + maestro + APK installs from `/term`).
 Fully optional — skip it and nothing else here cares. Full walkthrough, including the
 binder kernel modules, the container run command, and the patched ws-scrcpy build:
 [`infra/droid/SETUP.md`](droid/SETUP.md). The Caddy side (the `/droidview/*` route and the

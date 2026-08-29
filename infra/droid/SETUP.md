@@ -2,13 +2,13 @@
 
 Container-based Android (redroid: no KVM, native-arch execution, ~700 MB RAM idle, boots
 in ~15 s) plus ws-scrcpy, so a real Android device is one tab away for mobile QA: watch
-and touch-control it from the dashboard's `/droid` page, install APKs over adb from
+and touch-control it from the dashboard's `/device` page (Mobile segment; the old `/droid` URL redirects there), install APKs over adb from
 `/term`, drive flows with maestro. Everything binds loopback; the only public paths are
 Caddy's Google-gated routes (`/droidview/*` + the optional `droid.{{DOMAIN}}` vhost —
 both already in `infra/caddy/Caddyfile.template`).
 
 This layer is optional. Skip it entirely and nothing else in the harness cares: the
-Caddyfile's droid routes just never get hit, and the dashboard's `/droid` page reports
+Caddyfile's droid routes just never get hit, and the dashboard's `/device` page reports
 the emulator stopped.
 
 Prerequisites: Docker (`sudo apt-get install -y docker.io`), Node (see
@@ -55,7 +55,7 @@ The choices, and why:
 - **On-demand, not auto-started** (`--restart` deliberately absent) — ~700 MB idle is real
   RAM on a small VPS. `install -m755 infra/droid/up.sh ~/redroid/up.sh`; daily use is
   `~/redroid/up.sh` to start (prints when booted) and `docker stop redroid` when done. The
-  dashboard's `/droid` page has start/stop buttons doing the same thing.
+  dashboard's `/device` page has start/stop buttons doing the same thing.
 
 ## 3. ws-scrcpy (the web console), patched
 
@@ -102,7 +102,7 @@ ws-scrcpy`, logs via `journalctl -u ws-scrcpy`.
   iframe — iOS ignores an iframe's `<meta viewport>` and lays the inner document out at a
   phantom 980px width, so in-frame taps never line up. There's an on-device touch
   diagnostic at `/droid/touchtest` if input ever misbehaves.
-- **Raw console** (`droid.{{DOMAIN}}`, or the `⧉ console` chip on `/droid`): device list →
+- **Raw console** (`droid.{{DOMAIN}}`, or the `⧉ console` chip on `/device`): device list →
   pick a player (WebCodecs best in desktop Chrome; Broadway/TinyH264 work anywhere), plus
   web adb shell, devtools for webviews, and a file browser. Keep the default "proxy over
   adb" interface — it streams through :8000, so the Caddy/gauth path carries it.

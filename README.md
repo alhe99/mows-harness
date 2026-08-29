@@ -6,7 +6,7 @@ Your coding agent lives on a box you control: it survives dropped SSH and closed
 restarts itself when it wedges, and waits behind your Google login on a dashboard and web
 terminal you can open from anywhere.
 
-<img src="docs/assets/phone.png" alt="The mows-harness dashboard on a phone: three live Claude Code sessions across two profiles, each with the prompt that started it, collapsible filter and system strips, and sessions / terminal / watch / android / settings tabs along the bottom." width="300" align="right">
+<img src="docs/assets/phone.png" alt="The mows control dashboard on a phone: three live Claude Code session cards, each with its state (waiting / working / idle), project, and what the agent is doing right now; a terminal button floating bottom-right and Sessions / History / System / Device tabs along the bottom." width="300" align="right">
 
 ```bash
 git clone https://github.com/alhe99/mows-harness.git
@@ -21,8 +21,8 @@ you leave running, `--all` for the full web cockpit.
 - **claude** — `CLAUDE.md`, 9 commands, 13 skills, an agent, settings + MCP templates
 - **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, monitor OS patch health, and auto-continue past usage-limit stalls
-- **infra** — Caddy + Google OAuth, a session dashboard with a settings page, a themeable
-  browser terminal (the phone view)
+- **infra** — Caddy + Google OAuth, the **mows control** dashboard (Sessions / History /
+  System / Device), a themeable browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command; per-session
   git worktrees so parallel sessions never fight over one checkout
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
@@ -32,10 +32,39 @@ you leave running, `--all` for the full web cockpit.
 
 ### What it looks like
 
-**The dashboard** — every session on the box, live or finished, across every profile, with the
-prompt that started it. Attach, pause, kill, or resume any of them in one tap.
+**mows control — Sessions** — every live session on the box, across every profile, as a card:
+its state (**working** / **waiting on you** / **paused** / **idle**, classified from the actual
+terminal pane), its project, and what the agent is doing *right now* (the transcript's newest
+message). Attach, pause, rename, or kill from the card's menu; on a phone the whole card is the
+tap target, the list updates live over SSE, and pull-to-refresh works in the installed PWA.
 
-<img src="docs/assets/dashboard.png" alt="The dashboard in a desktop browser: a filter strip, a system strip with load, memory, disk and today's spend, three live tmux-backed sessions with attach / pause / rename / kill buttons, and below them every recent session grouped by day with its account, project and opening prompt." width="820">
+<img src="docs/assets/dashboard.png" alt="The mows control Sessions view in a desktop browser: a pill nav (Sessions, History, System, Device), a New Session button, and three live session cards — one waiting on a confirmation, one working, one idle — each with its project and the agent's latest message." width="820">
+
+**History** — every session ever run, live or finished, across every account: grouped by day,
+filterable (account, project, time window, free text), with LIVE badges on the ones still
+running and pagination that holds up at hundreds of sessions. Any row opens a detail view with
+resume.
+
+<img src="docs/assets/history.png" alt="The History view: a filter bar, sessions grouped under TODAY / YESTERDAY / dated headers, each row with relative time, account, project, a LIVE badge where applicable, the opening prompt, transcript size and session id — and pagination below." width="820">
+
+**System** — live host metrics (load, memory, swap, disk) as bars, an environment card
+(service status, Claude Code version, uptime, last deploy, Node/OS), per-account usage limits
+and daily spend with a burn rate, a measured disk-reclaim preview, and the one host-wide
+destructive action (restart all sessions) behind its own confirm.
+
+<img src="docs/assets/system.png" alt="The System view: metric bars for load average, memory, swap and disk; an environment card with STATUS ONLINE, version, uptime and last deploy; a master-process card with a Restart All Sessions danger button; and usage cards with per-account 5-hour and weekly limit bars, spend and burn rate." width="820">
+
+**Device** — a segmented Mobile / Web stage. **Mobile** is a containerized Android emulator
+(redroid + ws-scrcpy) streamed into the page, touch-controllable, one button to start; **Web**
+is the on-demand QA browser (Xvfb + Chrome over noVNC) with remote keys — both for watching an
+agent drive a real UI, or taking over yourself.
+
+<img src="docs/assets/device.png" alt="The Device view, Mobile segment: a left rail with the Mobile/Web toggle, an Android Emulator card (state STOPPED, adb target), Start Emulator / Refresh / Console controls — and a dashed stage on the right reading 'Awaiting stream…'." width="820">
+
+**On a phone** it's a PWA: bottom tab bar, floating terminal button, whole-card tap targets,
+and each card's ⋯ menu as a floating popover — pause, rename inline, kill with confirm.
+
+<img src="docs/assets/phone-menu.png" alt="The Sessions view on a phone with one card's ⋯ menu open as a floating popover: Pause, a RENAME text field with Save, and Kill." width="300">
 
 **The web terminal** — a real Claude Code session in a browser tab, in whichever of the 12
 built-in color schemes you picked. Themes are converted from
@@ -46,12 +75,9 @@ no reconnect.
 
 <img src="docs/assets/term-phone.png" alt="The same web terminal on a phone, in the Nord scheme, with the on-screen key bar along the bottom scrolled to its right end: detach, keyboard toggle, font-size keys, and the theme picker set to Nord." width="210" align="right">
 
-**Pick one for every device from the dashboard** — `/settings` sets the global theme and shows
-a live preview of the palette before you save it. On a phone, the key bar's own picker
-overrides the global choice for that browser; open terminal tabs follow a global change within
-about 30 seconds.
-
-<img src="docs/assets/settings.png" alt="The dashboard settings page: a global terminal theme dropdown set to Material Ocean with a Save button, and a live preview card rendering a shell prompt plus the theme's sixteen ANSI colors as swatches." width="560">
+**Pick a theme per device from the terminal's own key bar** — the choice sticks to that
+browser. A global default lives in the dashboard's `settings.json` (`POST
+/settings/term-theme`); open terminal tabs follow a global change within about 30 seconds.
 
 <br clear="right">
 
@@ -290,7 +316,8 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    `infra/webconsole/blocks/` mobile UX (key bar, PWA geometry, home key, photo attach,
    font size, color themes, keyboard suggestions + reconnect, copy/paste overlay,
    restart-pane key). Re-run it after a repo update to pick up new or changed blocks.
-   If you want the dashboard's `/settings` page to drive the terminal theme globally, also
+   If you want the dashboard to serve the global terminal theme (terminal tabs poll
+   `/settings/term-theme.json`), also
    `sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json`.
 8. **Verify** — `curl -sI https://<domain>` should redirect toward Google sign-in.
 
@@ -298,7 +325,7 @@ Optional, on demand: the browser-QA watch stack (`infra/qa-watch/SETUP.md`) need
 `xvfb fluxbox x11vnc websockify novnc xdotool` plus Chrome/Chromium. It ships **disabled** on
 purpose — the `qa` skill starts and stops it. Also optional: the Android web console
 (`infra/droid/SETUP.md`) — a containerized Android device (redroid + patched ws-scrcpy)
-streamed and touch-controllable from the dashboard's `/droid` page, for mobile QA over
+streamed and touch-controllable from the dashboard's `/device` page, for mobile QA over
 adb/maestro.
 
 ---
@@ -365,9 +392,11 @@ flowchart TB
   alive and clean: unit/wedge recovery, memory-capture verification, idle-session reaping,
   orphaned-MCP reaping, usage-limit auto-continue, OS patch-health monitoring, boot logging.
 - **`infra/`** — templates for the public surface: Caddy (TLS + reverse proxy), oauth2-proxy
-  (Google-gated auth), a zero-dependency session dashboard (session list, system/spend panel,
-  and a `/settings` page), a `ttyd` web terminal with 12 switchable color themes, an
-  on-demand browser-QA watch stack, firewall templates, and scoped sudoers.
+  (Google-gated auth), the zero-dependency **mows control** dashboard — a PWA-installable
+  single file (`lite.mjs`) serving the Sessions / History / System / Device views above, with
+  live SSE updates and a pane-content session classifier — a `ttyd` web terminal with 12
+  switchable color themes, an on-demand browser-QA watch stack, the containerized Android
+  emulator console, firewall templates, and scoped sudoers.
 - **`fleet/`** — several Claude identities on one box: named *profiles* under one account
   (`cc`, `claude-rc`, `claude-status`, `reset-claude-env`), or separate Linux-user *agent*
   accounts (`add-agent.sh`). Per-session helpers ride along: `ccname` labels the session
