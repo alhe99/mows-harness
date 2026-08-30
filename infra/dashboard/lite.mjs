@@ -1644,12 +1644,21 @@ body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area
    safe-area inset (ih=894 vs screen 956, sat=62), so fixed bottom:0 floats 62pt above the
    real screen bottom. 100lvh still reads the true screen height in that state, so in the
    installed app anchor the bar and FAB from the TOP off 100lvh instead — identical
-   geometry when the viewport is sane, correct when it isn't. Browser tabs keep bottom:0
-   (Safari's collapsing toolbar makes lvh the wrong anchor there). .tabs box height =
-   1px border + 5px pad + 48px .tb + 5px pad + sab. */
+   geometry when the viewport is sane. But dash3 also shows vh=894 in that state: nothing
+   paints below the short layout viewport, so a bare 100lvh anchor hangs the bar's bottom
+   62pt past the paintable area and clips the labels off the launch page (the fleet page
+   is the PWA start page, so it's the one always seen in that state). min(100lvh,100%)
+   clamps to the layout viewport (100% of a fixed element = its height): sane state
+   unchanged, short state degrades to the old visible float instead of clipping.
+   Browser tabs keep bottom:0 (Safari's collapsing toolbar makes lvh the wrong anchor
+   there). .tabs box height = 1px border + 5px pad + 48px .tb + 5px pad + sab. */
 @media(display-mode:standalone) and (max-width:700px){@supports(height:100lvh){
-.tabs{bottom:auto;top:calc(100lvh - 59px - env(safe-area-inset-bottom,0px))}
-.termfab{bottom:auto;top:calc(100lvh - 116px - env(safe-area-inset-bottom,0px))}
+.tabs{bottom:auto;top:calc(min(100lvh,100%) - 59px - env(safe-area-inset-bottom,0px))}
+.termfab{bottom:auto;top:calc(min(100lvh,100%) - 116px - env(safe-area-inset-bottom,0px))}
+/* the stuck-short state (dash3 ih=894) hits the fleet page — the only page whose
+   content doesn't fill the screen; give the document full height so WebKit has no
+   short-document excuse to letterbox. border-box so it fills exactly, no dead scroll. */
+body{min-height:100lvh;box-sizing:border-box}
 }}
 /* system + usage panel */
 .sys{margin:2px 0 12px;border:1px solid var(--bd);border-radius:var(--r-lg);background:var(--card)}
@@ -2048,7 +2057,44 @@ document.body.appendChild(u);var lvh=u.getBoundingClientRect().height|0;
 u.style.height='100dvh';var dvh=u.getBoundingClientRect().height|0;u.remove();
 p.remove();var vv=window.visualViewport;
 fetch('/z?t=dash3&m='+m+'&sat='+t+'&sab='+b+'&ih='+innerHeight+'&sh='+screen.height+'&oh='+outerHeight+'&sy='+(window.screenY|0)+'&vh='+(vv?vv.height|0:0)+'&dh='+document.documentElement.clientHeight+'&lvh='+lvh+'&dvh='+dvh).catch(function(){})
-})},700)})()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
+})},700)})();
+/* vpfix: iOS standalone can launch/resume with the layout viewport short by the top
+   safe-area inset (dash3 measured ih=894 vs sh=956, vh=894 — nothing paints below it,
+   so the bottom tab bar either clips or floats above the real screen bottom; a
+   navigation sometimes snaps it back, which is why other tabs looked fine). Viewport-meta
+   rewrites are IGNORED in standalone (tried 2026-08-30: beacons show ok=0 n=6 ih=894);
+   the workaround that works (dev.to/cederhook, same bug) is a synchronous display:none →
+   reflow → restore on the full-height element — WebKit re-measures the viewport, no
+   visible flash since it's all within one frame. Portrait-only: iOS screen.height is
+   portrait-fixed, so landscape always reads "short". Beacons the outcome to /z. */
+(function(){
+if(!matchMedia('(display-mode: standalone)').matches)return;
+var n=0;
+function short(){return matchMedia('(orientation: portrait)').matches&&innerHeight+4<screen.height}
+function heal(){
+  if(!short())return;
+  if(n>=6){
+    /* in-page re-measures exhausted — a real navigation is the one thing measured to
+       snap the viewport back (dash3 mixes 894 and 956 loads; tapping another tab fixed
+       it). One reload per 30s, visible pages only, so a stubborn state can't loop. */
+    var r=+sessionStorage.vpr||0;
+    if(Date.now()-r>30000&&document.visibilityState==='visible'){sessionStorage.vpr=Date.now();return location.reload()}
+    return fetch('/z?t=vpfix&ok=0&r=1&n='+n+'&ih='+innerHeight+'&p='+encodeURIComponent(location.pathname)).catch(function(){});
+  }
+  n++;
+  var y=scrollY,b=document.body;
+  b.style.display='none';void b.offsetHeight;b.style.display='';
+  scrollTo(0,y);
+  setTimeout(function(){
+    if(short())heal();
+    else fetch('/z?t=vpfix&ok=1&n='+n+'&ih='+innerHeight+'&p='+encodeURIComponent(location.pathname)).catch(function(){})
+  },250);
+}
+addEventListener('pageshow',function(){n=0;setTimeout(heal,80)});
+document.addEventListener('visibilitychange',function(){if(!document.hidden){n=0;setTimeout(heal,80)}});
+addEventListener('resize',function(){n=0;setTimeout(heal,80)});
+setTimeout(heal,120);
+})()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
 </body></html>`;
 }
 function send(req, res, status, html, type = 'text/html; charset=utf-8') {
