@@ -94,6 +94,7 @@ docs/assets/fleet.gif
 docs/assets/history.png
 docs/assets/fleet.tape
 docs/assets/hero.png
+docs/assets/mac-frame.html
 docs/assets/phone.png
 docs/assets/phone-menu.png
 docs/assets/system.png

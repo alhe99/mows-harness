@@ -9,6 +9,9 @@
 #   ./docs/assets/stage-demo.sh            # start; prints the URLs, stays in foreground
 #   PORT=3099 TTYD_PORT=7699 ...           # override ports
 #
+# After capturing, wrap each raw screenshot in the macOS-style window chrome with
+# docs/assets/mac-frame.html (see its header) — the README images are the framed versions.
+#
 # Ctrl-C stops both processes and deletes the staging dir.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
