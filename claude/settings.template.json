@@ -11,7 +11,10 @@
       {"hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/quota-gate.sh\"", "timeout": 10}]}
     ],
     "Notification": [
-      {"hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" input"}]}
+      {"matcher": "permission_prompt|elicitation_dialog|agent_needs_input",
+       "hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" input"}]},
+      {"matcher": "idle_prompt",
+       "hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" idle"}]}
     ]
   },
   "remoteControlAtStartup": true,

@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # discord-notify.sh — Claude Code Notification hook → Discord.
-# Only "input" events notify (session blocked on the user). "stop" is a
-# deliberate no-op kept as an accepted arg so sessions started before the
-# Stop hook was removed exit silently instead of erroring.
+# Two modes, wired via Notification hook matchers in settings.json:
+#   input — permission_prompt / elicitation_dialog / agent_needs_input:
+#           the session is hard-blocked on the user → always notify.
+#   idle  — idle_prompt fires ~60s after EVERY finished turn; only a turn
+#           that ends asking something is worth a ping, so notify only when
+#           the last assistant text ends with a question mark. Finished-work
+#           summaries stay silent.
+# Any other arg ("stop", legacy) is a deliberate no-op.
 # Never blocks a session: always exits 0.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
-[ "${1:-}" = "input" ] || exit 0
+mode="${1:-}"
+case "$mode" in input|idle) ;; *) exit 0 ;; esac
 [ -t 0 ] && exit 0
 
 input_json="$(cat)"
@@ -42,17 +48,24 @@ state_dir="$HOME/.claude/state/discord-threads"
 mkdir -p "$state_dir"
 
 # Context = last assistant text in the transcript: the question/status the
-# session is actually blocked on. Whitespace collapsed, capped in jq (700
-# chars) so multibyte chars never get split.
+# session is actually blocked on. Whitespace collapsed; the display copy is
+# capped in jq (700 chars) so multibyte chars never get split, but the idle
+# question check runs on the FULL text — the question sits at the end.
 ctx=""
+full=""
 if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
-  ctx="$(tail -n 200 "$transcript_path" 2>/dev/null | jq -r '
+  full="$(tail -n 200 "$transcript_path" 2>/dev/null | jq -r '
     select(.type=="assistant")
     | [.message.content[]? | select(.type=="text") | .text]
     | join(" ")
     | gsub("[[:space:]]+"; " ")
-    | select(length > 2)
-    | .[0:700]' 2>/dev/null | tail -n 1)"
+    | select(length > 2)' 2>/dev/null | tail -n 1)"
+  ctx="$(jq -rn --arg t "$full" '$t[0:700]' 2>/dev/null)"
+fi
+
+if [ "$mode" = "idle" ]; then
+  # ponytail: trailing-? heuristic; upgrade to an LLM classifier if it misses.
+  printf '%s' "$full" | grep -qE '\?["*_)`. ]*$' || exit 0
 fi
 
 if [ ${#msg} -gt 200 ]; then msg="${msg:0:200}..."; fi
@@ -68,7 +81,7 @@ out="$(timeout 10 "$HOME/.claude/scripts/discord-send.sh" \
   -k "$key" \
   -n "cc · ${head} · ${sid8}" \
   -m "$text" 2>&1)" || true
-printf '%s input %s %s\n' "$(date '+%F %T')" "$key" "${out:-no-output}" \
+printf '%s %s %s %s\n' "$(date '+%F %T')" "$mode" "$key" "${out:-no-output}" \
   >> "$state_dir/notify.log" 2>/dev/null || true
 
 exit 0
