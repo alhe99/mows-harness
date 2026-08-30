@@ -1,12 +1,26 @@
-<h1>mows-harness</h1>
+<div align="center">
 
-**Keep Claude Code running on your own server — and drive it from everywhere.**
+# mows-harness
 
-Your coding agent lives on a box you control: it survives dropped SSH and closed laptops,
-restarts itself when it wedges, and waits behind your Google login on a dashboard and web
-terminal you can open from anywhere.
+### Keep Claude Code running on your own server — and drive it from everywhere.
 
-<img src="docs/assets/phone.png" alt="The mows control dashboard on a phone: three live Claude Code session cards, each with its state (waiting / working / idle), project, and what the agent is doing right now; a terminal button floating bottom-right and Sessions / History / System / Device tabs along the bottom." width="300" align="right">
+A fleet of coding agents on hardware **you** control: they survive dropped SSH and closed
+laptops, restart themselves when they wedge, and wait behind your Google login on a
+dashboard + web terminal that work from any device — phone included.
+
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Platform: Ubuntu 24.04 + systemd](https://img.shields.io/badge/platform-Ubuntu%2024.04%20%2B%20systemd-E95420?logo=ubuntu&logoColor=white)
+![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
+![Dashboard: one file, zero dependencies](https://img.shields.io/badge/dashboard-1%20file%2C%200%20deps-00d492)
+![Installable PWA](https://img.shields.io/badge/mobile-installable%20PWA-9f9fa9)
+
+</div>
+
+<img src="docs/assets/hero.png" alt="The mows control dashboard: a pill nav (Sessions, History, System, Device), a New Session button, and four live Claude Code session cards — one waiting on a confirmation, one working, one paused, one idle — each with its project and the agent's latest message.">
+
+<p align="center"><sub><b>mows control</b> — four live agents at a glance: one <b>waiting on you</b>, one <b>working</b>, one <b>paused</b>, one <b>idle</b>, each with what it's doing <i>right now</i>. (Synthetic demo data — see below.)</sub></p>
+
+## Quickstart
 
 ```bash
 git clone https://github.com/alhe99/mows-harness.git
@@ -28,17 +42,28 @@ you leave running, `--all` for the full web cockpit.
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
   `claude-quota`, `agy-notify` → `~/.local/bin`
 
-<br clear="right">
+## Why you'd want this
 
-### What it looks like
+- 🔁 **Survives everything** — every session lives in tmux under systemd; watchdogs restart a
+  wedged agent, auto-continue past usage-limit stalls, and reap what leaks.
+- 👀 **Know who needs you** — the dashboard classifies each session from its actual terminal
+  pane: **waiting on you** floats to the top, working/paused/idle sort below, updated live.
+- 📱 **Run it from your phone** — installable PWA with a bottom tab bar, whole-card tap
+  targets, pull-to-refresh, and a real terminal with an on-screen key bar.
+- 🧑‍✈️ **Many agents, one box** — several Claude identities switched with one command,
+  per-session git worktrees so parallel agents never fight over a checkout.
+- 🤖 **Agents can QA real UIs** — an on-demand Android emulator and a takeover browser stream
+  straight into the dashboard's Device tab.
+- 🔐 **Locked down by default** — everything behind Google OAuth, every sudo grant a narrow
+  anchored pattern, nothing dangerous installed silently.
 
-**mows control — Sessions** — every live session on the box, across every profile, as a card:
-its state (**working** / **waiting on you** / **paused** / **idle**, classified from the actual
-terminal pane), its project, and what the agent is doing *right now* (the transcript's newest
-message). Attach, pause, rename, or kill from the card's menu; on a phone the whole card is the
-tap target, the list updates live over SSE, and pull-to-refresh works in the installed PWA.
+## What it looks like
 
-<img src="docs/assets/dashboard.png" alt="The mows control Sessions view in a desktop browser: a pill nav (Sessions, History, System, Device), a New Session button, and three live session cards — one waiting on a confirmation, one working, one idle — each with its project and the agent's latest message." width="820">
+**Sessions** (the hero above) — every live session on the box, across every profile, as a
+card: its state (**working** / **waiting on you** / **paused** / **idle**, classified from the
+actual terminal pane), its project, and what the agent is doing *right now* (the transcript's
+newest message). Attach, pause, rename, or kill from the card's menu; the list updates live
+over SSE.
 
 **History** — every session ever run, live or finished, across every account: grouped by day,
 filterable (account, project, time window, free text), with LIVE badges on the ones still
@@ -62,9 +87,10 @@ agent drive a real UI, or taking over yourself.
 <img src="docs/assets/device.png" alt="The Device view, Mobile segment: a left rail with the Mobile/Web toggle, an Android Emulator card (state STOPPED, adb target), Start Emulator / Refresh / Console controls — and a dashed stage on the right reading 'Awaiting stream…'." width="820">
 
 **On a phone** it's a PWA: bottom tab bar, floating terminal button, whole-card tap targets,
-and each card's ⋯ menu as a floating popover — pause, rename inline, kill with confirm.
+pull-to-refresh, and each card's ⋯ menu as a floating popover — pause, rename inline, kill
+with confirm.
 
-<img src="docs/assets/phone-menu.png" alt="The Sessions view on a phone with one card's ⋯ menu open as a floating popover: Pause, a RENAME text field with Save, and Kill." width="300">
+<img src="docs/assets/phone.png" alt="The mows control dashboard on a phone: four live Claude Code session cards, each with its state (waiting / working / paused / idle), project, and what the agent is doing right now; a terminal button floating bottom-right and Sessions / History / System / Device tabs along the bottom." width="300"> <img src="docs/assets/phone-menu.png" alt="The Sessions view on a phone with one card's ⋯ menu open as a floating popover: Pause, a RENAME text field with Save, and Kill." width="300">
 
 **The web terminal** — a real Claude Code session in a browser tab, in whichever of the 12
 built-in color schemes you picked. Themes are converted from
@@ -101,6 +127,12 @@ comfortable with a VPS, DNS, and creating a Google OAuth app — there's no way 
 and the setup guide walks each step.
 
 Requires Ubuntu/Debian + systemd, Node 18+ (20+ recommended), tmux. MIT.
+
+**The guide, in four parts:**
+[Part 1 — Agent brief](#part-1--agent-brief) (point Claude at this repo and say *"install this
+harness"*) · [Part 2 — Autonomous install](#part-2--autonomous-install) ·
+[Part 3 — Going live on a VPS](#part-3--infra-human-in-the-loop) ·
+[Part 4 — Reference](#part-4--reference) (architecture, security defaults, requirements)
 
 ---
 

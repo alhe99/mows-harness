@@ -39,7 +39,8 @@ mk .claude      -home-demo-Projects-ledger-api      7f3a1c20-5d4e-4b91-9a02-1c6d
   "Found it: the retry path re-emits the refund event without the idempotency key. Writing the failing test now."
 mk .claude      -home-demo-Projects-storefront-web  2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602  26 "add a dark-mode toggle to the account page and persist the choice" \
   "Toggle wired to localStorage and the prefers-color-scheme fallback — running the visual checks."
-mk .claude      -home-demo-Projects-mows-harness    9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740  95 "implement spec.md — the terminal theme wave"
+mk .claude      -home-demo-Projects-mows-harness    9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740  95 "implement spec.md — the terminal theme wave" \
+  "Wave 2 done: Nord and Catppuccin Mocha converted and passing the contrast check. 4 themes left."
 mk .claude-work -home-demo-Projects-ledger-api      4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98  12 "write the migration for the new payouts table, then dry-run it" \
   "Migration drafted. I need a confirmation before running it against the dev database."
 mk .claude-work -home-demo-Projects-infra-runbooks  6e0b3f45-1d29-4c86-a37e-95c4f7b21d03  240 "draft the on-call runbook for a wedged deploy"
@@ -70,6 +71,7 @@ case "\${1:-}" in
       printf 'cc-demo-ledger-api\t1\t%s\t%s\t424242\t/demo/Projects/ledger-api\t%%1\t7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11\trefund double-count\n' \$((now-1080)) \$((now-8))
       printf 'cc-work-payouts\t0\t%s\t%s\t424243\t/demo/Projects/ledger-api\t%%2\t4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98\tpayouts migration\n' \$((now-780)) \$((now-95))
       printf 'cc-demo-storefront-web\t0\t%s\t%s\t424244\t/demo/Projects/storefront-web\t%%3\t2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602\t\n' \$((now-1620)) \$((now-1520))
+      printf 'cc-demo-mows-harness\t0\t%s\t%s\t424245\t/demo/Projects/mows-harness\t%%4\t9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740\tterminal theme wave\n' \$((now-5400)) \$((now-2400))
     fi
     ;;
   capture-pane)
@@ -82,6 +84,17 @@ case "\${1:-}" in
     ;;
 esac
 exit 0
+EOF
+# the fleet classifier marks a session "paused" when `ps -eo pid=,ppid=,stat=` shows a
+# stopped (stat T) descendant of the pane leader — give pid 424245 one so the fourth demo
+# card renders the paused state; every other ps invocation falls through to the real ps.
+cat > "$STAGE/bin/ps" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-eo" ]; then
+  printf '424242 1 S\n424243 1 S\n424244 1 S\n424245 1 S\n524245 424245 T\n'
+else
+  exec /usr/bin/ps "$@"
+fi
 EOF
 # /system's Environment card runs `claude --version` (via RUN_PATH = ~/.local/bin:…)
 cat > "$H/.local/bin/claude" <<'EOF'

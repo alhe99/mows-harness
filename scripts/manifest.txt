@@ -88,12 +88,12 @@ claude/skills/stack-health/check.py
 claude/skills/sync-to-vps/SKILL.md
 claude/skills/sync-to-vps/sync.py
 docs/architecture.md
-docs/assets/dashboard.png
 docs/assets/demo-session.sh
 docs/assets/device.png
 docs/assets/fleet.gif
 docs/assets/history.png
 docs/assets/fleet.tape
+docs/assets/hero.png
 docs/assets/phone.png
 docs/assets/phone-menu.png
 docs/assets/system.png
