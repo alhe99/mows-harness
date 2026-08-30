@@ -593,6 +593,7 @@ const ICO = {
   plus: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   wrench: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`,
+  maximize: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`,
 };
 // spec empty-state / stage helper (icon box + mono message + dim caption, node 36:651)
 function stageEmpty(icon, msg, cap) {
@@ -843,7 +844,13 @@ ${toggle}
 ${infoCard}
 ${ctlCards}
 </aside>`;
-  const stage = `<div class="devstage${stageObj.fill ? ' live' : ''}">${stageObj.html}</div>`;
+  // live streams get a full-screen toggle (asked for on mobile): pure CSS class flip —
+  // iOS refuses the real Fullscreen API on iframes, and the manifest has no orientation
+  // lock, so overlay + rotate the phone = landscape full screen. Same button exits.
+  const fsBtn = stageObj.fill
+    ? `<button class="fsbtn" type="button" title="full screen — rotate for landscape" aria-label="toggle full screen" onclick="document.body.classList.toggle('devfs')">${ICO.maximize}</button>`
+    : '';
+  const stage = `<div class="devstage${stageObj.fill ? ' live' : ''}">${fsBtn}${stageObj.html}</div>`;
   const bodyClass = (droidSt.state === 'live' || watchUp) ? 'watchlive' : '';
   const head = droidSt.state === 'booting' ? '<meta http-equiv="refresh" content="4">' : '';
   const body = `<h1><a href="/">← sessions</a> <span class="muted">· device</span></h1>
@@ -1550,7 +1557,8 @@ button:hover{background:var(--pop);border-color:var(--bd2)}
 .termfab:hover{background:#4ade9e}
 @media(min-width:701px){.termfab{bottom:14px}}
 body.watchlive .termfab{display:none}
-/* pull-to-refresh chip — created by fleet.js in the installed app only; hidden above the
+/* pull-to-refresh chip — created by the base page script in the installed app only (every
+   page, not just fleetJs ones); hidden above the
    viewport until the pull drags it in (transform is JS-driven, so only opacity animates) */
 #ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) - 44px);z-index:25;width:36px;height:36px;border-radius:50%;background:var(--pop);border:1px solid var(--bd2);box-shadow:0 6px 18px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;color:var(--mut);opacity:0;pointer-events:none;transition:opacity .12s}
 #ptr.go{color:var(--ok)}
@@ -1797,7 +1805,16 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 .tpnorm{display:flex;gap:4px;margin-bottom:4px}
 .tpbright{display:flex;gap:4px;margin-bottom:10px}
 .tpcursor{display:inline-block;width:8px;height:15px;vertical-align:-2px}
-.devstage{flex:1;min-width:0;min-height:600px;border-radius:24px;background:rgba(24,24,27,.2);border:1px dashed var(--bd);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.devstage{flex:1;min-width:0;min-height:600px;border-radius:24px;background:rgba(24,24,27,.2);border:1px dashed var(--bd);overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+/* full-screen toggle on a live stage: CSS-only (iOS has no Fullscreen API for iframes).
+   body.devfs promotes the stage to a fixed overlay; the pinned button (safe-area aware
+   for notch/landscape insets) is also the exit. Tab bar/fab hidden while active. */
+.fsbtn{position:absolute;top:max(10px,env(safe-area-inset-top,10px));right:max(10px,env(safe-area-inset-right,10px));z-index:3;display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;background:rgba(9,9,11,.7);border:1px solid var(--bd2);color:var(--mut);cursor:pointer}
+.fsbtn:hover{color:var(--fg2);background:var(--pop)}
+body.devfs{overflow:hidden}
+body.devfs .devstage.live{position:fixed;inset:0;z-index:80;height:auto;min-height:0;border:0;border-radius:0;background:#000}
+body.devfs .devstage.live .vnc{width:100%;height:100%;max-height:none;aspect-ratio:auto}
+body.devfs .tabs,body.devfs .termfab{display:none}
 /* live on desktop: stage fills the viewport height and the stream fills the stage
    (noVNC/ws-scrcpy scale the remote framebuffer inside the iframe themselves) */
 @media(min-width:701px){
@@ -2094,6 +2111,29 @@ addEventListener('pageshow',function(){n=0;setTimeout(heal,80)});
 document.addEventListener('visibilitychange',function(){if(!document.hidden){n=0;setTimeout(heal,80)}});
 addEventListener('resize',function(){n=0;setTimeout(heal,80)});
 setTimeout(heal,120);
+})();
+/* pull-to-refresh — installed app only: a browser tab already has it natively, and a
+   custom one there would fight the built-in gesture. Lives here in the base page script
+   (NOT fleet.js) so it works on EVERY page — session view, /device, /md included.
+   Never preventDefault (passive listeners), so scrolling stays untouched; arms at 60px. */
+(function(){
+if(!(matchMedia('(display-mode: standalone)').matches&&'ontouchstart' in window))return;
+var ptr=document.createElement('div');ptr.id='ptr';ptr.innerHTML='${ICO.refresh}';document.body.appendChild(ptr);
+var y0=0,armed=false;
+addEventListener('touchstart',function(e){armed=scrollY<=0;y0=e.touches[0].clientY},{passive:true});
+addEventListener('touchmove',function(e){
+  if(!armed)return;
+  var pull=e.touches[0].clientY-y0;
+  if(pull>8&&scrollY<=0){var p=Math.min(pull/2,72);
+    ptr.style.transform='translate(-50%,'+p+'px) rotate('+p*3+'deg)';
+    ptr.style.opacity=Math.min(p/56,1);ptr.classList.toggle('go',p>=56)}
+  else{ptr.style.opacity=0;ptr.classList.remove('go')}
+},{passive:true});
+addEventListener('touchend',function(){
+  if(!armed)return;armed=false;
+  if(ptr.classList.contains('go')){ptr.classList.add('spin');location.reload()}
+  else{ptr.style.transform='';ptr.style.opacity=0}
+},{passive:true});
 })()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
 </body></html>`;
 }
@@ -2432,27 +2472,8 @@ document.addEventListener('keydown',function(e){
     }
   }
 });
-/* pull-to-refresh — installed app only: a browser tab already has it natively, and a
-   custom one there would fight the built-in gesture. Never preventDefault (passive
-   listeners), so scrolling stays untouched; the chip arms at a 60px pull. */
-if(matchMedia('(display-mode: standalone)').matches&&'ontouchstart' in window){
-  var ptr=document.createElement('div');ptr.id='ptr';ptr.innerHTML='${ICO.refresh}';document.body.appendChild(ptr);
-  var y0=0,armed=false;
-  addEventListener('touchstart',function(e){armed=scrollY<=0;y0=e.touches[0].clientY},{passive:true});
-  addEventListener('touchmove',function(e){
-    if(!armed)return;
-    var pull=e.touches[0].clientY-y0;
-    if(pull>8&&scrollY<=0){var p=Math.min(pull/2,72);
-      ptr.style.transform='translate(-50%,'+p+'px) rotate('+p*3+'deg)';
-      ptr.style.opacity=Math.min(p/56,1);ptr.classList.toggle('go',p>=56)}
-    else{ptr.style.opacity=0;ptr.classList.remove('go')}
-  },{passive:true});
-  addEventListener('touchend',function(){
-    if(!armed)return;armed=false;
-    if(ptr.classList.contains('go')){ptr.classList.add('spin');location.reload()}
-    else{ptr.style.transform='';ptr.style.opacity=0}
-  },{passive:true});
-}
+/* pull-to-refresh moved to the base page script (page()) 2026-08-30: living here meant
+   it only existed on fleetJs pages — session view, /device and /md had no PTR at all. */
 })();
 `;
 
