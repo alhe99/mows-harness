@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# mdv <file.md> — print the dashboard's rendered-preview URL for a markdown (or .txt) file.
+# The dashboard's /md route renders it in the browser, phone and desktop alike; the printed
+# URL is clickable in /term (ttyd's xterm ships the web-links addon) and cmd-clickable in
+# most local terminals. Install: fill {{DOMAIN}} and copy to /usr/local/bin/mdv (chmod +x).
+set -euo pipefail
+f=${1:?usage: mdv <file.md>}
+f=$(realpath "$f")
+base=${MDV_BASE:-https://{{DOMAIN}}}
+printf '%s/md?f=%s\n' "$base" \
+  "$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$f")"

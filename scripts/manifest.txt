@@ -118,6 +118,7 @@ infra/SETUP.md
 infra/caddy/Caddyfile.template
 infra/dashboard/claude-dash-lite.service.template
 infra/dashboard/lite.mjs
+infra/dashboard/mdv.template
 infra/droid/SETUP.md
 infra/droid/up.sh
 infra/droid/ws-scrcpy.patch

@@ -1842,6 +1842,140 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 // check means /history never opens an /events connection: no fleet-rows/fleet-cards on
 // that page, so it costs nothing beyond the deferred script fetch). Every other page
 // still skips the tag outright — nothing there for the handler to do.
+// ---------- /md: rendered markdown preview ----------
+// Any session (or the user) prints `mdv <file>` → https://<host>/md?f=<abs path>; the URL
+// is clickable in /term (ttyd's xterm ships the web-links addon) and opens the doc
+// rendered inside the dashboard shell, phone and desktop alike. Server-side
+// mini-renderer, GitHub-basics only: headings, fenced code, lists+task boxes, tables,
+// quotes, hr, inline marks, autolinks. The whole source is HTML-escaped FIRST and only
+// then transformed, so file content can never inject markup.
+// ponytail: not CommonMark — swap in a real parser only when real docs visibly break.
+const MD_ROOT = '/home';
+const MD_CSS = `.mdhead{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin:6px 0 14px;padding-bottom:10px;border-bottom:1px solid var(--bd2)}
+.mdhead b{color:var(--title);font-size:16px}
+.mdhead span{color:var(--dim);font:12px var(--mono);word-break:break-all}
+.mdv{line-height:1.65;color:var(--fg2);padding-bottom:24px}
+.mdv h1,.mdv h2,.mdv h3,.mdv h4,.mdv h5,.mdv h6{color:var(--title);margin:1.3em 0 .5em;line-height:1.25}
+.mdv h1{font-size:23px;border-bottom:1px solid var(--bd2);padding-bottom:8px}
+.mdv h2{font-size:18px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+.mdv h3{font-size:15.5px}
+.mdv p,.mdv ul,.mdv ol,.mdv blockquote,.mdv pre,.mdtbl{margin:0 0 12px}
+.mdv ul,.mdv ol{padding-left:22px}.mdv li{margin:3px 0}
+.mdv li.task{list-style:none;margin-left:-18px}
+.mdv a{color:var(--ok);text-decoration:none}.mdv a:hover{text-decoration:underline}
+.mdv code{font:12.5px var(--mono);background:var(--pop);padding:2px 5px;border-radius:5px}
+.mdv pre{background:var(--card2);border:1px solid var(--bd2);border-radius:var(--r);padding:12px 14px;overflow-x:auto;position:relative}
+.mdv pre code{background:none;padding:0;display:block;line-height:1.55}
+.mdv pre[data-lang]::after{content:attr(data-lang);position:absolute;top:6px;right:10px;color:var(--dimmer);font:11px var(--mono)}
+.mdv blockquote{border-left:3px solid var(--ok-bd);padding:2px 14px;color:var(--mut)}
+.mdv hr{border:0;border-top:1px solid var(--bd2);margin:20px 0}
+.mdtbl{overflow-x:auto}
+.mdv table{border-collapse:collapse;font-size:13.5px}
+.mdv th,.mdv td{border:1px solid var(--bd2);padding:6px 10px;text-align:left}
+.mdv th{background:var(--card2);color:var(--title)}
+.mdv img{max-width:100%;border-radius:var(--r)}`;
+function mdInline(s) { // s is already HTML-escaped; stash code spans so marks inside stay literal
+  const keep = [];
+  s = s.replace(/`([^`]+)`/g, (_, c) => (keep.push(`<code>${c}</code>`), `\x00${keep.length - 1}\x00`));
+  // scheme allowlist: markdown files come from anywhere (cloned repos, downloads) — a
+  // [link](javascript:…) must not become a live URI. Relative paths stay allowed (the
+  // /md?f= rewrite in mdView picks them up).
+  const safeUrl = u => /^(https?:|mailto:|#|\.{0,2}\/|[^:]+$)/i.test(u) ? u : '#';
+  s = s
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => `<img alt="${a}" src="${safeUrl(u)}">`)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => `<a href="${safeUrl(u)}">${t}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>');
+  return s.replace(/\x00(\d+)\x00/g, (_, i) => keep[i]);
+}
+function mdList(items) { // ponytail: one nesting level (indent >= 2), enough for real docs
+  const li = t => { const task = t.match(/^\[( |x|X)\]\s+(.*)/);
+    return task ? `<li class="task"><input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> ${mdInline(task[2])}</li>`
+                : `<li>${mdInline(t)}</li>`; };
+  const base = items[0].ind, ord = items[0].ord;
+  let html = '', sub = [], subOrd = false;
+  const closeSub = () => { if (sub.length) {
+    html = html.replace(/<\/li>$/, `<${subOrd ? 'ol' : 'ul'}>${sub.join('')}</${subOrd ? 'ol' : 'ul'}></li>`); sub = []; } };
+  for (const it of items) {
+    if (it.ind > base && html) { subOrd = it.ord; sub.push(li(it.text)); }
+    else { closeSub(); html += li(it.text); }
+  }
+  closeSub();
+  return `<${ord ? 'ol' : 'ul'}>${html}</${ord ? 'ol' : 'ul'}>`;
+}
+function mdHtml(src) {
+  const lines = esc(src.replace(/\r\n?/g, '\n')).split('\n');
+  const out = []; let para = [], i = 0;
+  const flush = () => { if (para.length) { out.push(`<p>${mdInline(para.join(' '))}</p>`); para = []; } };
+  while (i < lines.length) {
+    const l = lines[i];
+    const fence = l.match(/^```(\w*)/);
+    if (fence) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++; flush();
+      out.push(`<pre${fence[1] ? ` data-lang="${fence[1]}"` : ''}><code>${buf.join('\n')}</code></pre>`);
+      continue;
+    }
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { flush(); const n = h[1].length; out.push(`<h${n}>${mdInline(h[2])}</h${n}>`); i++; continue; }
+    if (/^ {0,3}(-{3,}|_{3,}|\*{3,})\s*$/.test(l)) { flush(); out.push('<hr>'); i++; continue; }
+    if (/^(\s*)([-*+]|\d+[.)])\s+/.test(l)) {
+      flush(); const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        if (m) { items.push({ ind: m[1].length, ord: /\d/.test(m[2]), text: m[3] }); i++; }
+        else if (/^\s{2,}\S/.test(lines[i])) { items[items.length - 1].text += ' ' + lines[i++].trim(); }
+        else break;
+      }
+      out.push(mdList(items)); continue;
+    }
+    if (/^&gt;\s?/.test(l)) { // '>' arrives escaped
+      flush(); const buf = [];
+      while (i < lines.length && /^&gt;\s?/.test(lines[i])) buf.push(lines[i++].replace(/^&gt;\s?/, ''));
+      out.push(`<blockquote>${buf.join('\n').split(/\n{2,}|\n(?=\s*$)/).filter(x => x.trim())
+        .map(x => `<p>${mdInline(x.replace(/\n/g, ' '))}</p>`).join('')}</blockquote>`);
+      continue;
+    }
+    if (l.includes('|') && i + 1 < lines.length && /-/.test(lines[i + 1]) && /^\s*\|?[-: |]+\|[-: |]*\s*$/.test(lines[i + 1])) {
+      flush();
+      const cells = r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => mdInline(c.trim()));
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && lines[i].includes('|')) rows.push(cells(lines[i++]));
+      out.push(`<div class="mdtbl"><table><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${
+        rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      continue;
+    }
+    if (!l.trim()) { flush(); i++; continue; }
+    para.push(l.trim()); i++;
+  }
+  flush();
+  return out.join('\n');
+}
+async function mdView(req, res, url) {
+  const f = url.searchParams.get('f') || '';
+  const oops = (code, m) => send(req, res, code, page('markdown', `<h1><a href="/">mows sessions</a></h1><p style="margin:18px 0">${esc(m)}</p><p><a href="/">← sessions</a></p>`));
+  if (!f.startsWith('/')) return oops(400, 'usage: /md?f=/home/<user>/path/to/file.md');
+  if (!/\.(md|markdown|txt)$/i.test(f)) return oops(400, 'only .md, .markdown and .txt files can be previewed.');
+  let real, st;
+  try { real = await fsp.realpath(f); st = await fsp.stat(real); } catch { return oops(404, `not found: ${f}`); }
+  if (!real.startsWith(MD_ROOT + '/')) return oops(403, 'only files under /home are viewable.');
+  if (!st.isFile() || st.size > 2 * 1024 * 1024) return oops(403, 'not a regular file under 2 MB.');
+  const src = await fsp.readFile(real, 'utf8');
+  let art = /\.txt$/i.test(real) ? `<pre>${esc(src)}</pre>` : mdHtml(src);
+  // cross-references between docs stay browsable: relative links resolve through /md too
+  art = art.replace(/href="(?!https?:|mailto:|#|\/)([^"]+)"/g,
+    (_, rl) => `href="/md?f=${encodeURIComponent(path.resolve(path.dirname(real), rl))}"`);
+  const kb = st.size < 1024 ? `${st.size} B` : `${(st.size / 1024).toFixed(1)} KB`;
+  const when = rel(st.mtimeMs) === 'now' ? 'just now' : `${rel(st.mtimeMs)} ago`;
+  const body = `<h1><a href="/">mows sessions</a></h1>
+<div class="mdhead"><b>${esc(path.basename(real))}</b><span>${esc(real)}</span><span>${kb} · updated ${when}</span></div>
+<article class="mdv">${art}</article>`;
+  send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>`, '', '', false, null, req.headers.host));
+}
+
 function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
   // desktop header (mock 2026-08-29): logo+title/subtitle, centered pill nav, "+ new
   // session" button; .navdup hides the whole thing <700px where the mobile <h1> + tab
@@ -2611,6 +2745,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/app') return await appView(req, res, url);
     if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
+    if (p === '/md') return await mdView(req, res, url);
     // ↻ button: force usage re-collect, then bounce back to the same page (PRG) with
     // sys=1 so the panel re-opens already showing the refresh in progress. Only /system
     // renders the system+usage panel now (moved off '/' — gap #1/#2).
@@ -2692,6 +2827,13 @@ if (args.includes('--selftest')) {
     if (got !== fx.want) { console.error(`FAIL: fleet classify "${fx.name}": want ${fx.want}, got ${got}`); fleetFail++; }
   }
   if (fleetFail) { console.error(`FAIL: ${fleetFail}/${FLEET_FIXTURES.length} fleet classifier fixture(s) failed`); process.exit(1); }
+
+  // /md renderer smoke: one fixture exercising every block type through the real mdHtml()
+  const mdOut = mdHtml('# T\n\n- [x] done\n- item <b>\n\n```js\nconst a = 1 < 2;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> q **b** [l](https://x/) [j](javascript:alert(1))');
+  for (const frag of ['<h1>T</h1>', ' checked>', '<li>item &lt;b&gt;</li>', '1 &lt; 2', '<td>2</td>',
+                      '<blockquote>', '<strong>b</strong>', '<a href="https://x/">l</a>', '<a href="#">j</a>'])
+    if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
+  console.log('md renderer: OK');
   console.log(`fleet classifier: ${FLEET_FIXTURES.length} fixtures OK — selftest PASS`);
   process.exit(0);
 }

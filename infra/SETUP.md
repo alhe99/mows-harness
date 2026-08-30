@@ -217,6 +217,18 @@ The dashboard runs as `root` (see `infra/systemd/claude-dash-lite.service`), so 
 sudoers grant is involved — which is exactly why the scope above is a fixed table and the
 preview is mandatory.
 
+#### Markdown preview (`/md` + `mdv`)
+
+`GET /md?f=<abs path>` renders any `.md`/`.markdown`/`.txt` file under `/home` in the
+dashboard shell (server-side mini-renderer in `lite.mjs`, escape-first so file content
+can't inject markup; realpath-guarded to `/home`, 2 MB cap). The companion CLI prints the
+clickable URL — `/term`'s xterm makes URLs in any pane clickable, so a session can just
+print `mdv spec.md` output and you tap it, phone or desktop:
+
+```bash
+sed 's/{{DOMAIN}}/<your-domain>/' infra/dashboard/mdv.template | sudo install -m755 /dev/stdin /usr/local/bin/mdv
+```
+
 ### 8. Linger
 
 ```bash
