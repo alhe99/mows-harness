@@ -139,6 +139,16 @@ chk "lint: escalate.via enum"             'mows-agent lint badesc 2>&1 | grep -q
 mkagent "$HOME/.claude-work/agents/good.md" "$(sed 's/profile: default/profile: work/' <<<"$MOWS_BLOCK_OK")"
 chk "lint: duplicate name across profiles dies" 'mows-agent lint good 2>&1 | grep -q "more than one profile"'
 rm "$HOME/.claude-work/agents/good.md"
+# regression: a profile dir symlinked to another profile's agents/ dir (a legitimate setup
+# — e.g. two accounts sharing one agents directory) resolves to the SAME physical file and
+# must be treated as one agent, not a duplicate; only genuinely distinct files sharing a
+# name across profiles (asserted above) are a real duplicate. Restore the real directory
+# afterward — later sections expect $HOME/.claude-work/agents to exist as its own dir.
+rm -rf "$HOME/.claude-work/agents"
+ln -s "$A" "$HOME/.claude-work/agents"
+chk "lint: symlinked profile dir is not a duplicate" 'mows-agent lint good'
+rm "$HOME/.claude-work/agents"
+mkdir -p "$HOME/.claude-work/agents"
 chk "lint --all reports each agent"       'mows-agent lint --all 2>&1 | grep -q "== good"'
 chk "lint --all exits 1 with any error"   '! mows-agent lint --all'
 rm "$A"/{badname,nomows,badturns,badmem,bypass,unknownkey,badprofile,badwd,nobudget,badcron,relpath,prro,trifecta,badesc}.md

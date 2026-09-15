@@ -35,20 +35,39 @@ cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
 
 # an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key
 has_mows(){ awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}' "$1"; }
-agent_file(){ # prints the single file for <name>; dies on duplicates; empty if none
+agent_file(){ # prints the single file for <name>; dies on genuine duplicates; empty if none
   # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
   # is missing its mows: block, so lint can report the exact "mows: block is required"
   # error instead of a generic "no agent named". Bulk discovery (all_agents) keeps the
   # has_mows filter so plain Claude Code subagents aren't swept into --all.
-  local n=$1 f found=()
-  while IFS= read -r d; do f="$d/agents/$n.md"; [ -f "$f" ] && found+=("$f"); done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON")
+  #
+  # Dedupe by RESOLVED path: two profile dirs can alias the same physical agents/ dir
+  # (e.g. ~/.claude-work/agents symlinked to ~/.claude/agents, a legitimate setup), in
+  # which case the same file just gets discovered twice — that is one agent, not a
+  # duplicate. Only files that resolve to genuinely different paths are a real duplicate.
+  local n=$1 f rf dup r found=() resolved=()
+  while IFS= read -r d; do
+    f="$d/agents/$n.md"; [ -f "$f" ] || continue
+    rf=$(readlink -f "$f")
+    dup=0; for r in "${resolved[@]:-}"; do [ "$r" = "$rf" ] && dup=1 && break; done
+    [ "$dup" = 1 ] && continue
+    resolved+=("$rf"); found+=("$f")
+  done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON")
   [ ${#found[@]} -gt 1 ] && die "agent $n defined in more than one profile: ${found[*]}"
   [ ${#found[@]} -eq 1 ] && echo "${found[0]}"; return 0
 }
-all_agents(){ # name<TAB>file, sorted
-  local d f
+all_agents(){ # name<TAB>file, sorted; same resolved-path dedupe as agent_file (see there)
+  local d f rf dup r resolved=()
   while IFS= read -r d; do
-    for f in "$d"/agents/*.md; do [ -f "$f" ] && has_mows "$f" && printf '%s\t%s\n' "$(basename "${f%.md}")" "$f"; done
+    for f in "$d"/agents/*.md; do
+      [ -f "$f" ] || continue
+      has_mows "$f" || continue
+      rf=$(readlink -f "$f")
+      dup=0; for r in "${resolved[@]:-}"; do [ "$r" = "$rf" ] && dup=1 && break; done
+      [ "$dup" = 1 ] && continue
+      resolved+=("$rf")
+      printf '%s\t%s\n' "$(basename "${f%.md}")" "$f"
+    done
   done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON") | sort
 }
 meta(){ "$META" json "$1"; }
