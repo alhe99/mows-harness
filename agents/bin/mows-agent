@@ -66,7 +66,7 @@ escalate(){ # escalate <name> <via> <msg>: always logs; posts to Discord only wh
   event "$1" "$3"
   [ "$2" = discord ] && [ -n "${DISCORD_WEBHOOK:-}" ] || return 0
   curl -fsS --max-time 10 -H 'content-type: application/json' \
-    --data "$(jq -n --arg c "🤖 $1: $3" '{content:$c}')" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+    --data "$(jq -nc --arg c "🤖 $1: $3" '{content:$c}')" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
 }
 
 # ---------- lint ----------
@@ -82,8 +82,153 @@ cmd_lint(){
   return $rc
 }
 
+# ---------- run records ----------
+write_status(){ # write_status <state>  (uses the run globals; atomic)
+  jq -n --arg a "$AGENT" --arg r "$RUN_ID" --arg s "$1" --arg sid "${SID:-}" --arg st "$STARTED" \
+        --argjson turns "${TURNS:-0}" --argjson tools "${TOOLS:-0}" --argjson cost "${COST:-0}" \
+        --argjson den "${DENIALS:-0}" --argjson pid "$$" --argjson cpid "${CPID:-0}" \
+        '{agent:$a,run_id:$r,state:$s,session_id:$sid,started_at:$st,last_event_at:(now|todate),
+          turns:$turns,tool_calls:$tools,cost_usd:$cost,permission_denials:$den,pid:$pid,claude_pid:$cpid}' \
+        > "$RUNDIR/status.json.tmp" && mv "$RUNDIR/status.json.tmp" "$RUNDIR/status.json"
+}
+run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
+  local prev
+  prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
+  printf 'mows-agent run context\n- agent: %s\n- run_id: %s\n- profile: %s\n- workdir: %s\n- budget: %s USD, %s turns\n' \
+    "$AGENT" "$RUN_ID" "$PROFILE" "$WORKDIR" "$USD_RUN" "$MAXT"
+  if [ -n "$prev" ] && [ -f "$prev/status.json" ]; then
+    printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
+    [ -f "$prev/result.json" ] && printf -- '- previous result: %s\n' "$(jq -r '(.result // "") | .[0:600]' "$prev/result.json")"
+  fi
+  printf 'You have no human available: never ask questions, decide and finish within budget.\n'
+}
+kill_tree(){ # kill the claude process GROUP. $! is not reliably the pgid leader (setsid execs
+  # only when the caller is not already a process-group leader), so read the real pgid.
+  local pid=$1 pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ]; then kill -TERM -- "-$pgid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
+}
+tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decides the final state.
+  local cpid=$1 line final="" stalled=0 rc
+  TURNS=0; TOOLS=0; COST=0; DENIALS=0; SID=""
+  while true; do
+    if IFS= read -r -t "$STALL_SEC" line; then
+      [ -n "$line" ] || continue
+      case $line in
+        *'"type":"system"'*)    SID=$(jq -r '.session_id // empty' <<<"$line"); write_status working;;
+        *'"type":"assistant"'*) TURNS=$((TURNS + 1))
+                                TOOLS=$((TOOLS + $(jq '[.message.content[]? | select(.type=="tool_use")] | length' <<<"$line")))
+                                write_status working;;
+        *'"type":"result"'*)    final=$line; break;;
+      esac
+    else
+      rc=$?; [ "$rc" -gt 128 ] || break            # EOF without a result record
+      kill_tree "$cpid"; stalled=1; break
+    fi
+  done
+  local st
+  if [ -n "$final" ]; then
+    printf '%s\n' "$final" > "$RUNDIR/result.json"
+    COST=$(jq '.total_cost_usd // 0' <<<"$final"); TURNS=$(jq '.num_turns // 0' <<<"$final")
+    DENIALS=$(jq '(.permission_denials // []) | length' <<<"$final"); SID=$(jq -r '.session_id // empty' <<<"$final")
+    case "$(jq -r '[.subtype // "", .terminal_reason // "", (.is_error|tostring)] | join("|")' <<<"$final")" in
+      success\|*\|false) st=done;;
+      *budget*)          st=budget_exceeded;;
+      *max_turns*)       st=failed;;
+      *)                 st=failed;;
+    esac
+  elif [ "$stalled" = 1 ]; then st=stalled
+  else st=failed; fi
+  write_status "$st"
+}
+today_spend(){ # sum of today's total_cost_usd for <name>
+  local d="$STATE_ROOT/$1/runs"; [ -d "$d" ] || { echo 0; return; }
+  cat "$d/$(date +%Y%m%d)"-*/result.json 2>/dev/null | jq -s '[.[].total_cost_usd // 0] | add // 0'
+}
+quota_ok(){ # quota_ok <profile> <floor>: 1 = refuse. Unknown/absent quota never refuses (spec §4).
+  local prof=$1 floor=$2 j pct
+  [ "$floor" -gt 0 ] 2>/dev/null || return 0
+  command -v "$QUOTA_BIN" >/dev/null 2>&1 || { echo "WARN: $QUOTA_BIN not installed, quota_floor skipped" >&2; return 0; }
+  j=$("$QUOTA_BIN" --json 2>/dev/null) || return 0
+  # claude-quota keys accounts personal|work; profile default -> personal, others by name
+  pct=$(jq -r --arg p "$prof" '(.[$p] // (if $p=="default" then .personal else {} end)) as $a
+        | [($a.five_hour_pct // 0), ($a.weekly_pct // 0)] | max' <<<"$j" 2>/dev/null) || return 0
+  awk -v p="${pct:-0}" -v f="$floor" 'BEGIN{exit !(p > 100 - f)}' && return 1
+  return 0
+}
+running_pid(){ # pid of a live `working` run of <name>, else nothing
+  local s="$STATE_ROOT/$1/last/status.json" pid
+  [ -f "$s" ] || return 0
+  [ "$(jq -r .state "$s")" = working ] || return 0
+  pid=$(jq -r '.pid // empty' "$s"); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"; return 0
+}
+merge_step(){ # merge.policy pr: push the agent's branch and open a PR; never touches base
+  local mg base br; mg=$(jq -c '.mows | .merge // {}' <<<"$M")
+  [ "$(mget "$mg" .policy)" = pr ] || return 0
+  base=$(mget "$mg" .base); base=${base:-main}
+  git -C "$WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { event "$AGENT" "merge: $WORKDIR is not a git repo"; return 0; }
+  br=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD)
+  [ "$br" != "$base" ] || { event "$AGENT" "merge: still on $base, nothing to open"; return 0; }
+  [ "$(git -C "$WORKDIR" rev-list --count "$base..HEAD" 2>/dev/null || echo 0)" -gt 0 ] || { event "$AGENT" "merge: no commits ahead of $base"; return 0; }
+  if (cd "$WORKDIR" && git push -u origin HEAD && gh pr create --fill --base "$base") >> "$RUNDIR/merge.log" 2>&1; then
+    event "$AGENT" "merge: PR opened from $br"
+  else
+    escalate "$AGENT" "$VIA" "merge: PR creation failed for $br (see $RUNDIR/merge.log)"
+  fi
+}
+
+cmd_run(){
+  AGENT=${1:-}; [ -n "$AGENT" ] || die "usage: mows-agent run <name> [task…]"; shift
+  local f; f=$(agent_file "$AGENT") || exit 64; [ -n "$f" ] || die "no agent named $AGENT"
+  check_version
+  if ! "$META" lint "$f" >&2; then event "$AGENT" "refused: lint errors in $f"; exit 6; fi
+  M=$(meta "$f")
+  PROFILE=$(mget "$M" .mows.profile); CFGDIR=$(cfg_of "$PROFILE")
+  WORKDIR=$(expand_tilde "$(mget "$M" .mows.workdir)")
+  USD_RUN=$(mget "$M" .mows.budget.usd_per_run); MAXT=$(mget "$M" .mows.budget.max_turns)
+  VIA=$(mget "$M" .mows.escalate.via); VIA=${VIA:-none}
+  local usd_day floor task pid spent
+  usd_day=$(mget "$M" .mows.budget.usd_per_day); floor=$(mget "$M" .mows.budget.quota_floor)
+  task=${*:-$(mget "$M" .mows.task)}
+  # ---- refusals (spec §3.1 step 2) ----
+  pid=$(running_pid "$AGENT")
+  if [ -n "$pid" ]; then escalate "$AGENT" "$VIA" "refused: $(readlink "$STATE_ROOT/$AGENT/last") still working (pid $pid)"; exit 6; fi
+  if [ -n "$usd_day" ]; then
+    spent=$(today_spend "$AGENT")
+    if awk -v s="$spent" -v c="$usd_day" 'BEGIN{exit !(s >= c)}'; then
+      escalate "$AGENT" "$VIA" "refused: daily cap \$$usd_day reached (spent \$$spent today)"; exit 6; fi
+  fi
+  if ! quota_ok "$PROFILE" "${floor:-0}"; then escalate "$AGENT" "$VIA" "refused: account quota below ${floor}% headroom (claude-quota)"; exit 6; fi
+  # ---- run record ----
+  RUN_ID=$(date +%Y%m%d-%H%M%S)-$$; RUNDIR="$STATE_ROOT/$AGENT/runs/$RUN_ID"; mkdir -p "$RUNDIR"
+  : > "$RUNDIR/stream.jsonl"  # pre-create: `tail -f` errors out (no --retry) if the file doesn't exist yet
+  ln -sfn "runs/$RUN_ID" "$STATE_ROOT/$AGENT/last"
+  STARTED=$(date -Is); CPID=0; write_status working
+  cd "$WORKDIR" || die "cannot cd $WORKDIR"
+  local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+  # setsid: claude leads its own process group so a stall kill takes its MCP/tool children too
+  # (kill_tree reads the real pgid rather than assuming it equals $!)
+  CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
+      --output-format stream-json --verbose --permission-prompts none \
+      --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
+      --append-system-prompt "$(run_context)" "$task" \
+      > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
+  CPID=$!; write_status working
+  trap 'kill_tree "$CPID"' TERM INT
+  tail -n +1 -f --pid="$CPID" "$RUNDIR/stream.jsonl" | tail_loop "$CPID"
+  wait "$CPID" 2>/dev/null
+  local st; st=$(jq -r .state "$RUNDIR/status.json")
+  case $st in
+    done)            merge_step; exit 0;;
+    budget_exceeded) escalate "$AGENT" "$VIA" "$RUN_ID budget_exceeded (cap \$$USD_RUN)"; exit 4;;
+    stalled)         escalate "$AGENT" "$VIA" "$RUN_ID stalled: no stream event for ${STALL_SEC}s, killed"; exit 5;;
+    *)               escalate "$AGENT" "$VIA" "$RUN_ID failed: $(jq -r '(.result // "") | .[0:200]' "$RUNDIR/result.json" 2>/dev/null || echo 'no result record')"; exit 3;;
+  esac
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
   lint) shift; cmd_lint "$@";;
+  run)  shift; cmd_run "$@";;
   *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
 esac

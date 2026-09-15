@@ -143,5 +143,66 @@ chk "lint --all reports each agent"       'mows-agent lint --all 2>&1 | grep -q 
 chk "lint --all exits 1 with any error"   '! mows-agent lint --all'
 rm "$A"/{badname,nomows,badturns,badmem,bypass,unknownkey,badprofile,badwd,nobudget,badcron,relpath,prro,trifecta,badesc}.md
 
+echo "### run: state table"
+S="$MOWS_AGENTS_STATE/good"
+echo ok > "$CLAUDE_MODE_FILE"
+mows-agent run good >/dev/null 2>&1; RC=$?
+chk "run ok: exit 0"                          '[ "$RC" = 0 ]'
+chk "run ok: status.json state=done"          '[ "$(jq -r .state "$S/last/status.json")" = done ]'
+chk "run ok: result.json saved verbatim"      '[ "$(jq -r .result "$S/last/result.json")" = "stub says OK" ]'
+chk "run ok: cost copied from result"         '[ "$(jq -r .cost_usd "$S/last/status.json")" = 0.0123 ]'
+chk "run ok: turns from result"               '[ "$(jq -r .turns "$S/last/status.json")" = 2 ]'
+chk "run ok: tool_calls counted"              '[ "$(jq -r .tool_calls "$S/last/status.json")" = 1 ]'
+chk "run ok: session_id captured"             '[ "$(jq -r .session_id "$S/last/status.json")" = 00000000-0000-4000-8000-000000000001 ]'
+chk "run ok: run_id shape"                    'jq -r .run_id "$S/last/status.json" | grep -qE "^[0-9]{8}-[0-9]{6}-[0-9]+$"'
+chk "run ok: last -> runs/<id>"               '[ "$(readlink "$S/last")" = "runs/$(jq -r .run_id "$S/last/status.json")" ]'
+chk "run ok: stream.jsonl kept"               'grep -q "\"type\":\"result\"" "$S/last/stream.jsonl"'
+chk "run ok: no event on success"             '[ ! -s "$S/events.log" ]'
+chk "run ok: no discord post on success"      '[ ! -s "$CURL_LOG" ]'
+chk "args: --agent good"                      'grep -qx -- "--agent" "$CLAUDE_ARGS_FILE" && grep -qx good "$CLAUDE_ARGS_FILE"'
+chk "args: --permission-prompts none"         'grep -A1 -x -- "--permission-prompts" "$CLAUDE_ARGS_FILE" | grep -qx none'
+chk "args: --max-budget-usd 1.5"              'grep -A1 -x -- "--max-budget-usd" "$CLAUDE_ARGS_FILE" | grep -qx 1.5'
+chk "args: --max-turns 40"                    'grep -A1 -x -- "--max-turns" "$CLAUDE_ARGS_FILE" | grep -qx 40'
+chk "args: --strict-mcp-config, no mcp file"  'grep -qx -- "--strict-mcp-config" "$CLAUDE_ARGS_FILE" && ! grep -qx -- "--mcp-config" "$CLAUDE_ARGS_FILE"'
+chk "args: never --dangerously-skip"          '! grep -q dangerously "$CLAUDE_ARGS_FILE"'
+chk "args: task is the manifest task"         'grep -qx "do the thing" "$CLAUDE_ARGS_FILE"'
+chk "args: run context appended"              'grep -q "run_id:" "$CLAUDE_ARGS_FILE" && grep -q "never ask questions" "$CLAUDE_ARGS_FILE"'
+chk "env: CLAUDE_CONFIG_DIR = profile dir"    'grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude" "$CLAUDE_ARGS_FILE"'
+chk "env: cwd = workdir"                      'grep -qx "PWD=$T/work" "$CLAUDE_ARGS_FILE"'
+mows-agent run good "custom task text" >/dev/null 2>&1
+chk "args: CLI task overrides manifest"       'grep -qx "custom task text" "$CLAUDE_ARGS_FILE"'
+chk "run context names previous run"          'grep -q "previous run:" "$CLAUDE_ARGS_FILE"'
+
+echo budget > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1; RC=$?
+chk "run budget: exit 4"                      '[ "$RC" = 4 ]'
+chk "run budget: state budget_exceeded"       '[ "$(jq -r .state "$S/last/status.json")" = budget_exceeded ]'
+chk "run budget: event logged"                'grep -q budget_exceeded "$S/events.log"'
+chk "run budget: no discord (via unset)"      '[ ! -s "$CURL_LOG" ]'
+echo maxturns > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1; RC=$?
+chk "run maxturns: exit 3 failed"             '[ "$RC" = 3 ] && [ "$(jq -r .state "$S/last/status.json")" = failed ]'
+echo error > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1; RC=$?
+chk "run api error: exit 3 failed"            '[ "$RC" = 3 ] && [ "$(jq -r .state "$S/last/status.json")" = failed ]'
+echo noresult > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1; RC=$?
+chk "run no result record: exit 3 failed"     '[ "$RC" = 3 ] && [ "$(jq -r .state "$S/last/status.json")" = failed ]'
+chk "run no result: no result.json"           '[ ! -f "$S/last/result.json" ]'
+echo hang > "$CLAUDE_MODE_FILE"; T0=$(date +%s); mows-agent run good >/dev/null 2>&1; RC=$?; T1=$(date +%s)
+chk "run hang: exit 5 stalled"                '[ "$RC" = 5 ] && [ "$(jq -r .state "$S/last/status.json")" = stalled ]'
+chk "run hang: killed within 15s"             '[ $((T1 - T0)) -lt 15 ]'
+chk "run hang: no leftover sleep"             '! pgrep -f "sleep 3600" -u "$(id -u)" >/dev/null || ! pgrep -P "$(jq -r .claude_pid "$S/last/status.json")" >/dev/null'
+echo ok > "$CLAUDE_MODE_FILE"
+
+echo "### run: escalation via discord"
+mkagent "$A/loud.md" "$(printf '%s\n  escalate: {via: discord}' "$MOWS_BLOCK_OK")"
+echo budget > "$CLAUDE_MODE_FILE"; mows-agent run loud >/dev/null 2>&1
+chk "discord: exactly one post"               '[ "$(wc -l < "$CURL_LOG")" = 1 ]'
+chk "discord: names agent + state"            'grep -q "loud" "$CURL_LOG" && grep -q budget_exceeded "$CURL_LOG"'
+echo ok > "$CLAUDE_MODE_FILE"; : > "$CURL_LOG"
+
+echo "### run: refusals"
+mkagent "$A/broken.md" "$MOWS_BLOCK_OK"; sed -i 's/^maxTurns: 40/maxTurns: "abc"/' "$A/broken.md"
+mows-agent run broken >/dev/null 2>&1; RC=$?
+chk "refuse: lint error -> exit 6, no run dir" '[ "$RC" = 6 ] && [ ! -d "$MOWS_AGENTS_STATE/broken/runs" ]'
+chk "refuse: no agent named -> 64"             'mows-agent run nosuch >/dev/null 2>&1; [ $? = 64 ]'
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
