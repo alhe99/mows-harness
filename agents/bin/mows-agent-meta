@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""mows-agent-meta — the only validator an agent file gets.
+
+Claude Code type-checks NOTHING in file-based agent frontmatter (verified 2.1.273:
+maxTurns: "abc" and memory: nonsense both load silently), so both namespaces are checked here.
+
+  mows-agent-meta json <agent.md>   frontmatter as JSON on stdout (exit 2 if none)
+  mows-agent-meta lint <agent.md>   ERROR:/WARN: lines on stdout; exit 1 iff any ERROR
+
+Env: MOWS_PROFILES_JSON = {"default":"<HOME>/.claude","work":"<HOME>/.claude-work"}
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+try:
+    import yaml
+except ImportError:  # python3-yaml is a cloud-init dependency on Ubuntu server; absent on minimal images
+    print("mows-agent-meta: python3 yaml module missing: sudo apt-get install -y python3-yaml", file=sys.stderr)
+    sys.exit(2)
+
+PERM = {"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+MEM = {"user", "project", "local"}
+ISO = {"worktree", "none"}
+MODEL_ALIAS = {"sonnet", "opus", "haiku", "inherit"}
+MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days"}
+BUDGET_KEYS = {"usd_per_run", "max_turns", "usd_per_day", "quota_floor"}
+TRIGGER_TYPES = {"cron", "path", "webhook"}
+
+
+def frontmatter(path):
+    text = open(path, encoding="utf-8").read()
+    m = re.match(r"^---[ \t]*\n(.*?)\n---[ \t]*(\n|$)", text, re.S)
+    if not m:
+        return None
+    try:
+        data = yaml.safe_load(m.group(1))
+    except yaml.YAMLError as e:
+        return {"__yaml_error__": str(e).splitlines()[0]}
+    return data if isinstance(data, dict) else None
+
+
+def as_list(v):
+    """Claude accepts `tools: Read, Grep` (string) and `tools: [Read, Grep]` (list)."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [t.strip() for t in v.split(",") if t.strip()]
+    return list(v) if isinstance(v, list) else None
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def lint(path):
+    E, W = [], []
+    fm = frontmatter(path)
+    if fm is None:
+        return ["no YAML frontmatter (file must start with ---)"], []
+    if "__yaml_error__" in fm:
+        return ["frontmatter is not valid YAML: " + fm["__yaml_error__"]], []
+    stem = os.path.splitext(os.path.basename(path))[0]
+
+    # ---- Claude Code namespace ----
+    if fm.get("name") != stem:
+        E.append(f"name must equal the filename stem '{stem}' (got {fm.get('name')!r})")
+    if not isinstance(fm.get("description"), str) or not fm["description"].strip():
+        E.append("description is required")
+    if "maxTurns" in fm and not (is_int(fm["maxTurns"]) and fm["maxTurns"] > 0):
+        E.append(f"maxTurns must be a positive integer (got {fm['maxTurns']!r})")
+    if "memory" in fm and fm["memory"] not in MEM:
+        E.append(f"memory must be one of {sorted(MEM)} (got {fm['memory']!r})")
+    if fm.get("permissionMode") == "bypassPermissions":
+        E.append("permissionMode: bypassPermissions is forbidden for agents (spec §7)")
+    elif "permissionMode" in fm and fm["permissionMode"] not in PERM:
+        E.append(f"permissionMode must be one of {sorted(PERM)} (got {fm['permissionMode']!r})")
+    if "isolation" in fm and fm["isolation"] not in ISO:
+        E.append(f"isolation must be one of {sorted(ISO)} (got {fm['isolation']!r})")
+    model = fm.get("model")
+    if model is not None and not (model in MODEL_ALIAS or (isinstance(model, str) and model.startswith("claude-"))):
+        E.append(f"model must be sonnet|opus|haiku|inherit or a claude-* id (got {model!r})")
+    tools = as_list(fm.get("tools"))
+    dis = as_list(fm.get("disallowedTools"))
+    if tools is None:
+        E.append("tools must be a list or comma-separated string")
+    if dis is None:
+        E.append("disallowedTools must be a list or comma-separated string")
+    can_write = not ({"Write", "Edit"} <= set(dis or []))
+
+    # ---- mows namespace ----
+    mows = fm.get("mows")
+    if not isinstance(mows, dict):
+        E.append("mows: block is required")
+        return E, W
+    for k in sorted(set(mows) - MOWS_KEYS):
+        E.append(f"mows.{k}: unknown key (allowed: {sorted(MOWS_KEYS)})")
+    profiles = json.loads(os.environ.get("MOWS_PROFILES_JSON") or "{}")
+    prof = mows.get("profile")
+    if not prof:
+        E.append("mows.profile is required")
+    elif prof not in profiles:
+        E.append(f"mows.profile '{prof}' is not a known profile (known: {sorted(profiles)})")
+    wd = mows.get("workdir")
+    if not isinstance(wd, str) or not wd:
+        E.append("mows.workdir is required")
+    elif not os.path.isdir(os.path.expanduser(wd)):
+        E.append(f"mows.workdir does not exist: {wd}")
+    if not isinstance(mows.get("task"), str) or not mows["task"].strip():
+        E.append("mows.task is required (the default prompt of a run)")
+    b = mows.get("budget")
+    if not isinstance(b, dict):
+        E.append("mows.budget is required")
+    else:
+        for k in sorted(set(b) - BUDGET_KEYS):
+            E.append(f"mows.budget.{k}: unknown key (allowed: {sorted(BUDGET_KEYS)})")
+        if not (is_num(b.get("usd_per_run")) and b["usd_per_run"] > 0):
+            E.append("mows.budget.usd_per_run must be a number > 0")
+        if not (is_int(b.get("max_turns")) and b["max_turns"] > 0):
+            E.append("mows.budget.max_turns must be a positive integer")
+        if "usd_per_day" in b and not (is_num(b["usd_per_day"]) and b["usd_per_day"] > 0):
+            E.append("mows.budget.usd_per_day must be a number > 0")
+        if "quota_floor" in b and not (is_int(b["quota_floor"]) and 0 <= b["quota_floor"] <= 100):
+            E.append("mows.budget.quota_floor must be an integer 0..100")
+    trig = mows.get("triggers", [])
+    has_webhook = False
+    if not isinstance(trig, list):
+        E.append("mows.triggers must be a list")
+    else:
+        for i, t in enumerate(trig):
+            if not isinstance(t, dict) or t.get("type") not in TRIGGER_TYPES:
+                E.append(f"mows.triggers[{i}].type must be one of {sorted(TRIGGER_TYPES)}")
+                continue
+            if t["type"] == "cron":
+                spec = t.get("spec")
+                if not isinstance(spec, str) or not spec:
+                    E.append(f"mows.triggers[{i}].spec is required for cron")
+                elif shutil.which("systemd-analyze"):
+                    r = subprocess.run(["systemd-analyze", "calendar", spec], capture_output=True, text=True)
+                    if r.returncode != 0:
+                        E.append(f"mows.triggers[{i}].spec is not valid OnCalendar syntax: {spec!r}")
+                else:
+                    W.append(f"mows.triggers[{i}]: systemd-analyze not found, cron spec unchecked")
+            elif t["type"] == "path":
+                pth = t.get("path")
+                if not isinstance(pth, str) or not os.path.isabs(os.path.expanduser(pth)):
+                    E.append(f"mows.triggers[{i}].path must be an absolute path (~ allowed)")
+            else:
+                has_webhook = True
+                if set(t) - {"type"}:
+                    E.append(f"mows.triggers[{i}]: webhook takes no keys besides type (the secret lives in config)")
+    mg = mows.get("merge", {})
+    if not isinstance(mg, dict):
+        E.append("merge: must be a map")
+    else:
+        pol = mg.get("policy", "none")
+        if pol not in {"none", "pr"}:
+            E.append(f"merge.policy must be none|pr (got {pol!r})")
+        if pol == "pr":
+            if not shutil.which("gh"):
+                E.append("merge.policy: pr requires gh on PATH")
+            elif subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0:
+                E.append("merge.policy: pr requires `gh auth status` to pass for this user")
+            if not can_write:
+                E.append("merge.policy: pr but Write and Edit are both disallowed: nothing to merge")
+        if "base" in mg and not isinstance(mg["base"], str):
+            E.append("merge.base must be a string")
+    esc = mows.get("escalate", {})
+    if not isinstance(esc, dict) or esc.get("via", "none") not in {"discord", "none"}:
+        E.append("mows.escalate.via must be discord|none")
+    rd = mows.get("retention_days", 30)
+    if not (is_int(rd) and rd > 0):
+        E.append("mows.retention_days must be a positive integer")
+    if has_webhook and can_write:
+        W.append("webhook trigger + write tools on one agent (untrusted trigger with write capability): "
+                 "add Write, Edit to disallowedTools unless you mean it")
+    return E, W
+
+
+def main():
+    if len(sys.argv) != 3 or sys.argv[1] not in {"json", "lint"}:
+        print(__doc__)
+        sys.exit(64)
+    cmd, path = sys.argv[1], sys.argv[2]
+    if not os.path.isfile(path):
+        print(f"mows-agent-meta: no such file {path}", file=sys.stderr)
+        sys.exit(2)
+    if cmd == "json":
+        fm = frontmatter(path)
+        if fm is None or "__yaml_error__" in fm:
+            print(f"mows-agent-meta: no usable frontmatter in {path}", file=sys.stderr)
+            sys.exit(2)
+        json.dump(fm, sys.stdout, default=str)
+        print()
+        return
+    errors, warns = lint(path)
+    for w in warns:
+        print("WARN: " + w)
+    for e in errors:
+        print("ERROR: " + e)
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()

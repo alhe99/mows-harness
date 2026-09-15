@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# mows-agent — policy runner for purpose-scoped agents (Layer 6).
+# The Claude Code daemon manages processes; this manages POLICY: lint, budget, refusal,
+# run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
+#   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
+#              prune · render <name>|--all · residents [--json]
+# Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
+set -uo pipefail
+CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
+STATE_ROOT="${MOWS_AGENTS_STATE:-$HOME/.local/state/mows-agents}"
+META="${MOWS_AGENT_META:-$(dirname "$(readlink -f "$0")")/mows-agent-meta}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+QUOTA_BIN="${QUOTA_BIN:-claude-quota}"
+STALL_MIN="${STALL_MIN:-10}"
+STALL_SEC="${STALL_SEC:-$((STALL_MIN * 60))}"
+MCP_CONFIG="${MCP_CONFIG:-}"
+RENDER_DIR="${RENDER_DIR:-$PWD/rendered}"
+
+die(){ echo "mows-agent: $*" >&2; exit 64; }
+command -v jq >/dev/null 2>&1 || die "jq required"
+[ -x "$META" ] || die "mows-agent-meta not found at $META"
+
+# ---------- discovery: default=~/.claude plus every ~/.claude-<suffix> (same rule as fleet/bin/cc) ----------
+profiles_json(){
+  local j='{}' d s
+  [ -d "$HOME/.claude" ] && j=$(jq -n --arg d "$HOME/.claude" '{default:$d}')
+  for d in "$HOME"/.claude-*/; do
+    [ -d "$d" ] || continue; d=${d%/}; s=${d##*/.claude-}
+    j=$(jq --arg k "$s" --arg v "$d" '.[$k]=$v' <<<"$j")
+  done
+  echo "$j"
+}
+MOWS_PROFILES_JSON=$(profiles_json); export MOWS_PROFILES_JSON
+cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
+
+# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key
+has_mows(){ awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}' "$1"; }
+agent_file(){ # prints the single file for <name>; dies on duplicates; empty if none
+  # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
+  # is missing its mows: block, so lint can report the exact "mows: block is required"
+  # error instead of a generic "no agent named". Bulk discovery (all_agents) keeps the
+  # has_mows filter so plain Claude Code subagents aren't swept into --all.
+  local n=$1 f found=()
+  while IFS= read -r d; do f="$d/agents/$n.md"; [ -f "$f" ] && found+=("$f"); done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON")
+  [ ${#found[@]} -gt 1 ] && die "agent $n defined in more than one profile: ${found[*]}"
+  [ ${#found[@]} -eq 1 ] && echo "${found[0]}"; return 0
+}
+all_agents(){ # name<TAB>file, sorted
+  local d f
+  while IFS= read -r d; do
+    for f in "$d"/agents/*.md; do [ -f "$f" ] && has_mows "$f" && printf '%s\t%s\n' "$(basename "${f%.md}")" "$f"; done
+  done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON") | sort
+}
+meta(){ "$META" json "$1"; }
+mget(){ jq -r "$2 // empty" <<<"$1"; }
+expand_tilde(){ case $1 in "~") echo "$HOME";; "~/"*) echo "$HOME/${1#\~/}";; *) echo "$1";; esac; }
+check_version(){ # --permission-prompts / --max-budget-usd need >= 2.1.217
+  local v; v=$("$CLAUDE_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  [ -n "$v" ] || { echo "WARN: cannot read claude version" >&2; return 0; }
+  [ "$(printf '%s\n2.1.217\n' "$v" | sort -V | head -1)" = 2.1.217 ] || die "claude $v too old (need >= 2.1.217)"
+}
+
+# ---------- events + escalation ----------
+event(){ mkdir -p "$STATE_ROOT/$1"; echo "$(date -Is) $2" >> "$STATE_ROOT/$1/events.log"; }
+escalate(){ # escalate <name> <via> <msg>: always logs; posts to Discord only when via=discord and a webhook is set
+  event "$1" "$3"
+  [ "$2" = discord ] && [ -n "${DISCORD_WEBHOOK:-}" ] || return 0
+  curl -fsS --max-time 10 -H 'content-type: application/json' \
+    --data "$(jq -n --arg c "🤖 $1: $3" '{content:$c}')" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+}
+
+# ---------- lint ----------
+cmd_lint(){
+  local rc=0 n f
+  if [ "${1:-}" = --all ]; then
+    while IFS=$'\t' read -r n f; do echo "== $n"; "$META" lint "$f" || rc=1; done < <(all_agents)
+  else
+    [ -n "${1:-}" ] || die "usage: mows-agent lint <name>|--all"
+    f=$(agent_file "$1") || exit 64; [ -n "$f" ] || die "no agent named $1"
+    "$META" lint "$f" || rc=1
+  fi
+  return $rc
+}
+
+# ---------- dispatch ----------
+case "${1:-}" in
+  lint) shift; cmd_lint "$@";;
+  *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
+esac
