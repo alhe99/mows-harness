@@ -20,7 +20,7 @@
 - New bash passes `shellcheck -S error` (preflight runs it on tracked scripts when shellcheck is installed).
 - Test scripts run in a throwaway `HOME`, `unset TMUX`, never touch `~/.local/state`, and never talk to the network (`e2e-agents.sh`). Only `live-agents.sh --yes` spends money (≈ $0.05).
 - Commit message trailer on every commit:
-  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` and
   `Claude-Session: https://claude.ai/code/session_01DHwnAvv6cDaE5TdNrjADxA`.
 - Exit codes of `mows-agent run`: 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage.
 
@@ -650,6 +650,12 @@ run_context(){ # appended to the system prompt: who am I, what ran before. Never
   fi
   printf 'You have no human available: never ask questions, decide and finish within budget.\n'
 }
+kill_tree(){ # kill the claude process GROUP. $! is not reliably the pgid leader (setsid execs
+  # only when the caller is not already a process-group leader), so read the real pgid.
+  local pid=$1 pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ]; then kill -TERM -- "-$pgid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
+}
 tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decides the final state.
   local cpid=$1 line final="" stalled=0 rc
   TURNS=0; TOOLS=0; COST=0; DENIALS=0; SID=""
@@ -665,7 +671,7 @@ tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decide
       esac
     else
       rc=$?; [ "$rc" -gt 128 ] || break            # EOF without a result record
-      kill -TERM -- "-$cpid" 2>/dev/null; stalled=1; break
+      kill_tree "$cpid"; stalled=1; break
     fi
   done
   local st
@@ -747,14 +753,15 @@ cmd_run(){
   STARTED=$(date -Is); CPID=0; write_status working
   cd "$WORKDIR" || die "cannot cd $WORKDIR"
   local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
-  # setsid: claude becomes a process-group leader so a stall kill (-pgid) takes its MCP/tool children too
+  # setsid: claude leads its own process group so a stall kill takes its MCP/tool children too
+  # (kill_tree reads the real pgid rather than assuming it equals $!)
   CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
       --output-format stream-json --verbose --permission-prompts none \
       --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
       --append-system-prompt "$(run_context)" "$task" \
       > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
   CPID=$!; write_status working
-  trap 'kill -TERM -- "-$CPID" 2>/dev/null' TERM INT
+  trap 'kill_tree "$CPID"' TERM INT
   tail -n +1 -f --pid="$CPID" "$RUNDIR/stream.jsonl" | tail_loop "$CPID"
   wait "$CPID" 2>/dev/null
   local st; st=$(jq -r .state "$RUNDIR/status.json")
@@ -1054,13 +1061,14 @@ git commit -m "agents: install.sh --agents, harness-reviewer example, live smoke
 
 ```bash
 echo "### budget tiers + concurrency + prune"
-mkagent "$A/capped.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, usd_per_day: 0.02, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
+mkagent "$A/capped.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, usd_per_day: 0.01, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
 echo '{"personal":{"five_hour_pct":10,"weekly_pct":5},"work":{"five_hour_pct":90,"weekly_pct":5}}' > "$QUOTA_FILE"
 echo ok > "$CLAUDE_MODE_FILE"
-chk "cap: first run ok (0.0123 < 0.02)"       'mows-agent run capped'
-chk "cap: second run ok (0.0246 >= 0.02 refuses)" '! mows-agent run capped; [ $? = 6 ]' 
+# stub run costs 0.0123; cap 0.01 -> run 1 allowed (spend was 0), run 2 refused (0.0123 >= 0.01)
+chk "cap: first run allowed (spend was 0)"    'mows-agent run capped'
+chk "cap: second run refused, exit 6"         'mows-agent run capped >/dev/null 2>&1; [ $? = 6 ]'
 chk "cap: refusal logged"                     'grep -q "daily cap" "$MOWS_AGENTS_STATE/capped/events.log"'
-chk "cap: no third run dir"                   '[ "$(ls "$MOWS_AGENTS_STATE/capped/runs" | wc -l)" = 2 ]'
+chk "cap: refusal made no second run dir"     '[ "$(ls "$MOWS_AGENTS_STATE/capped/runs" | wc -l)" = 1 ]'
 echo '{"personal":{"five_hour_pct":75,"weekly_pct":5}}' > "$QUOTA_FILE"
 mkagent "$A/floored.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
 mows-agent run floored >/dev/null 2>&1; RC=$?
@@ -1071,7 +1079,7 @@ echo '{"personal":{"five_hour_pct":null,"weekly_pct":null,"source":"unknown"}}' 
 chk "quota: unknown never refuses"            'mows-agent run floored'
 mkagent "$HOME/.claude-work/agents/wk.md" "$(sed 's/profile: default/profile: work/; s/budget: .*/budget: { usd_per_run: 1, max_turns: 5, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
 echo '{"personal":{"five_hour_pct":0},"work":{"five_hour_pct":95}}' > "$QUOTA_FILE"
-chk "quota: work profile reads .work"         '! mows-agent run wk; [ $? = 6 ]'
+chk "quota: work profile reads .work"         'mows-agent run wk >/dev/null 2>&1; [ $? = 6 ]'
 chk "quota: work profile CLAUDE_CONFIG_DIR"   'echo "{}" > "$QUOTA_FILE"; mows-agent run wk && grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude-work" "$CLAUDE_ARGS_FILE"'
 # concurrency: a live `working` record with a real pid refuses a second run
 sleep 300 & SP=$!
