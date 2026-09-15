@@ -787,7 +787,9 @@ Note on `tail_loop` in a pipeline: it runs in a subshell, so it writes the final
 - [ ] **Step 4: Run the tests**
 
 Run: `bash scripts/e2e-agents.sh 2>&1 | grep -E 'FAIL|passed'`
-Expected: `e2e-agents: 65 passed, 0 failed` (21 lint + 44 run). If `run hang: killed within 15s` fails, check that `setsid` is on PATH and `read -t` received `STALL_SEC=2`.
+Expected: **`0 failed`**. The absolute total is whatever the assertions in this task's own
+code block add to Task 1's 21 — count it and report it, do not tune assertions to hit a number.
+If `run hang: killed within 15s` fails, check that `setsid` is on PATH and `read -t` received `STALL_SEC=2`.
 
 - [ ] **Step 5: shellcheck + commit**
 
@@ -867,7 +869,7 @@ cmd_logs(){
 
 Dispatch additions: `list) cmd_list;;  last) shift; cmd_last "$@";;  logs) shift; cmd_logs "$@";;`
 
-- [ ] **Step 4: Run tests, expect `73 passed, 0 failed`; shellcheck; commit**
+- [ ] **Step 4: Run tests — expect `0 failed`; report the actual total; shellcheck; commit**
 
 ```bash
 git add agents/bin/mows-agent scripts/e2e-agents.sh
@@ -1123,7 +1125,7 @@ cmd_prune(){ # delete run dirs older than retention_days per agent; never the `l
 
 Dispatch: `prune) cmd_prune;;`
 
-- [ ] **Step 4: Run tests (expect `89 passed, 0 failed`), shellcheck, commit**
+- [ ] **Step 4: Run tests — expect `0 failed`; report the actual total; shellcheck; commit**
 
 ```bash
 git commit -am "agents: budget tiers proven, prune (phase 2a)"
@@ -1156,7 +1158,7 @@ git -C "$T/repo" checkout -q main
 chk "pr: on base branch is a logged no-op"    'mows-agent run prbot && grep -q "still on main" "$MOWS_AGENTS_STATE/prbot/events.log"'
 ```
 
-- [ ] **Step 2: Run tests, expect `95 passed, 0 failed`; commit**
+- [ ] **Step 2: Run tests — expect `0 failed`; report the actual total; commit**
 
 ```bash
 git commit -am "agents: merge.policy pr proven against a local origin (phase 2 complete)"
@@ -1283,7 +1285,7 @@ In `install.sh` `layer_agents()`, after installing bins add:
   RENDER_DIR="$PWD/rendered" "$HOME/.local/bin/mows-agent" render --all 2>/dev/null || echo "WARN: render skipped (lint errors? run: mows-agent lint --all)"
 ```
 
-- [ ] **Step 3: Run tests (expect `106 passed`), shellcheck, commit**
+- [ ] **Step 3: Run tests — expect `0 failed`; report the actual total; shellcheck; commit**
 
 ```bash
 git commit -am "agents: render systemd timer/path units into rendered/ (phase 3)"
@@ -1636,7 +1638,7 @@ Dashboard: in `agentsView`, after the rows, run `runAs([], 'mows-agent', ['resid
 
 and append `fold` to `body`. Check `runAs`'s return shape at `lite.mjs:894` first (it resolves stdout as a string like `sh`; if it resolves an object, adapt the parse).
 
-- [ ] **Step 3: Tests (expect `111 passed`), deploy, commit**
+- [ ] **Step 3: Tests — expect `0 failed`; report the actual total; deploy; commit**
 
 ```bash
 git add agents/bin/mows-agent scripts/e2e-agents.sh infra/dashboard/lite.mjs
@@ -1692,7 +1694,7 @@ if BIN_DIR="$HOME/.local/bin" bash scripts/e2e-agents.sh > /tmp/agents-matrix.lo
 
 ```bash
 ./scripts/preflight.sh | tail -1                  # ALL CLEAN
-bash scripts/e2e-agents.sh | tail -1              # 111 passed, 0 failed
+bash scripts/e2e-agents.sh | tail -1              # must end `0 failed`
 bash scripts/e2e-container.sh 2>&1 | tail -3      # 0 FAIL
 scripts/live-agents.sh --yes | tail -1            # 7 passed
 /qa run agents-tab                                # green
