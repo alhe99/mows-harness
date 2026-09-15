@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # live-agents — ONE real `claude -p` run through mows-agent (haiku, $0.05 cap, 1 turn).
-# Covers what scripts/e2e-agents.sh cannot: real auth, the real stream-json result record,
-# agent-memory creation. Costs ~$0.05 of the default profile's quota. Never run by CI.
+# Covers what scripts/e2e-agents.sh cannot: real auth, the real stream-json result record.
+# Costs ~$0.05 of the default profile's quota. Never run by CI.
 set -u
 cd "$(dirname "$0")/.."
 if [ "${1:-}" != "--yes" ]; then
@@ -39,5 +39,11 @@ chk "state done"                 '[ "$(jq -r .state "$S/status.json")" = done ]'
 chk "real cost > 0"              'jq -e ".cost_usd > 0" "$S/status.json"'
 chk "result says OK"             'jq -r .result "$S/result.json" | grep -q OK'
 chk "no permission denials"      '[ "$(jq -r .permission_denials "$S/status.json")" = 0 ]'
-chk "agent memory dir created"   '[ -d "$HOME/.claude/agent-memory/mows-live-probe" ]'
+# Deliberately no "agent memory dir created" assertion: <cfgdir>/agent-memory/<name>/MEMORY.md
+# is created lazily by the claude CLI itself (mows-agent only passes `memory: user` through
+# in frontmatter — it never creates, reads, or writes that path), and a one-turn, no-tool-use
+# "reply OK" probe gives the CLI nothing to persist. Do not re-add this: proving it needs a
+# multi-turn agent that actually writes memory, which costs real money for no gain in a smoke
+# test. Left as an open, unverified claim for the final review — the first real scheduled run
+# of harness-reviewer after merge is what will confirm or refute agent-memory creation.
 echo "live-agents: $PASS passed, $FAIL failed"; [ "$FAIL" -eq 0 ]
