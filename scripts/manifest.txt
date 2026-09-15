@@ -184,3 +184,5 @@ watchdogs/bin/reap-idle-claude
 watchdogs/bin/reap-mcp-orphans
 watchdogs/crontab.example
 watchdogs/logrotate.d/claude-harness
+docs/superpowers/plans/2026-09-15-agents-layer.md
+docs/superpowers/specs/2026-09-15-agents-layer-design.md
