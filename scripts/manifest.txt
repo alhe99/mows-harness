@@ -189,3 +189,6 @@ docs/superpowers/specs/2026-09-15-agents-layer-design.md
 agents/bin/mows-agent
 agents/bin/mows-agent-meta
 scripts/e2e-agents.sh
+agents/examples/harness-reviewer.md
+agents/config.example
+scripts/live-agents.sh
