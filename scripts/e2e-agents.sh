@@ -204,5 +204,16 @@ mows-agent run broken >/dev/null 2>&1; RC=$?
 chk "refuse: lint error -> exit 6, no run dir" '[ "$RC" = 6 ] && [ ! -d "$MOWS_AGENTS_STATE/broken/runs" ]'
 chk "refuse: no agent named -> 64"             'mows-agent run nosuch >/dev/null 2>&1; [ $? = 64 ]'
 
+echo "### list / last / logs"
+echo ok > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
+chk "list: header"                            'mows-agent list | head -1 | grep -q "^NAME"'
+chk "list: good row with state done"          'mows-agent list | grep -E "^good +default +done"'
+chk "list: loud row shows budget_exceeded"    'mows-agent list | grep -E "^loud +default +budget_exceeded"'
+chk "list: NEXT from systemctl list-timers"   'mows-agent list | grep -E "^good" | grep -q "2026-09-16"'
+chk "last: prints state + cost"               'mows-agent last good | grep -q "\"state\": \"done\"" && mows-agent last good | grep -q "stub says OK"'
+chk "logs: assistant text only"               '[ "$(mows-agent logs good)" = "stub says OK" ]'
+chk "logs --raw: the stream"                  'mows-agent logs good --raw | grep -q "\"type\":\"system\""'
+chk "logs <run_id>: explicit run"             '[ "$(mows-agent logs good "$(jq -r .run_id "$S/last/status.json")")" = "stub says OK" ]'
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

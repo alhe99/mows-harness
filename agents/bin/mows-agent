@@ -226,9 +226,47 @@ cmd_run(){
   esac
 }
 
+# ---------- list / last / logs ----------
+next_fire(){ # NEXT column from the Phase 3 timer; '' when systemd/timer absent
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local l; l=$(systemctl list-timers --all --no-legend "mows-agent-$1.timer" 2>/dev/null | head -1)
+  [ -n "$l" ] || return 0
+  case $l in n/a*|-*) echo paused;; *) awk '{print $1" "$2" "$3}' <<<"$l";; esac
+}
+cmd_list(){
+  local n f m prof st last next
+  printf '%-22s %-10s %-16s %-19s %s\n' NAME PROFILE LAST-STATE LAST-RUN NEXT
+  while IFS=$'\t' read -r n f; do
+    m=$(meta "$f") || continue; prof=$(mget "$m" .mows.profile)
+    if [ -f "$STATE_ROOT/$n/last/status.json" ]; then
+      st=$(jq -r .state "$STATE_ROOT/$n/last/status.json"); last=$(jq -r '.started_at[0:19]' "$STATE_ROOT/$n/last/status.json")
+    else st=never; last=-; fi
+    next=$(next_fire "$n"); printf '%-22s %-10s %-16s %-19s %s\n' "$n" "$prof" "$st" "$last" "${next:--}"
+  done < <(all_agents)
+}
+cmd_last(){
+  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent last <name>"
+  local d="$STATE_ROOT/$n/last"; [ -f "$d/status.json" ] || die "no runs for $n"
+  jq . "$d/status.json"
+  [ -f "$d/result.json" ] && jq -r '"result: " + ((.result // "") | .[0:2000])' "$d/result.json"
+  [ -s "$STATE_ROOT/$n/events.log" ] && { echo "recent events:"; tail -3 "$STATE_ROOT/$n/events.log"; }
+  return 0
+}
+cmd_logs(){
+  local n=${1:-} raw=0 rid="" a; [ -n "$n" ] || die "usage: mows-agent logs <name> [run_id] [--raw]"; shift
+  for a in "$@"; do [ "$a" = --raw ] && raw=1 || rid=$a; done
+  local d; d="$STATE_ROOT/$n/${rid:+runs/$rid}"; [ -n "$rid" ] || d="$STATE_ROOT/$n/last"
+  [ -f "$d/stream.jsonl" ] || die "no stream for $n ${rid:-last}"
+  if [ "$raw" = 1 ]; then cat "$d/stream.jsonl"
+  else jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$d/stream.jsonl"; fi
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
   lint) shift; cmd_lint "$@";;
   run)  shift; cmd_run "$@";;
+  list) cmd_list;;
+  last) shift; cmd_last "$@";;
+  logs) shift; cmd_logs "$@";;
   *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
 esac
