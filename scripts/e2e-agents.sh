@@ -56,6 +56,15 @@ cat > "$T/shim/claude" <<'S'
 { printf '%s\n' "$@"; echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-}"; echo "PWD=$PWD"; } > "${CLAUDE_ARGS_FILE:-/dev/null}"
 mode=$(cat "${CLAUDE_MODE_FILE:-/dev/null}" 2>/dev/null || echo ok)
 sid=00000000-0000-4000-8000-000000000001
+# badtext: the plain-text-notice-on-exit-0 failure the non-streaming path already guards
+# against (agents/bin/mows-agent:355). Bypasses every JSON record below — must print ONLY
+# the notice, so this has to run before the stream-delta case and the normal echoes.
+[ "$mode" = badtext ] && { echo "No conversation found with session ID: $sid"; exit 0; }
+case " $* " in *" --include-partial-messages "*)
+  for w in "stub " "says " "OK"; do
+    printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$w"
+  done;;
+esac
 echo '{"type":"system","subtype":"init","session_id":"'$sid'"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]},"session_id":"'$sid'"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stub says OK"}]},"session_id":"'$sid'"}'
@@ -356,6 +365,19 @@ T0=$(date +%s); mows-agent residents --json >"$T/residents-hang.json" 2>&1; RC=$
 chk "residents: bounded total time despite a hung claude" '[ $((T1 - T0)) -lt 18 ]'
 chk "residents: still valid JSON when every profile hangs" '[ "$(jq length < "$T/residents-hang.json")" = 2 ] && [ "$(jq "[.[].agents[]] | length" < "$T/residents-hang.json")" = 0 ]'
 unset CLAUDE_AGENTS_HANG
+
+echo "### chat --stream"
+echo ok > "$CLAUDE_MODE_FILE"
+mows-agent run good >/dev/null 2>&1 || true
+cp "$CLAUDE_ARGS_FILE" "$T/run-args.txt"
+chk "runs never pass --include-partial-messages" '! grep -q "include-partial-messages" "$T/run-args.txt"'
+chk "chat --stream emits seq deltas"   'mows-agent chat good --stream "hi" 2>/dev/null | grep -q "\"seq\":"'
+chk "chat --stream ends with end line" 'mows-agent chat good --stream "hi" 2>/dev/null | tail -1 | jq -e ".end == true"'
+chk "chat --stream passes the flag"    'grep -q "include-partial-messages" "$CLAUDE_ARGS_FILE"'
+echo badtext > "$CLAUDE_MODE_FILE"
+chk "chat --stream fails loudly on plain-text notice" 'mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
+chk "chat --stream logs role:error"    'tail -1 "$MOWS_AGENTS_STATE/good/chat.jsonl" | jq -e ".role == \"error\""'
+echo ok > "$CLAUDE_MODE_FILE"
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

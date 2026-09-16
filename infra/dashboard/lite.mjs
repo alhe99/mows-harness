@@ -3101,10 +3101,24 @@ async function agentAction(req, res, act) {
     const msg = (b.msg || '').slice(0, 4000).trim();
     if (!msg) { res.writeHead(400); return res.end('empty message'); }
     const child = spawn('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
-      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, msg],
-      { detached: true, stdio: 'ignore' });
+      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, '--stream', msg],
+      { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const turn = Date.now();
+    let buf = '';
+    child.stdout.on('data', d => {
+      buf += d;
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const l of lines) {
+        if (!l.trim()) continue;
+        try {
+          const o = JSON.parse(l);
+          if (o.end) chatEnd(name, turn, { cost_usd: o.cost_usd, is_error: o.is_error });
+          else chatBroadcast(name, turn, o.seq, o.delta);
+        } catch {}
+      }
+    });
+    child.on('close', () => { chatEnd(name, turn, { closed: true }); agentsCache.t = 0; });
     child.unref();
-    agentsCache.t = 0;
     res.writeHead(303, { location: back }); return res.end();
   }
   if (act === 'run') {

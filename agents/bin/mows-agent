@@ -311,6 +311,8 @@ cmd_chat(){
     --history) [ -f "$log" ] && jq -r '"\(.at)  \(.role|ascii_upcase): \(.text)"' "$log" || echo "(no chat yet)"; return 0;;
     --clear)   rm -f "$log"; echo "cleared chat transcript for $n (the agent's own session is untouched)"; return 0;;
   esac
+  local stream=0
+  case "${1:-}" in --stream) stream=1; shift;; esac
   local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> <message…>"
   # The message is attacker-reachable: the dashboard's POST /a/agent-chat passes a form field
   # straight through. Without a guard, a message starting with '-' is parsed by claude as a
@@ -344,6 +346,53 @@ cmd_chat(){
 
   mkdir -p "$dir"
   jq -nc --arg r user --arg t "$msg" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+
+  if [ "$stream" = 1 ]; then
+    # Chat turns stream; unattended runs deliberately do not (spec: the flag is per-mode,
+    # because it multiplies stream lines for no run-record value).
+    local seq=0 reply="" cost=0 iserr=false rc=0 sawres=0 notice="" line t
+    while IFS= read -r line; do
+      # The sentinel below is how a process substitution's exit status reaches us at all:
+      # `done < <(cmd)` discards it, so a plain `timeout` kill or a non-zero claude exit
+      # would otherwise look identical to a clean empty reply.
+      case $line in __mows_rc=*) rc=${line#__mows_rc=}; continue;; esac
+      if ! jq -e . >/dev/null 2>&1 <<<"$line"; then
+        # claude exits 0 and prints a plain-text notice ("No conversation found with session
+        # ID: …") when a session cannot be resumed. The non-streaming path above guards
+        # against exactly this; dropping the line here reports a failure as an empty success.
+        [ -n "$line" ] && notice="${notice:-$line}"
+        continue
+      fi
+      t=$(jq -r '(.event.delta.text // empty)' <<<"$line")
+      if [ -n "$t" ]; then
+        seq=$((seq + 1)); reply="$reply$t"
+        jq -nc --argjson s "$seq" --arg d "$t" '{seq:$s,delta:$d}'
+      fi
+      case $line in *'"type":"result"'*)
+        sawres=1
+        cost=$(jq -r '.total_cost_usd // 0' <<<"$line")
+        iserr=$(jq -r '(.is_error // false)|tostring' <<<"$line");;
+      esac
+    done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
+              --resume "$sid" --output-format stream-json --verbose --include-partial-messages \
+              --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+              --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+              -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
+    if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
+      local why="${notice:-claude exited $rc with no result record}"
+      [ "$rc" = 124 ] && why="timed out after 300s"
+      jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+      jq -nc --arg t "$why" '{end:true,cost_usd:0,is_error:true,error:$t}'
+      event "$n" "chat failed: $why"
+      echo "mows-agent: chat turn failed: $why" >&2
+      return 64
+    fi
+    jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$iserr" \
+       '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+    jq -nc --argjson c "$cost" --arg e "$iserr" '{end:true,cost_usd:$c,is_error:($e=="true")}'
+    event "$n" "chat turn (streamed): \$$cost"
+    [ "$iserr" = true ] && return 3; return 0
+  fi
 
   local out rc
   out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
