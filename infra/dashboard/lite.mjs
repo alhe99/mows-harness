@@ -3089,6 +3089,73 @@ async function webhookView(req, res, name) {
   res.writeHead(202, { 'content-type': 'text/plain' }); res.end('queued');
 }
 
+// ---------- /ui: the SPA shell and its assets (spec §1) ----------
+// One process, no build step: modules are served straight from disk and wired with an import
+// map, which is a platform feature rather than tooling. Asset URLs carry a content hash so a
+// deploy busts the cache without a bundler.
+// NOTE: this lives at /ui, not /app. /app is already the persistent terminal launcher (below,
+// appView) and the installed PWA's start_url (manifest(), above) — do not reclaim it.
+const UI_DIR = new URL('./app/', import.meta.url).pathname;
+const uiAssets = new Map(); // url-name -> {buf, etag, type}
+function uiAssetName(rel, buf) {
+  // vendor/preact.mjs -> vendor/preact.1a2b3c4d.mjs   (content hash busts the cache on deploy)
+  const dot = rel.lastIndexOf('.');
+  return `${rel.slice(0, dot)}.${crc32(buf).toString(16)}${rel.slice(dot)}`;
+}
+async function loadUiAssets() {
+  uiAssets.clear();
+  const walk = async d => {
+    for (const e of await fsp.readdir(d, { withFileTypes: true })) {
+      const full = `${d}/${e.name}`;
+      if (e.isDirectory()) { await walk(full); continue; }
+      if (!/\.(mjs|css)$/.test(e.name)) continue;
+      const rel = full.slice(UI_DIR.length);
+      const buf = await fsp.readFile(full);
+      uiAssets.set(uiAssetName(rel, buf), { buf, rel,
+        etag: '"' + crc32(buf).toString(16) + '"',
+        type: e.name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8' });
+    }
+  };
+  try { await walk(UI_DIR.replace(/\/$/, '')); } catch {}
+}
+const uiAssetUrlFor = rel => {
+  for (const [k, v] of uiAssets) if (v.rel === rel) return '/ui/assets/' + k;
+  return '/ui/assets/' + rel;
+};
+function uiShellHtml(host) {
+  const imports = {
+    preact: uiAssetUrlFor('vendor/preact.mjs'),
+    'preact/hooks': uiAssetUrlFor('vendor/hooks.mjs'),
+    htm: uiAssetUrlFor('vendor/htm.mjs'),
+    marked: uiAssetUrlFor('vendor/marked.mjs'),
+  };
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<title>mows control</title>
+<style>${CSS}</style>
+<script type="importmap">${JSON.stringify({ imports })}</script>
+</head><body>
+<div id="app"></div>
+<noscript><p>This view needs JavaScript. The server-rendered dashboard is at <a href="/">/</a>.</p></noscript>
+<script type="module" src="${uiAssetUrlFor('main.mjs')}"></script>
+</body></html>`;
+}
+async function uiView(req, res) {
+  if (!uiAssets.size) await loadUiAssets();
+  send(req, res, 200, uiShellHtml(req.headers.host || ''));
+}
+async function uiAssetView(req, res, name) {
+  if (!uiAssets.size) await loadUiAssets();
+  const a = uiAssets.get(name);
+  if (!a) { res.writeHead(404); return res.end(); }
+  if (req.headers['if-none-match'] === a.etag) { res.writeHead(304, { etag: a.etag }); return res.end(); }
+  res.writeHead(200, { 'content-type': a.type, etag: a.etag,
+    'cache-control': 'public, max-age=31536000, immutable', 'content-length': a.buf.length });
+  res.end(a.buf);
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -3097,6 +3164,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
+    // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
+    if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
+    if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res);
     if (p === '/events') return await eventsView(req, res);
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
     if (p === '/agents') return await agentsView(req, res);

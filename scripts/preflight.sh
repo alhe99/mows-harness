@@ -87,6 +87,18 @@ for f in "${SH[@]}"; do
   if command -v shellcheck >/dev/null; then shellcheck -S error "$f" || bad "shellcheck: $f"; fi
 done
 
+# 5b. SPA client assets: pinned vendor hashes, and a hard size ceiling (spec D3).
+# Without a gate, "SPA" grows back into the MB-scale bundle lite.mjs was written to replace.
+if [ -d infra/dashboard/app ]; then
+  ( cd infra/dashboard/app/vendor && sha256sum -c SHA256SUMS --quiet ) || bad "vendored module hash mismatch"
+  GZ=0
+  while IFS= read -r f; do
+    GZ=$((GZ + $(gzip -9 -c "$f" | wc -c)))
+  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' \))
+  [ "$GZ" -le 76800 ] || bad "client assets ${GZ}B gzipped exceeds the 76800B ceiling (spec D3)"
+  note "client assets: ${GZ}B gzipped of 76800B"
+fi
+
 # 6. gitleaks if available (CI always runs it)
 if command -v gitleaks >/dev/null; then gitleaks detect --source . --no-banner || bad "gitleaks"; fi
 

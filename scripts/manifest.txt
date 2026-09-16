@@ -196,3 +196,9 @@ docs/qa/journeys/agents-tab.md
 agents/SETUP.md
 docs/superpowers/specs/2026-09-16-dashboard-spa-design.md
 docs/superpowers/plans/2026-09-16-dashboard-spa.md
+infra/dashboard/app/main.mjs
+infra/dashboard/app/vendor/SHA256SUMS
+infra/dashboard/app/vendor/hooks.mjs
+infra/dashboard/app/vendor/htm.mjs
+infra/dashboard/app/vendor/marked.mjs
+infra/dashboard/app/vendor/preact.mjs
