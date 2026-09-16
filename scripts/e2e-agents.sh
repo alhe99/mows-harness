@@ -258,6 +258,10 @@ rm -rf "$MOWS_AGENTS_STATE/good/runs/fake"
 # prune
 mkagent "$A/short.md" "$(printf '%s\n  retention_days: 5' "$MOWS_BLOCK_OK")"
 mows-agent run short >/dev/null 2>&1
+# age the `last` target itself past retention so the delete-candidate set actually includes
+# it -- otherwise the exemption in cmd_prune is never exercised (it would "pass" even if
+# the exemption were deleted, since a fresh run dir is never a delete candidate anyway).
+touch -d '40 days ago' "$MOWS_AGENTS_STATE/short/$(readlink "$MOWS_AGENTS_STATE/short/last")"
 mkdir -p "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"; touch -d '40 days ago' "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"
 mkdir -p "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1";  touch -d '20 days ago' "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
 mows-agent prune >/dev/null 2>&1
