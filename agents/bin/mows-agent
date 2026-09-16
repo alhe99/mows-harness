@@ -237,7 +237,7 @@ cmd_run(){
   CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
       --output-format stream-json --verbose --permission-prompts none \
       --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
-      --append-system-prompt "$(run_context)" "$task" \
+      --append-system-prompt "$(run_context)" -- "$task" \
       > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
   CPID=$!; write_status working
   # This trap covers an INTERACTIVE Ctrl-C only. A tty delivers SIGINT to the whole foreground
@@ -312,6 +312,13 @@ cmd_chat(){
     --clear)   rm -f "$log"; echo "cleared chat transcript for $n (the agent's own session is untouched)"; return 0;;
   esac
   local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> <message…>"
+  # The message is attacker-reachable: the dashboard's POST /a/agent-chat passes a form field
+  # straight through. Without a guard, a message starting with '-' is parsed by claude as a
+  # FLAG, not text — verified: `claude -p "--output-format"` errors with "argument missing",
+  # so a caller could smuggle --permission-prompts, --max-budget-usd, and friends. The `--`
+  # before "$msg" below is the real fix; this leading space is defence in depth for any CLI
+  # that does not honour `--`, and costs nothing since it is invisible in a chat message.
+  case $msg in -*) msg=" $msg";; esac
 
   # Resume the newest run that COMPLETED, not merely the newest run. A run that was stopped or
   # that failed before its result record never persisted a conversation, so `--resume` on its
@@ -343,7 +350,7 @@ cmd_chat(){
         --resume "$sid" --output-format json \
         --permission-prompts none --strict-mcp-config "${mcp[@]}" \
         --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
-        "$msg" 2>/dev/null)
+        -- "$msg" 2>/dev/null)
   rc=$?
   # claude exits 0 and prints a plain-text notice (not JSON) when a session cannot be resumed,
   # so a non-zero code is not the only failure shape to check for.
