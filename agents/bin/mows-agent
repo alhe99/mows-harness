@@ -3,7 +3,7 @@
 # The Claude Code daemon manages processes; this manages POLICY: lint, budget, refusal,
 # run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
 #   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
-#              prune · render <name>|--all · residents [--json]
+#              chat <name> <message…>|--history|--clear · prune · render <name>|--all · residents [--json]
 # Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
 set -uo pipefail
 CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
@@ -295,6 +295,77 @@ cmd_logs(){
   else jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$d/stream.jsonl"; fi
 }
 
+# ---------- chat ----------
+# One conversation turn against an agent's most recent run, by resuming its session id.
+# The run record already stores session_id, so a chat turn is just `claude -p --resume` —
+# no daemon, no background session, no TUI to scrape. The thread persists across turns and
+# across days because Claude Code keeps the session; we only ever store our own transcript.
+CHAT_USD="${CHAT_USD:-0.25}"   # per-turn cap; a chat turn is one question, not a work session
+CHAT_TURNS="${CHAT_TURNS:-6}"  # enough for a lookup or two, not enough to run a whole task
+cmd_chat(){
+  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent chat <name> <message…>  ·  --history  ·  --clear"
+  shift
+  local f; f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"
+  local dir="$STATE_ROOT/$n" log="$STATE_ROOT/$n/chat.jsonl"
+  case "${1:-}" in
+    --history) [ -f "$log" ] && jq -r '"\(.at)  \(.role|ascii_upcase): \(.text)"' "$log" || echo "(no chat yet)"; return 0;;
+    --clear)   rm -f "$log"; echo "cleared chat transcript for $n (the agent's own session is untouched)"; return 0;;
+  esac
+  local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> <message…>"
+
+  # Resume the newest run that COMPLETED, not merely the newest run. A run that was stopped or
+  # that failed before its result record never persisted a conversation, so `--resume` on its
+  # session id fails with "No conversation found" — the newest run is exactly the one most likely
+  # to be in that state, since that is what a stop leaves behind.
+  [ -d "$dir/runs" ] || die "$n has no runs yet — chat resumes a run's session, so run it once first: mows-agent run $n"
+  if [ -f "$dir/last/status.json" ] && [ "$(jq -r .state "$dir/last/status.json")" = working ]; then
+    die "$n is mid-run; resuming a live session would interleave with it. Wait for it to finish."
+  fi
+  local st sid="" r
+  while IFS= read -r r; do
+    st="$r/status.json"; [ -f "$st" ] || continue
+    [ "$(jq -r .state "$st")" = done ] || continue
+    sid=$(jq -r '.session_id // empty' "$st"); [ -n "$sid" ] && break
+  done < <(find "$dir/runs" -mindepth 1 -maxdepth 1 -type d | sort -r)
+  [ -n "$sid" ] || die "$n has no completed run to resume — every run so far failed or was stopped. Run it once: mows-agent run $n"
+
+  check_version
+  local m; m=$(meta "$f")
+  local cfg; cfg=$(cfg_of "$(mget "$m" .mows.profile)")
+  local wd; wd=$(expand_tilde "$(mget "$m" .mows.workdir)")
+  local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+
+  mkdir -p "$dir"
+  jq -nc --arg r user --arg t "$msg" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+
+  local out rc
+  out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
+        --resume "$sid" --output-format json \
+        --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+        --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+        "$msg" 2>/dev/null)
+  rc=$?
+  # claude exits 0 and prints a plain-text notice (not JSON) when a session cannot be resumed,
+  # so a non-zero code is not the only failure shape to check for.
+  if [ $rc -ne 0 ] || [ -z "$out" ] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
+    local why="claude exited $rc"
+    [ $rc -eq 124 ] && why="timed out after 300s"
+    [ -n "$out" ] && ! jq -e . >/dev/null 2>&1 <<<"$out" && why="$(printf '%s' "$out" | head -1)"
+    jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+    event "$n" "chat failed: $why"
+    die "chat turn failed: $why"
+  fi
+  local reply cost err
+  reply=$(jq -r '.result // ""' <<<"$out")
+  cost=$(jq -r '.total_cost_usd // 0' <<<"$out")
+  err=$(jq -r '(.is_error // false)|tostring' <<<"$out")
+  jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$err" \
+     '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+  event "$n" "chat turn: \$$cost"
+  printf '%s\n' "$reply"
+  [ "$err" = true ] && return 3; return 0
+}
+
 # ---------- prune ----------
 cmd_prune(){ # delete run dirs older than retention_days per agent; never the `last` target
   local n f m days d keep r
@@ -457,8 +528,9 @@ case "${1:-}" in
   list)  cmd_list;;
   last)  shift; cmd_last "$@";;
   logs)  shift; cmd_logs "$@";;
+  chat)  shift; cmd_chat "$@";;
   prune) cmd_prune;;
   render) shift; cmd_render "$@";;
   residents) shift; cmd_residents "$@";;
-  *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
+  *) die "usage: mows-agent lint|run|chat|list|last|logs|prune|render|residents …";;
 esac

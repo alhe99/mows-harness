@@ -22,7 +22,7 @@
 // makes back/forward instant (headers are no-cache, never no-store).
 import http from 'node:http';
 import { promises as fsp, readdirSync, existsSync, readFileSync, statfsSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import net from 'node:net';
@@ -1876,6 +1876,9 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .st-failed,.st-stalled,.st-budget_exceeded{background:#dc262633}
 .st-never{background:#71717a33}
 .actions{display:flex;gap:8px;margin:8px 0}.actions form{display:inline}
+.chatf{display:flex;gap:8px;align-items:flex-end;margin:10px 0}
+.chatf textarea{flex:1;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font:inherit;resize:vertical}
+.m.me{opacity:.85}.m.me .mh b{color:var(--fg)}
 .runs li{margin:4px 0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
@@ -2870,6 +2873,17 @@ ${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seed
 ${fold}`;
   send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
 }
+// Chat transcript for one agent. mows-agent writes it as JSONL, one object per turn, so a
+// half-written last line (a turn landing mid-read) drops that line rather than the whole file.
+const CHAT_MAX = 40; // newest N turns; the file is append-only and never truncated by the dashboard
+async function agentChat(name) {
+  const out = [];
+  try {
+    const raw = await fsp.readFile(`${AGENTS_STATE}/${name}/chat.jsonl`, 'utf8');
+    for (const l of raw.split('\n')) { if (!l.trim()) continue; try { out.push(JSON.parse(l)); } catch {} }
+  } catch {}
+  return out.slice(-CHAT_MAX);
+}
 async function agentDetailView(req, res, name) {
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
@@ -2885,9 +2899,24 @@ async function agentDetailView(req, res, name) {
     : tsum.state === 'mixed' ? btn('pause', 'Pause') + btn('resume', 'Resume')
     : btn('pause', 'Pause');
   const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
+  // Chat resumes the newest COMPLETED run's session, so it is only offered once one exists —
+  // `mows-agent chat` refuses otherwise and the button would just produce an error page.
+  const chat = await agentChat(name);
+  const chatable = a.recs.some(r => r.state === 'done');
+  const pending = chat.length && chat[chat.length - 1].role === 'user';
+  const bubbles = chat.map(t => `<div class="m ${t.role === 'user' ? 'me' : 'claude'}"><div class="mh"><b>${t.role === 'user' ? 'you' : esc(name)}</b> <span class="muted">${esc((t.at || '').slice(11, 19))}${t.cost_usd ? ' · ' + usd(t.cost_usd) : ''}</span></div><pre>${esc(t.text || '')}</pre></div>`).join('');
+  const chatBox = !chatable
+    ? '<p class="muted">Chat resumes a finished run\'s session. Run this agent once first.</p>'
+    : `${bubbles || '<p class="muted">No messages yet. Ask it about its last run.</p>'}
+${pending ? '<p class="muted">Thinking… reload in a few seconds.</p>' : ''}
+<form method="post" action="/a/agent-chat" class="chatf">
+<input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}">
+<textarea name="msg" rows="2" placeholder="Ask ${esc(name)} about its last run…" required></textarea>
+<button>Send</button></form>`;
   const body = `<h1><a href="/agents">← agents</a> <span class="muted">· ${esc(name)}</span></h1>
 <p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(tsum.label)}</span></p>
 <div class="actions">${btn('run', 'Run now')}${timerBtns}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
+<h2>Chat</h2>${chatBox}
 <h2>Runs</h2><ul class="runs">${runs || '<li class="muted">none</li>'}</ul>
 <h2>Events</h2><pre class="events">${esc(a.events.join('\n') || 'none')}</pre>`;
   send(req, res, 200, page(`${name} · agents`, body, '', '', 'agents', false, null, req.headers.host));
@@ -2925,6 +2954,21 @@ async function agentAction(req, res, act) {
   const bk = b.back || '/agents';
   const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
   if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
+  if (act === 'chat') {
+    // A chat turn is a resumed `claude -p` and takes tens of seconds, so it must not be
+    // awaited inside the request — the dashboard is single-process and would stall every
+    // other page. Fire it detached and redirect; mows-agent appends the user's message to
+    // chat.jsonl BEFORE calling claude, so the page shows the question immediately and the
+    // answer appears on the next load. That trailing user turn is what renders "Thinking…".
+    const msg = (b.msg || '').slice(0, 4000).trim();
+    if (!msg) { res.writeHead(400); return res.end('empty message'); }
+    const child = spawn('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
+      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, msg],
+      { detached: true, stdio: 'ignore' });
+    child.unref();
+    agentsCache.t = 0;
+    res.writeHead(303, { location: back }); return res.end();
+  }
   if (act === 'run') {
     // Honest failure, not a silent redirect that looks like success: the shared
     // mows-agent@.service unit may never have been installed (SETUP.md's Triggers step is a
