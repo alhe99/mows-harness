@@ -27,7 +27,7 @@ import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import net from 'node:net';
 import os from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -2915,6 +2915,29 @@ async function agentAction(req, res, act) {
   res.writeHead(303, { location: back }); res.end();
 }
 
+// ---------- /wh/<name>: webhook trigger (spec §6). HMAC is the auth; the body is discarded. ----------
+const AGENTS_CFG = TMUX_HOME + '/.config/mows-agents/config';
+function agentsConfig() { // KEY=value lines only; values may be quoted. Read per request: secrets rotate.
+  const out = {};
+  try { for (const l of readFileSync(AGENTS_CFG, 'utf8').split('\n')) { const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) out[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, '$2'); } } catch {}
+  return out;
+}
+async function webhookView(req, res, name) {
+  if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const secret = agentsConfig()['WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_')];
+  if (!secret) { res.writeHead(404); return res.end(); } // same response as a bad name: no agent enumeration
+  const chunks = []; let n = 0;
+  for await (const c of req) { n += c.length; if (n > 1e6) { res.writeHead(413); return res.end(); } chunks.push(c); }
+  const want = Buffer.from('sha256=' + createHmac('sha256', secret).update(Buffer.concat(chunks)).digest('hex'));
+  const got = Buffer.from(String(req.headers['x-mows-signature'] || req.headers['x-hub-signature-256'] || ''));
+  if (got.length !== want.length || !timingSafeEqual(got, want)) { res.writeHead(401); return res.end('bad signature'); }
+  // one in-flight run per agent is enforced by mows-agent itself (refuses with exit 6); the unit's
+  // SuccessExitStatus covers that, so a burst of webhooks is safe.
+  await sh('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]);
+  res.writeHead(202, { 'content-type': 'text/plain' }); res.end('queued');
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -2923,6 +2946,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
     if (p === '/events') return await eventsView(req, res);
+    if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
     if (p === '/agents') return await agentsView(req, res);
     if (p.startsWith('/agents/')) {
       const [name, run] = p.slice(8).split('/');

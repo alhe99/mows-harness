@@ -24,6 +24,7 @@ DEMO=demo; DH="/home/$DEMO"   # built, not literal: preflight forbids bare home 
 mkdir -p $DH/.claude/projects/-demo-api
 printf '{"type":"user","message":{"role":"user","content":"demo"},"timestamp":"2026-08-08T00:00:00Z"}\n' \
   > $DH/.claude/projects/-demo-api/aaaa1111-demo.jsonl
+mkdir -p "$DH/.config/mows-agents"; echo 'WEBHOOK_SECRET_HARNESS_REVIEWER=s3cret' > "$DH/.config/mows-agents/config"
 HOME=$DH node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
@@ -38,6 +39,12 @@ chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
+SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"
+chk "webhook: good HMAC -> 202"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Hub-Signature-256: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+chk "webhook: bad HMAC -> 401"       '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: sha256=00" --data-binary "{}" http://127.0.0.1:3005/wh/harness-reviewer)" = 401 ]'
+chk "webhook: no secret -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/nobody)" = 404 ]'
+chk "webhook: GET -> 405"            '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/wh/harness-reviewer)" = 405 ]'
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'
@@ -54,6 +61,7 @@ chk "rendered Caddyfile adapts"  'caddy validate --config /tmp/Caddyfile.test --
 caddy start --config /tmp/Caddyfile.test --adapter caddyfile >/tmp/caddy.log 2>&1
 sleep 3
 chk "caddy listening :80" 'curl -s -o /dev/null http://127.0.0.1:80/'
+chk "caddy: /wh/* bypasses the auth gate" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1/wh/nobody)" = 404 ]'
 
 echo "### THE ACTUAL CLAIM: everything is gated behind Google sign-in"
 LOC=$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1/)
