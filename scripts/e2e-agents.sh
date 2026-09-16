@@ -323,6 +323,18 @@ chk "render: timer points at the instance"     'grep -q "^Unit=mows-agent@timed.
 chk "render: path unit"                        'grep -q "^PathChanged=$T/work/.git/refs/heads/main" "$RENDER_DIR/mows-agent-timed.path" && grep -q "^Unit=mows-agent@timed.service" "$RENDER_DIR/mows-agent-timed.path"'
 chk "render: prints sudo lines, enables nothing" 'mows-agent render timed | grep -q "sudo install" && ! grep -q "enable" "$SYSTEMCTL_LOG"'
 chk "render --all covers timed"                'rm -rf "$RENDER_DIR"; mows-agent render --all >/dev/null && [ -f "$RENDER_DIR/mows-agent-timed.timer" ]'
+# regression (fix round 2, finding 13): two DIFFERENT agents rendering the SAME unit
+# filename must refuse loudly, not silently clobber. "clash"'s SECOND cron trigger and
+# "clash-2"'s FIRST (only, so unsuffixed) cron trigger both render mows-agent-clash-2.timer —
+# exactly the no-delimiter collision the render naming scheme allows.
+mkagent "$A/clash.md" "$(printf '%s\n  triggers:\n    - {type: cron, spec: "*-*-* 06:00:00"}\n    - {type: cron, spec: "Mon *-*-* 09:00:00"}' "$MOWS_BLOCK_OK")"
+mkagent "$A/clash-2.md" "$(printf '%s\n  triggers: [{type: cron, spec: "*-*-* 07:00:00"}]' "$MOWS_BLOCK_OK")"
+rm -rf "$RENDER_DIR"
+mows-agent render --all >/dev/null 2>"$T/render-collide.err"; RC=$?
+chk "render: filename collision refused, not exit 0" '[ "$RC" != 0 ]'
+chk "render: collision message names both agents"    'grep -q "mows-agent-clash-2.timer" "$T/render-collide.err" && grep -q "clash," "$T/render-collide.err" && grep -q "clash-2" "$T/render-collide.err"'
+chk "render: collision writes NOTHING, not even the service template" '[ ! -f "$RENDER_DIR/mows-agent@.service" ] && [ ! -f "$RENDER_DIR/mows-agent-timed.timer" ]'
+rm "$A/clash.md" "$A/clash-2.md"
 
 echo "### residents"
 export CLAUDE_AGENTS_JSON_FILE="$T/agents.json"

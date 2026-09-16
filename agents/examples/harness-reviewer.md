@@ -12,12 +12,18 @@ mows:
   profile: default
   workdir: ~/Documents/Projects/mows-harness
   task: >-
-    Review every commit on main since the newest commit recorded in your memory (all of the
-    last 7 days if memory is empty). For each commit check: shell scripts for unquoted
-    expansions, missing set -u, tmux calls without an explicit socket; any identifying
-    literal that scripts/preflight.sh would flag; README.md and docs/architecture.md claims
-    that the diff makes false. Print findings as a list with file:line, then a one-paragraph
-    verdict. Finally update your memory with the newest commit hash you reviewed.
+    Review every commit on main since the newest commit recorded in your memory (the last 24
+    hours if memory is empty — you run daily and the timer is Persistent=true, so a missed
+    run is already caught on the next one; a memoryless review only ever needs to cover one
+    day, never a redundant week). Begin your report by stating the exact commit range you
+    reviewed and whether a memory record was found — this is the one thing that must never be
+    silent: if memory persistence is ever broken, that line is what makes it visible on the
+    very first run instead of quietly re-reviewing the same day forever. For each commit
+    check: shell scripts for unquoted expansions, missing set -u, tmux calls without an
+    explicit socket; any identifying literal that scripts/preflight.sh would flag; README.md
+    and docs/architecture.md claims that the diff makes false. Print findings as a list with
+    file:line, then a one-paragraph verdict. Finally update your memory with the newest
+    commit hash you reviewed.
   budget:
     usd_per_run: 1.50
     max_turns: 40

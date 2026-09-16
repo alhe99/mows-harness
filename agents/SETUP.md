@@ -120,6 +120,15 @@ runner only stops it once `claude` has already exited on its own; the dashboard 
   **"Read-only" is a property of the agent's own tool list and prompt, not something the linter
   or the runner can guarantee.** Lint only WARNs when a `webhook` trigger (untrusted, no human
   in the loop) is paired with write tools; it has no way to warn about Bash-as-write at all.
+- **Precondition, not a caveat: an agent with shell capability that reads a repository
+  accepting outside contributions needs a `PreToolUse` write-deny hook, configured before the
+  agent ever runs.** The exposure is untrusted content landing in the working directory —
+  commit messages, PR bodies, issue text the agent reaches with `git log`/`git show`/`gh`/
+  grep — not the trigger type: a `webhook` trigger's request body is authenticated and then
+  discarded (see Webhook setup), so it is never fed to the agent and is not the input channel
+  at all. A plain `cron`-triggered agent pointed at the same repo carries the identical
+  exposure. The lint WARN above (webhook trigger + write tools) is advisory and does not fire
+  for the cron case — do not rely on it to catch this.
 - `merge.policy: pr` only ever pushes the run's own branch and opens a PR — never merges — and
   lint refuses it up front unless `gh auth status` already passes for this user.
 - The quota guard fails **open**: absent or unparseable `claude-quota` output never blocks a

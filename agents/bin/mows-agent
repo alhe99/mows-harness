@@ -338,6 +338,38 @@ cmd_render(){
   mkdir -p "$RENDER_DIR"
   if [ "${1:-}" = --all ]; then while IFS=$'\t' read -r n f; do names+=("$n"); done < <(all_agents)
   else [ -n "${1:-}" ] || die "usage: mows-agent render <name>|--all"; names=("$1"); fi
+  # ---- collision pre-pass: two DIFFERENT agents can render the SAME unit filename (e.g. an
+  # agent literally named "foo-2"'s bare timer IS the filename agent "foo"'s second cron
+  # trigger renders — the suffix scheme below has no delimiter separating the two). A silent
+  # `cat >` would clobber one with the other, and reviewing rendered/ by hand can never catch
+  # it: what's left after a clobber is one perfectly well-formed file, so the reviewer sees
+  # one fewer file than expected, not a red flag anywhere. Compute every filename this render
+  # would produce BEFORE writing any of them, and refuse outright if one repeats — naming
+  # every agent that claims it — rather than silently overwrite. (Mirrors the ci/pi/sfx
+  # counting the write loop below does per agent; if that counting ever changes, this must
+  # change with it.)
+  local plan=() n2 f2 m2 ci2 pi2 sfx2 t2
+  for n2 in "${names[@]}"; do
+    f2=$(agent_file "$n2") || exit 64; [ -n "$f2" ] || die "no agent named $n2"; m2=$(meta "$f2")
+    ci2=0; pi2=0
+    while IFS= read -r t2; do
+      case $(jq -r .type <<<"$t2") in
+        cron) ci2=$((ci2+1)); sfx2=""; [ "$ci2" -gt 1 ] && sfx2="-$ci2"; plan+=("mows-agent-$n2$sfx2.timer	$n2");;
+        path) pi2=$((pi2+1)); sfx2=""; [ "$pi2" -gt 1 ] && sfx2="-$pi2"; plan+=("mows-agent-$n2$sfx2.path	$n2");;
+      esac
+    done < <(jq -c '.mows.triggers[]? // empty' <<<"$m2")
+  done
+  local dupes dfn owners rc=0
+  dupes=$(printf '%s\n' "${plan[@]:-}" | awk -F'\t' 'NF{print $1}' | sort | uniq -d)
+  if [ -n "$dupes" ]; then
+    while IFS= read -r dfn; do
+      [ -n "$dfn" ] || continue
+      owners=$(printf '%s\n' "${plan[@]}" | awk -F'\t' -v f="$dfn" '$1==f{print $2}' | paste -sd, -)
+      echo "mows-agent: render: unit filename collision: $dfn would be written by more than one agent ($owners) — refusing to overwrite" >&2
+      rc=1
+    done <<<"$dupes"
+  fi
+  [ "$rc" = 0 ] || exit 64
   render_service
   for n in "${names[@]}"; do
     f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"; m=$(meta "$f")
