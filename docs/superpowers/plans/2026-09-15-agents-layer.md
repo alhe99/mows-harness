@@ -1097,6 +1097,10 @@ mkagent "$A/short.md" "$(printf '%s\n  retention_days: 5' "$MOWS_BLOCK_OK")"
 mows-agent run short >/dev/null 2>&1
 mkdir -p "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"; touch -d '40 days ago' "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"
 mkdir -p "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1";  touch -d '20 days ago' "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
+# Age the `last` target too, so the keep-exemption is the ONLY thing standing between it and
+# deletion. Without this the assertion below passes even with the exemption line removed: a
+# just-created dir is never an -mtime candidate, so find would not have offered it up at all.
+touch -d '40 days ago' "$MOWS_AGENTS_STATE/short/$(readlink "$MOWS_AGENTS_STATE/short/last")"
 mows-agent prune >/dev/null 2>&1
 chk "prune: 40d-old run gone (retention 5)"   '[ ! -d "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1" ]'
 chk "prune: 20d-old run kept (retention 30)"  '[ -d "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1" ]'
