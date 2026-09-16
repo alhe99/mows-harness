@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { html, usd } from '../ui.mjs';
 import { getJSON, connect, subscribe } from '../store.mjs';
-import { marked, Renderer } from 'marked';
+import { marked, Renderer, Tokenizer } from 'marked';
 
 // ---------- rendering an agent's reply safely (fix round 1) ----------
 // An agent's reply is NOT trusted input. Agents read files, fetch pages and summarise other
@@ -24,7 +24,8 @@ import { marked, Renderer } from 'marked';
 // exactly the double-escaping trap above, so link and image defer to the base renderer once the
 // href passes, rather than re-emitting the tag by hand.
 const escapeHtml = s => String(s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 // A scheme ALLOWLIST, not a javascript:-blocklist. Positive matching is what makes this fail
 // closed: the bit before the colon must be exactly http, https or mailto, so anything smuggled
@@ -43,12 +44,50 @@ const escapeHtml = s => String(s)
 // With a positive allowlist the normalisation buys nothing and can only loosen, so it is gone.
 function safeHref(href) {
   const h = String(href ?? '').trim();
+  // Protocol-relative ("//evil.example") and UNC-ish (\\evil) destinations have an EMPTY
+  // head, so a plain no-scheme test waves them through as if they were relative. They are not:
+  // they are off-site navigation on click, from a dashboard whose whole subject is this box.
+  // Refused (review L1).
+  if (/^[/\\]{2}/.test(h)) return false;
   const head = h.split(/[/?#]/, 1)[0];
   if (/[&%]/.test(head)) return false;
   const colon = head.indexOf(':');
   if (colon === -1) return true;
   return /^(?:https?|mailto)$/i.test(head.slice(0, colon));
 }
+
+// THE SECOND RAW PATH, and the one that made fix round 1 incomplete (review C1).
+//
+// renderer.html is not the only way unescaped content reaches the output. marked's INLINE tag
+// tokenizer (vendor/marked.mjs:704) sets lexer.state.inRawBlock when it sees an open tag matching
+// <(pre|code|kbd|script), and inlineText() (vendor:958) then stops escaping:
+//     if (this.lexer.state.inRawBlock) { text = cap[0]; } else { text = escape$1(cap[0]); }
+// Two things turn that into a stored-XSS hole rather than a curiosity:
+//   - the flag persists for the REST OF THE MESSAGE. Lexer.lex() drains one shared `state` across
+//     blockTokens and inlineQueue, so an unclosed inline <code> in paragraph 1 disables escaping
+//     in paragraph 2, in list items, in blockquotes and in table cells.
+//   - the payload that then rides through need only be a shape marked's tag regex REJECTS and a
+//     browser ACCEPTS — "<img/src=x onerror=…>". It never becomes an `html` token at all, so
+//     neither renderer.html nor safeHref is ever consulted.
+// The trigger is an agent writing "use the <script> tag" without backticks. That is a sentence
+// about HTML, not an exotic input.
+//
+// The fix is at the WRITER, not the reader: clear the flag after every tag token, so it is never
+// true and inlineText escapes unconditionally. Deliberately the writer and not an inlineText
+// override — inlineText is the only reader in this vendored copy (the token field set at
+// vendor:714 is never read back), but holding the flag permanently false stays correct if a
+// future marked adds a second reader, whereas patching one reader would not.
+// NOT fixed by overriding renderer.text: Parser.parse's `case 'text'` re-wraps ALREADY-RENDERED
+// html in a synthetic token and emits it through renderer.text, so escaping there would
+// double-escape every top-level text block (review C1).
+const tokenizer = new Tokenizer();
+const baseTag = Tokenizer.prototype.tag;
+tokenizer.tag = function (src) {
+  const token = baseTag.call(this, src);
+  if (this.lexer) this.lexer.state.inRawBlock = false;
+  if (token) token.inRawBlock = false;
+  return token;
+};
 
 const renderer = new Renderer();
 renderer.html = ({ raw, text }) => escapeHtml(raw ?? text ?? '');
@@ -74,7 +113,15 @@ renderer.image = function (token) {
 // reason Task 6 pulled wireChatStream() out of lite.mjs into its own module.
 export function renderPartial(text) {
   const fences = (text.match(/```/g) || []).length;
-  return marked.parse(fences % 2 ? text + '\n```' : text, { async: false, renderer });
+  try {
+    return marked.parse(fences % 2 ? text + '\n```' : text, { async: false, renderer, tokenizer });
+  } catch {
+    // marked is called with `silent` unset, so Parser.parse's default case can throw. This runs
+    // DURING render and the SPA has no error boundary, so an unhandled throw here blanks the
+    // whole view rather than one bubble. Escaped plain text is a poor render; a blank dashboard
+    // mid-turn is a worse one (review L6).
+    return '<p>' + escapeHtml(text) + '</p>';
+  }
 }
 
 export function Chat({ name, runs }) {
@@ -113,19 +160,40 @@ export function Chat({ name, runs }) {
       // NOWHERE for one round trip — measured at 1,498 ms with a 1,500 ms refetch, i.e. exactly
       // the RTT. On the phone this view is built for that is the user watching their answer get
       // deleted and then come back.
-      const endedTurn = turnRef.current, salvage = liveRef.current;
+      // d.turn, not turnRef.current: turnRef is the turn the client last saw a DELTA for, which
+      // differs from the turn that ended whenever an end arrives for a turn that produced none
+      // (review L2). d.turn is always present in practice — agentAction sets it to Date.now() —
+      // so the fallback is belt and braces.
+      const endedTurn = d.turn || turnRef.current, salvage = liveRef.current;
       // turnRef can advance while the refetch is in flight, so newest-turn-wins has to survive
       // the await too: only the turn that ended may clear the buffer.
       const settle = () => { if (turnRef.current === endedTurn) { liveRef.current = ''; setLive(''); } };
+      // The reply is only safe to stop showing once it is actually IN the transcript that came
+      // back. A refetch can SUCCEED and still not contain it: chatEnd's `closed:true` fallback
+      // fires for a child that died, and a child killed before mows-agent's own append to
+      // chat.jsonl leaves exactly that state — transcript fetched fine, finished turn missing,
+      // reply deleted off the screen with no message. The happy path is safe only because
+      // cmd_chat appends the assistant record BEFORE printing the end line, which is a guarantee
+      // in a different program and not one this file may lean on (review M1).
+      const keep = list => {
+        const last = list[list.length - 1];
+        return salvage && !(last && last.role === 'assistant')
+          ? [...list, { at: new Date().toISOString(), role: 'assistant', text: salvage }]
+          : list;
+      };
       getJSON(`/api/agents/${name}/chat`)
-        .then(x => { setTurns(x.turns); settle(); })
+        .then(x => {
+          const list = x.turns || [];
+          const kept = turnRef.current === endedTurn ? keep(list) : list;
+          setTurns(kept);
+          if (kept !== list) setErr('Reply shown above, but it is not in the saved transcript yet.');
+          settle();
+        })
         .catch(() => {
-          // The refetch failed, so the transcript will not arrive. Keep the reply the user just
-          // watched arrive by settling it in place, rather than either blanking it or leaving a
-          // bubble pulsing "in progress" forever.
-          if (turnRef.current === endedTurn && salvage) {
-            setTurns(t => [...t, { at: new Date().toISOString(), role: 'assistant', text: salvage }]);
-          }
+          // The refetch failed outright, so the transcript will not arrive at all. Same rule:
+          // settle the reply in place rather than blanking it or leaving a bubble pulsing
+          // "in progress" forever.
+          if (turnRef.current === endedTurn && salvage) setTurns(t => keep(t));
           settle();
           setErr('Reply received, but reloading the transcript failed. Reload to confirm it was saved.');
         });
@@ -193,7 +261,7 @@ export function Chat({ name, runs }) {
     ${err && html`<p class="cherr" role="alert">${err}</p>`}
     <form class="chatf" onSubmit=${send}>
       <textarea ref=${taRef} rows="2" placeholder=${`Ask ${name} about its last run…`}
-        onKeyDown=${e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(e); }} required></textarea>
+        onKeyDown=${e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) send(e); }} required></textarea>
       <button disabled=${busy}>${busy ? '…' : 'Send'}</button>
     </form>
   </div>`;

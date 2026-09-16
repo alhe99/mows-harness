@@ -31,6 +31,8 @@ registerHooks({
 });
 
 const { renderPartial } = await import(new URL('views/chat.mjs', APP).href);
+// The vendored marked itself, to pin the HAZARD the view's tokenizer override neutralises.
+const { marked: rawMarked } = await import(new URL('vendor/marked.mjs', APP).href);
 
 let failed = false;
 function check(name, cond, detail) {
@@ -198,6 +200,22 @@ check('[detector] does not flag an entity-quoted handler sitting INSIDE an attri
   liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">').length === 0,
   liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">'));
 
+// ---- the premise the C1 fix rests on ------------------------------------------------------
+// The fix (a Tokenizer.tag override that clears lexer.state.inRawBlock) is worth exactly as much
+// as the claim that the hazard is still there to neutralise. So assert the hazard directly,
+// against the vendored marked with NO renderer and NO tokenizer of ours.
+//
+// IF THIS GOES RED, nothing is necessarily broken: it most likely means a newer marked was
+// vendored that escapes inline text unconditionally, and the override in views/chat.mjs may have
+// become vestigial. Re-derive it before deleting anything — the override is also what keeps the
+// behaviour correct if the flag comes back.
+{
+  const flip = 'use the <script> tag, then <img/src=x onerror=alert(1)>';
+  const unguarded = rawMarked.parse(flip, { async: false });
+  check('[mechanism] the vendored marked does still emit raw inline text after an inRawBlock flip',
+    liveBits(unguarded).length > 0, unguarded);
+}
+
 const HOSTILE = {
   'a raw <script> block': '<script>alert(1)</script>',
   'an <img onerror> handler': '<img src=x onerror="alert(1)">',
@@ -213,11 +231,63 @@ const HOSTILE = {
   'a NUL-smuggled scheme': '[x](<jav\u0000ascript:alert(1)>)',
   'an alt-attribute breakout': '![" onerror="alert(1)](https://example.com/a.png)',
   'a title-attribute breakout': '[t](https://example.com "\\" onmouseover=\\"alert(1)")',
+
+  // ---- flip-then-malformed (review C1/H1) -------------------------------------------------
+  // Every fixture ABOVE is a single well-formed tag or link destination, and a single
+  // well-formed tag is exactly the case that DOES become an `html` token and IS guarded. That
+  // is why 14 green fixtures and two separate hand-probes all missed C1: the hole is in the
+  // tokens that never become `html` tokens. marked's inline tag tokenizer sets
+  // lexer.state.inRawBlock on <pre|code|kbd|script, inlineText() then stops escaping, and the
+  // flag persists for the REST OF THE MESSAGE — across paragraphs, list items, blockquotes and
+  // table cells. So each of these primes the flag with one construct and attacks with another,
+  // and the payload is a shape marked's tag regex rejects but a browser accepts.
+  // Every one of these was LIVE against the code as shipped in round 1.
+  'flip via <script> in prose, then a slash-tag': 'use the <script> tag carefully, then "<img/src=x onerror=alert(1)>',
+  'flip via <code>, attack in the NEXT PARAGRAPH': 'I used the <code> element here.\n\nNext paragraph: <img/src=x onerror=alert(1)>',
+  'flip via <pre>, then a raw javascript: anchor': 'a <pre> b\n\n<a/href="javascript:alert(1)">click</a>',
+  'flip via <kbd>, then an iframe srcdoc': 'a <kbd> b\n\n<iframe/srcdoc="&lt;script&gt;x&lt;/script&gt;">',
+  'flip via <code>, then an svg onload': 'x <code> <svg/onload=alert(1)>',
+  'flip via <code>, attack in a LIST ITEM': 'a <code> b\n\n- item one\n- <img/src=x onerror=alert(1)>',
+  'flip via <code>, attack in a BLOCKQUOTE': 'a <code> b\n\n> quoted <img/src=x onerror=alert(1)>',
+  'flip via <code>, attack in a TABLE CELL': 'a <code> b\n\n| h |\n| --- |\n| <img/src=x onerror=alert(1)> |',
+  'a complete script, then a trailing </script fragment': '<script>alert(1)</script> then </script',
+  'a slash-tag with no flip at all (control: was always inert)': '<img/src=x onerror=alert(1)>',
+
+  // ---- distinct MECHANISMS, not just more of the same shape -------------------------------
+  // A reference definition carries the destination far away from the use, so a scheme can hide
+  // in a line that does not look like a link at all. It still reaches safeHref via outputLink.
+  'a reference link whose DEFINITION carries the scheme': '[click][r]\n\n[r]: javascript:alert(1)',
+  'a reference IMAGE whose definition carries the scheme': '![alt][r]\n\n[r]: javascript:alert(1)',
+  'a shortcut reference': '[r]\n\n[r]: javascript:alert(1)',
+  // The flip regex is /^<(pre|code|kbd|script)(\s|>)/i -- case-insensitive, and an attribute
+  // counts as the \s. Both flip; both must still be inert.
+  'a flip via an UPPERCASE tag': 'a <CODE> b\n\n<img/src=x onerror=alert(1)>',
+  'a flip via a tag carrying attributes': 'a <code class="x"> b\n\n<img/src=x onerror=alert(1)>',
+  // (no self-closing "<code/>" fixture: the flip regex requires whitespace or > after the tag
+  // name, so it never flips and such a fixture could not fail either way.)
 };
 for (const [label, src] of Object.entries(HOSTILE)) {
   const out = renderPartial(src);
   check(`hostile reply renders inert: ${label}`, liveBits(out).length === 0, { bits: liveBits(out), out });
 }
+// renderPartial runs on EVERY intermediate buffer, not just the finished reply, so a payload
+// that is inert when whole can still be live when half-arrived — a delta boundary is wherever
+// the model's tokeniser happened to break, not a place the payload author chose. Walk every
+// prefix of every hostile fixture. This closes the open item the round-1 report and the review
+// both listed as untested: hostile markup was only ever fed in as a single complete delta.
+{
+  let worst = null, prefixes = 0;
+  for (const [label, src] of Object.entries(HOSTILE)) {
+    for (let i = 1; i <= src.length && !worst; i++) {
+      prefixes++;
+      const bits = liveBits(renderPartial(src.slice(0, i)));
+      if (bits.length) worst = { label, i, prefix: src.slice(0, i), bits };
+    }
+  }
+  check('no PREFIX of any hostile fixture renders live',
+    worst === null, worst || { prefixesWalked: prefixes });
+}
+
 // Inert must not mean invisible: the operator has to be able to SEE what the agent said, or a
 // hostile reply becomes an invisible one and the guard hides an attack instead of defusing it.
 const shown = visible(renderPartial('<script>alert(1)</script>'));
@@ -242,6 +312,37 @@ check('ordinary prose with angle brackets and an ampersand survives intact',
 const okLink = renderPartial('[docs](https://example.com/a?b=1&c=2)');
 check('an ordinary https link still renders as a link',
   /<a href="https:\/\/example\.com\/a\?b=1&c=2"[^>]*>docs<\/a>/.test(okLink), okLink);
+// Protocol-relative destinations have an EMPTY head, so a plain "has it got a scheme?" test
+// waves them through as relative. They are not relative: they are off-site navigation on click,
+// from a dashboard whose whole subject is this box (review L1). Asserted as "no anchor carrying
+// that host", not as "no backticks", so it fails if the refusal is dropped.
+//
+// Note the backslash arithmetic. In markdown a backslash escapes the next character, so TWO
+// backslashes in the source are ONE by the time the tokenizer sees it -- and one backslash is
+// harmless here: encodeURI turns it into %5C, which resolves same-origin. A genuine two-
+// backslash destination needs FOUR in the source. The first draft of this fixture used two and
+// reported correct code as broken.
+for (const [label, src] of Object.entries({
+  'a link': '[x](//evil.example/path)',
+  'an angle-bracket destination': '[x](<//evil.example/path>)',
+  // (no autolink case: marked does not treat a scheme-less angle destination as an autolink,
+  // so there is nothing for safeHref to refuse and such a fixture could never fail.)
+  'an image': '![x](//evil.example/a.png)',
+  'a port-bearing host': '[x](//evil.example:8080/p)',
+  'a real two-backslash destination': '[x](\\\\\\\\evil.example/share)',
+})) {
+  const out = renderPartial(src);
+  check(`an off-site protocol-relative destination in ${label} does not reach an href`,
+    !/(?:href|src)="[^"]*evil\.example/.test(out), out);
+}
+// The single-backslash case is NOT refused, and does not need to be: it resolves same-origin.
+// Pinned so nobody "fixes" it into a refusal on the strength of how it looks.
+const oneSlash = renderPartial('[x](\\\\evil.example/share)');
+const oneSlashHref = (oneSlash.match(/href="([^"]*)"/) || [])[1];
+check('a single-backslash destination stays a same-origin relative path',
+  oneSlashHref === '%5Cevil.example/share'
+  && new URL(oneSlashHref, 'https://dash.example/ui/agents/x').host === 'dash.example', oneSlashHref);
+
 const relLink = renderPartial('[rel](./notes.md)');
 check('a relative link has no scheme to abuse and is still rendered',
   /<a href="\.\/notes\.md"[^>]*>rel<\/a>/.test(relLink), relLink);
