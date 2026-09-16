@@ -194,3 +194,4 @@ agents/config.example
 scripts/live-agents.sh
 docs/qa/journeys/agents-tab.md
 agents/SETUP.md
+docs/superpowers/specs/2026-09-16-dashboard-spa-design.md
