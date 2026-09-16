@@ -84,6 +84,14 @@ const tokenizer = new Tokenizer();
 const baseTag = Tokenizer.prototype.tag;
 tokenizer.tag = function (src) {
   const token = baseTag.call(this, src);
+  // The lexer-state clear is DELIBERATELY UNCONDITIONAL — outside `if (token)`, and guarded only
+  // on `this.lexer` existing. tag() is consulted at every inline position, so clearing here means
+  // the flag is false before every inline text node, not merely wherever this marked happens to
+  // set it. Tucking it inside `if (token && this.lexer)` is the obvious tidy-up and is
+  // behaviourally identical against THIS marked (only tag() sets the flag, in the same call the
+  // clear then undoes), so no assertion can tell the two apart and the check stays 63 green
+  // either way. The difference only shows up against a future marked that sets the flag
+  // somewhere else — which is the whole point. Re-review R3: do not simplify this.
   if (this.lexer) this.lexer.state.inRawBlock = false;
   if (token) token.inRawBlock = false;
   return token;
@@ -176,10 +184,20 @@ export function Chat({ name, runs }) {
       // cmd_chat appends the assistant record BEFORE printing the end line, which is a guarantee
       // in a different program and not one this file may lean on (review M1).
       const keep = list => {
-        const last = list[list.length - 1];
-        return salvage && !(last && last.role === 'assistant')
-          ? [...list, { at: new Date().toISOString(), role: 'assistant', text: salvage }]
-          : list;
+        if (!salvage) return list;
+        // Identity, not position (re-review R5). The first version asked "is the last entry an
+        // assistant turn?", which says "present" for a STALE assistant turn left by an earlier
+        // turn while this turn's records are absent entirely — the exact silent-drop M1 was
+        // opened for. It was unreachable only because cmd_chat appends the user record before
+        // spawning, which is the same cross-program lean the comment above refuses to make.
+        // So ask the newest assistant turn whether it actually carries what we just watched.
+        // `includes` and not `===`: a client that joined mid-turn holds only a SUFFIX of the
+        // reply, and exact equality would append that partial as a duplicate beside the
+        // complete saved one. A stale turn contains none of it, so it still salvages.
+        const newest = [...list].reverse().find(t => t && t.role === 'assistant');
+        return newest && String(newest.text || '').includes(salvage)
+          ? list
+          : [...list, { at: new Date().toISOString(), role: 'assistant', text: salvage }];
       };
       getJSON(`/api/agents/${name}/chat`)
         .then(x => {

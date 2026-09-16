@@ -229,8 +229,11 @@ const HOSTILE = {
   'an entity-smuggled scheme': '[x](&#106;avascript&#58;alert(1))',
   'a tab-smuggled scheme (angle-bracket destination, which does reach the renderer)': '[x](<java\tscript:alert(1)>)',
   'a NUL-smuggled scheme': '[x](<jav\u0000ascript:alert(1)>)',
-  'an alt-attribute breakout': '![" onerror="alert(1)](https://example.com/a.png)',
-  'a title-attribute breakout': '[t](https://example.com "\\" onmouseover=\\"alert(1)")',
+  // The next two are inert even UNGUARDED (marked escapes alt and title in outputLink), so
+  // they pin marked's behaviour, not ours — same convention as the [marked, not renderPartial]
+  // assertions above. Re-review R4.
+  '[marked, not our guard] an alt-attribute breakout': '![" onerror="alert(1)](https://example.com/a.png)',
+  '[marked, not our guard] a title-attribute breakout': '[t](https://example.com "\\" onmouseover=\\"alert(1)")',
 
   // ---- flip-then-malformed (review C1/H1) -------------------------------------------------
   // Every fixture ABOVE is a single well-formed tag or link destination, and a single

@@ -447,6 +447,12 @@ echo ok > "$CLAUDE_MODE_FILE"
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
 chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
   'node scripts/chat-stream-utf8-check.mjs'
+# Task 7 re-review R1: this sat beside its sibling above for two rounds with no caller anywhere
+# in the tree -- the branch's entire XSS regression gate, run only when a human typed the command.
+# preflight.sh runs it too (that is what reaches CI); this is the suite-local copy, matching the
+# line above exactly.
+chk "chat view: hostile replies render inert, ordinary markdown unchanged" \
+  'node scripts/chat-view-check.mjs'
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

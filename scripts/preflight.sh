@@ -130,6 +130,35 @@ else
   bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
 
+# 5c. The chat view's XSS / rendering regression gate (Task 7, findings C1 and R1).
+#
+# This is the only route by which that gate reaches CI: ci.yml runs exactly this script, and
+# checks 1-4 above compare file LISTS, not behaviour. It sat unwired for two rounds -- 63
+# assertions guarding a Critical stored-XSS, executed only when a human typed the command.
+#
+# It FAILS rather than skips when it cannot run. That is deliberate and is the whole point: a
+# security gate that quietly skips itself is worse than one that is absent, because it reports
+# green. This session hit that failure mode four separate times, including a control-byte gate
+# that was blind to the one byte it most needed to catch. node:module.registerHooks needs Node
+# >= 22.15; ci.yml pins setup-node accordingly rather than trusting the runner image.
+if [ -f scripts/chat-view-check.mjs ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    bad "node not found — scripts/chat-view-check.mjs (the chat view's XSS gate) did NOT run"
+  elif ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=15)?0:1)'; then
+    bad "node $(node -p 'process.versions.node') is too old for scripts/chat-view-check.mjs (needs >= 22.15 for node:module.registerHooks) — the XSS gate did NOT run"
+  else
+    CVOUT=$(node scripts/chat-view-check.mjs 2>&1) && CVRC=0 || CVRC=$?
+    if [ "$CVRC" -ne 0 ]; then
+      printf '%s\n' "$CVOUT" | grep '^FAIL' || printf '%s\n' "$CVOUT" | tail -5
+      bad "chat-view-check: the chat view's XSS/rendering gate failed (see above)"
+    else
+      note "chat-view-check: $(printf '%s\n' "$CVOUT" | grep -c '^PASS' || true) assertions pass"
+    fi
+  fi
+else
+  bad "scripts/chat-view-check.mjs is missing — the chat view's XSS gate did NOT run"
+fi
+
 # 6. gitleaks if available (CI always runs it)
 if command -v gitleaks >/dev/null; then gitleaks detect --source . --no-banner || bad "gitleaks"; fi
 
