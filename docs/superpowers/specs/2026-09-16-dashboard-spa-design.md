@@ -106,6 +106,30 @@ URL so a deploy busts the cache without a build step.
 self-contained. `preflight.sh` asserts each vendored file's SHA-256 against a recorded manifest,
 so a vendored dependency cannot change without a visible diff.
 
+**The import map must also carry a URL-keyed entry per first-party file, and that is not
+optional.** Content hashing and relative imports are otherwise incompatible: a browser resolves
+`import './ui.mjs'` against the *importing* module's own URL, so a module served as
+`/ui/assets/main.<hash>.mjs` requests the unhashed `/ui/assets/ui.mjs`, which does not exist.
+Task 4 proved this in a browser — three console errors, blank page, `render()` never reached —
+and it would have hit every later client task identically, since Task 4 is merely the first to
+import one first-party module from another.
+
+Import maps remap a relative specifier only *after* the browser resolves it to an absolute URL,
+so a URL key works where a bare specifier cannot:
+
+```json
+{"imports": {"/ui/assets/ui.mjs": "/ui/assets/ui.1a2b3c4d.mjs"}}
+```
+
+Verified in Chromium against a server where the unhashed file did not exist at all, so the load
+could only have come from the remap — and by asserting the imported function actually executed,
+not merely that nothing errored. The map is generated from the same asset table that serves the
+files, and must be regenerated whenever that table reloads.
+
+Rejected alternative: serving each file under both its hashed and unhashed name. That gives one
+file two URLs with two caching policies, and every relative import takes the non-immutable one —
+so hashing would survive for the entry module alone while appearing to apply to all of them.
+
 ## 2. Routing, and what we keep and lose
 
 **Kept.** Same-document View Transitions replace the cross-document ones. The tab bar keeps its

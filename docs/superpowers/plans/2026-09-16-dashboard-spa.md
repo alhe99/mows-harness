@@ -265,6 +265,16 @@ function uiShellHtml(host) {
     htm: assetUrlFor('vendor/htm.mjs'),
     marked: assetUrlFor('vendor/marked.mjs'),
   };
+  // A URL-keyed entry per first-party file, and it is NOT optional. A browser resolves
+  // `import './ui.mjs'` against the IMPORTING module's own hashed URL, so it requests the
+  // unhashed path, which uiAssetView 404s — blank page, no server-side signal. Import maps
+  // remap a relative specifier only AFTER it resolves to an absolute URL, so a URL key works
+  // where a bare specifier cannot. Built from the same table that serves the files, so it is
+  // regenerated whenever that table reloads.
+  for (const [k, v] of uiAssets) {
+    const plain = `/ui/assets/${v.rel}`, hashed = `/ui/assets/${k}`;
+    if (plain !== hashed) imports[plain] = hashed;
+  }
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
