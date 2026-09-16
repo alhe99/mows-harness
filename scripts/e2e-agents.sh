@@ -270,5 +270,22 @@ chk "prune: 20d-old run kept (retention 30)"  '[ -d "$MOWS_AGENTS_STATE/good/run
 chk "prune: last target never pruned"         '[ -d "$MOWS_AGENTS_STATE/short/$(readlink "$MOWS_AGENTS_STATE/short/last")" ]'
 rm -rf "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
 
+echo "### merge.policy pr"
+git init -q "$T/repo" && git -C "$T/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+git -C "$T/repo" branch -M main; git -C "$T/repo" checkout -q -b agent/fix
+git -C "$T/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "agent change"
+git init -q --bare "$T/origin.git"; git -C "$T/repo" remote add origin "$T/origin.git"
+# mkagent overrides are YAML lines appended after the base block: indent two spaces to land inside mows:
+mkagent "$A/prbot.md" "$(sed "s|workdir: .*|workdir: $T/repo|" <<<"$MOWS_BLOCK_OK")" "  merge: { policy: pr, base: main }"
+sed -i 's/^disallowedTools: .*/disallowedTools: [WebFetch]/' "$A/prbot.md"
+echo ok > "$CLAUDE_MODE_FILE"
+chk "pr: lint passes with stub gh"           'mows-agent lint prbot'
+chk "pr: run done"                            'mows-agent run prbot'
+chk "pr: branch pushed to origin"             'git -C "$T/origin.git" rev-parse --verify agent/fix'
+chk "pr: gh pr create --base main called"     'grep -q "pr create --fill --base main" "$GH_LOG"'
+chk "pr: event logged"                        'grep -q "PR opened from agent/fix" "$MOWS_AGENTS_STATE/prbot/events.log"'
+git -C "$T/repo" checkout -q main
+chk "pr: on base branch is a logged no-op"    'mows-agent run prbot && grep -q "still on main" "$MOWS_AGENTS_STATE/prbot/events.log"'
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
