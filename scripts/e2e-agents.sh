@@ -225,5 +225,46 @@ chk "logs: assistant text only"               '[ "$(mows-agent logs good)" = "st
 chk "logs --raw: the stream"                  'mows-agent logs good --raw | grep -q "\"type\":\"system\""'
 chk "logs <run_id>: explicit run"             '[ "$(mows-agent logs good "$(jq -r .run_id "$S/last/status.json")")" = "stub says OK" ]'
 
+echo "### budget tiers + concurrency + prune"
+mkagent "$A/capped.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, usd_per_day: 0.01, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
+echo '{"personal":{"five_hour_pct":10,"weekly_pct":5},"work":{"five_hour_pct":90,"weekly_pct":5}}' > "$QUOTA_FILE"
+echo ok > "$CLAUDE_MODE_FILE"
+# stub run costs 0.0123; cap 0.01 -> run 1 allowed (spend was 0), run 2 refused (0.0123 >= 0.01)
+chk "cap: first run allowed (spend was 0)"    'mows-agent run capped'
+chk "cap: second run refused, exit 6"         'mows-agent run capped >/dev/null 2>&1; [ $? = 6 ]'
+chk "cap: refusal logged"                     'grep -q "daily cap" "$MOWS_AGENTS_STATE/capped/events.log"'
+chk "cap: refusal made no second run dir"     '[ "$(ls "$MOWS_AGENTS_STATE/capped/runs" | wc -l)" = 1 ]'
+echo '{"personal":{"five_hour_pct":75,"weekly_pct":5}}' > "$QUOTA_FILE"
+mkagent "$A/floored.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
+mows-agent run floored >/dev/null 2>&1; RC=$?
+chk "quota: 75% used > 70% ceiling -> refuse 6" '[ "$RC" = 6 ] && grep -q "quota below 30%" "$MOWS_AGENTS_STATE/floored/events.log"'
+echo '{"personal":{"five_hour_pct":60,"weekly_pct":5}}' > "$QUOTA_FILE"
+chk "quota: 60% used passes floor 30"         'mows-agent run floored'
+echo '{"personal":{"five_hour_pct":null,"weekly_pct":null,"source":"unknown"}}' > "$QUOTA_FILE"
+chk "quota: unknown never refuses"            'mows-agent run floored'
+mkagent "$HOME/.claude-work/agents/wk.md" "$(sed 's/profile: default/profile: work/; s/budget: .*/budget: { usd_per_run: 1, max_turns: 5, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
+echo '{"personal":{"five_hour_pct":0},"work":{"five_hour_pct":95}}' > "$QUOTA_FILE"
+chk "quota: work profile reads .work"         'mows-agent run wk >/dev/null 2>&1; [ $? = 6 ]'
+chk "quota: work profile CLAUDE_CONFIG_DIR"   'echo "{}" > "$QUOTA_FILE"; mows-agent run wk && grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude-work" "$CLAUDE_ARGS_FILE"'
+# concurrency: a live `working` record with a real pid refuses a second run
+sleep 300 & SP=$!
+mkdir -p "$MOWS_AGENTS_STATE/good/runs/fake"; ln -sfn runs/fake "$MOWS_AGENTS_STATE/good/last"
+jq -n --argjson p "$SP" '{state:"working",pid:$p}' > "$MOWS_AGENTS_STATE/good/runs/fake/status.json"
+mows-agent run good >/dev/null 2>&1; RC=$?
+chk "concurrency: live working run refuses"   '[ "$RC" = 6 ] && grep -q "still working" "$MOWS_AGENTS_STATE/good/events.log"'
+kill $SP; wait $SP 2>/dev/null
+chk "concurrency: dead pid does not block"    'mows-agent run good'
+rm -rf "$MOWS_AGENTS_STATE/good/runs/fake"
+# prune
+mkagent "$A/short.md" "$(printf '%s\n  retention_days: 5' "$MOWS_BLOCK_OK")"
+mows-agent run short >/dev/null 2>&1
+mkdir -p "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"; touch -d '40 days ago' "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1"
+mkdir -p "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1";  touch -d '20 days ago' "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
+mows-agent prune >/dev/null 2>&1
+chk "prune: 40d-old run gone (retention 5)"   '[ ! -d "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1" ]'
+chk "prune: 20d-old run kept (retention 30)"  '[ -d "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1" ]'
+chk "prune: last target never pruned"         '[ -d "$MOWS_AGENTS_STATE/short/$(readlink "$MOWS_AGENTS_STATE/short/last")" ]'
+rm -rf "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -280,12 +280,27 @@ cmd_logs(){
   else jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$d/stream.jsonl"; fi
 }
 
+# ---------- prune ----------
+cmd_prune(){ # delete run dirs older than retention_days per agent; never the `last` target
+  local n f m days d keep r
+  while IFS=$'\t' read -r n f; do
+    m=$(meta "$f") || continue; days=$(mget "$m" .mows.retention_days); days=${days:-30}
+    d="$STATE_ROOT/$n/runs"; [ -d "$d" ] || continue
+    keep=$(readlink "$STATE_ROOT/$n/last" 2>/dev/null); keep=${keep#runs/}
+    while IFS= read -r r; do
+      [ "$(basename "$r")" = "$keep" ] && continue
+      rm -rf "$r" && event "$n" "pruned $(basename "$r") (> ${days}d)"
+    done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -mtime "+$days")
+  done < <(all_agents)
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
-  lint) shift; cmd_lint "$@";;
-  run)  shift; cmd_run "$@";;
-  list) cmd_list;;
-  last) shift; cmd_last "$@";;
-  logs) shift; cmd_logs "$@";;
+  lint)  shift; cmd_lint "$@";;
+  run)   shift; cmd_run "$@";;
+  list)  cmd_list;;
+  last)  shift; cmd_last "$@";;
+  logs)  shift; cmd_logs "$@";;
+  prune) cmd_prune;;
   *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
 esac
