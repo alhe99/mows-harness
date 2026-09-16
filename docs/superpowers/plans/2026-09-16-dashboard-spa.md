@@ -767,22 +767,62 @@ Commit subject: `dashboard(app): agents list, agent detail, run view`
 
 - [ ] **Step 1: Write the failing assertion**
 
-Append to `scripts/e2e-agents.sh` before the summary line:
+**First, teach the stub to stream.** The stub `claude` emits four record types and never a
+`stream_event`, so an assertion on delta lines is unsatisfiable against it as written. Gate the
+new records on the flag that produces them in the real CLI, so the stub mirrors the real
+contract rather than an unrelated mode switch. Inside `$T/shim/claude`, after the
+`CLAUDE_ARGS_FILE` write:
+
+```bash
+case " $* " in *" --include-partial-messages "*)
+  for w in "stub " "says " "OK"; do
+    printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$w"
+  done;;
+esac
+```
+
+Add a `badtext` mode to the same stub — the plain-text-notice-on-exit-0 failure the
+non-streaming path already guards against (`agents/bin/mows-agent:355`), so the streaming path's
+error handling can be tested hermetically. It must print *only* the notice and exit 0, so place
+it to bypass the JSON records entirely, not as another arm of the trailing `case $mode`:
+
+```bash
+[ "$mode" = badtext ] && { echo "No conversation found with session ID: $sid"; exit 0; }
+```
+
+**Then append the assertions** to `scripts/e2e-agents.sh` before the summary line:
 
 ```bash
 echo "### chat --stream"
 echo ok > "$CLAUDE_MODE_FILE"
+mows-agent run good >/dev/null 2>&1 || true
+cp "$CLAUDE_ARGS_FILE" "$T/run-args.txt"
+chk "runs never pass --include-partial-messages" '! grep -q "include-partial-messages" "$T/run-args.txt"'
 chk "chat --stream emits seq deltas"   'mows-agent chat good --stream "hi" 2>/dev/null | grep -q "\"seq\":"'
 chk "chat --stream ends with end line" 'mows-agent chat good --stream "hi" 2>/dev/null | tail -1 | jq -e ".end == true"'
-chk "runs never pass --include-partial-messages" '! grep -q "include-partial-messages" "$CLAUDE_ARGS_FILE"'
+chk "chat --stream passes the flag"    'grep -q "include-partial-messages" "$CLAUDE_ARGS_FILE"'
+echo badtext > "$CLAUDE_MODE_FILE"
+chk "chat --stream fails loudly on plain-text notice" 'mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
+chk "chat --stream logs role:error"    'tail -1 "<chat log path>" | jq -e ".role == \"error\""'
+echo ok > "$CLAUDE_MODE_FILE"
 ```
 
-The third assertion is the per-mode guard from Global Constraints: it runs after a `mows-agent run`, and proves the streaming flag did not leak into unattended runs.
+`$CLAUDE_ARGS_FILE` is a single global file that the stub **overwrites** on every `-p` call, so
+an assertion about what a *run* passed must read a snapshot taken immediately after that run.
+Reading the live file after two chat calls tests the chat calls, not the run. Paired with
+"chat --stream passes the flag", the snapshot assertion is the per-mode guard from Global
+Constraints: together they prove the flag appears in exactly one of the two modes.
+
+Read `cmd_chat` for the real chat-log path and substitute it for `<chat log path>` — do not
+guess it.
 
 - [ ] **Step 2: Confirm they fail**
 
 Run: `bash scripts/e2e-agents.sh 2>&1 | grep -E '^FAIL: (chat --stream|runs never)'`
-Expected: the first two fail.
+Expected: every `chat --stream` assertion fails; `runs never pass --include-partial-messages`
+passes, because nothing streams yet. Report the actual list. If an assertion you expected to
+fail passes instead, stop and say so — a check that passes before its feature exists is
+measuring something other than the feature.
 
 - [ ] **Step 3: Implement `--stream` in `cmd_chat`**
 
@@ -801,22 +841,43 @@ to delta lines:
   if [ "$stream" = 1 ]; then
     # Chat turns stream; unattended runs deliberately do not (spec: the flag is per-mode,
     # because it multiplies stream lines for no run-record value).
-    local seq=0 reply="" cost=0 iserr=false line t
+    local seq=0 reply="" cost=0 iserr=false rc=0 sawres=0 notice="" line t
     while IFS= read -r line; do
-      t=$(jq -r '(.event.delta.text // empty)' <<<"$line" 2>/dev/null) || continue
+      # The sentinel below is how a process substitution's exit status reaches us at all:
+      # `done < <(cmd)` discards it, so a plain `timeout` kill or a non-zero claude exit
+      # would otherwise look identical to a clean empty reply.
+      case $line in __mows_rc=*) rc=${line#__mows_rc=}; continue;; esac
+      if ! jq -e . >/dev/null 2>&1 <<<"$line"; then
+        # claude exits 0 and prints a plain-text notice ("No conversation found with session
+        # ID: …") when a session cannot be resumed. The non-streaming path above guards
+        # against exactly this; dropping the line here reports a failure as an empty success.
+        [ -n "$line" ] && notice="${notice:-$line}"
+        continue
+      fi
+      t=$(jq -r '(.event.delta.text // empty)' <<<"$line")
       if [ -n "$t" ]; then
         seq=$((seq + 1)); reply="$reply$t"
         jq -nc --argjson s "$seq" --arg d "$t" '{seq:$s,delta:$d}'
       fi
       case $line in *'"type":"result"'*)
+        sawres=1
         cost=$(jq -r '.total_cost_usd // 0' <<<"$line")
         iserr=$(jq -r '(.is_error // false)|tostring' <<<"$line");;
       esac
-    done < <(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
+    done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
               --resume "$sid" --output-format stream-json --verbose --include-partial-messages \
               --permission-prompts none --strict-mcp-config "${mcp[@]}" \
               --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
-              -- "$msg" 2>/dev/null)
+              -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
+    if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
+      local why="${notice:-claude exited $rc with no result record}"
+      [ "$rc" = 124 ] && why="timed out after 300s"
+      jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+      jq -nc --arg t "$why" '{end:true,cost_usd:0,is_error:true,error:$t}'
+      event "$n" "chat failed: $why"
+      echo "mows-agent: chat turn failed: $why" >&2
+      return 64
+    fi
     jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$iserr" \
        '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
     jq -nc --argjson c "$cost" --arg e "$iserr" '{end:true,cost_usd:$c,is_error:($e=="true")}'
@@ -824,6 +885,12 @@ to delta lines:
     [ "$iserr" = true ] && return 3; return 0
   fi
 ```
+
+The failure branch mirrors the non-streaming path's three obligations — a `role:"error"`
+transcript entry, an operator-visible message, and a non-zero exit — and adds a fourth that
+only streaming has: an `end` line carrying `is_error:true`, so a live dashboard viewer sees the
+failure rather than a turn that simply stops. `cmd_chat` cannot call `die` here because the
+`end` line must reach stdout first.
 
 - [ ] **Step 4: Wire the dashboard to it**
 
