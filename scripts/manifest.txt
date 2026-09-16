@@ -205,5 +205,6 @@ infra/dashboard/app/vendor/preact.mjs
 infra/dashboard/app/store.mjs
 infra/dashboard/app/ui.mjs
 infra/dashboard/app/views/agents.mjs
+infra/dashboard/app/views/chat.mjs
 infra/dashboard/app/views/runs.mjs
 scripts/stream-replay-check.mjs
