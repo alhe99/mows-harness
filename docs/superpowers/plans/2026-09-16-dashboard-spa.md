@@ -59,7 +59,7 @@
 
 **Interfaces:**
 - Produces: `GET /api/agents` → `{agents:[{name,state,last_event_at,total,cost7d,timer}]}`;
-  `GET /api/agents/<name>` → `{name,meta,recs,events,timers,capability}` (`capability` lands in Task 9, omitted until then);
+  `GET /api/agents/<name>` → `{name,recs,events,total,cost7d,timers,timer}`. `capability` is added by Task 8; no `meta` key exists — an earlier draft of this line promised one, but `agentsIndex()` has no such field and nothing downstream consumes it (verified);
   `GET /api/agents/<name>/chat` → `{turns:[{at,role,text,cost_usd,is_error}]}`;
   `GET /api/agents/<name>/runs/<run_id>` → `{status,text}`.
   All respond `application/json`, `cache-control: no-cache`.
