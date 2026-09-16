@@ -50,7 +50,8 @@ S
 cat > "$T/shim/claude" <<'S'
 #!/usr/bin/env bash
 # stub claude: --version, `agents --json`, or a scripted -p run chosen by $CLAUDE_MODE_FILE
-# (ok|budget|maxturns|error|noresult|hang). argv + CLAUDE_CONFIG_DIR land in $CLAUDE_ARGS_FILE.
+# (ok|budget|maxturns|error|noresult|hang|badtext|crashafter). argv + CLAUDE_CONFIG_DIR land
+# in $CLAUDE_ARGS_FILE.
 [ "${1:-}" = --version ] && { echo "2.1.273 (Claude Code)"; exit 0; }
 [ "${1:-}" = agents ] && { [ -n "${CLAUDE_AGENTS_HANG:-}" ] && sleep 3600; cat "${CLAUDE_AGENTS_JSON_FILE:-/dev/null}"; exit 0; }
 { printf '%s\n' "$@"; echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-}"; echo "PWD=$PWD"; } > "${CLAUDE_ARGS_FILE:-/dev/null}"
@@ -60,22 +61,44 @@ sid=00000000-0000-4000-8000-000000000001
 # against (agents/bin/mows-agent:355). Bypasses every JSON record below — must print ONLY
 # the notice, so this has to run before the stream-delta case and the normal echoes.
 [ "$mode" = badtext ] && { echo "No conversation found with session ID: $sid"; exit 0; }
-case " $* " in *" --include-partial-messages "*)
+# Delta records mirror the real CLI's own contract: --include-partial-messages ALONE is not
+# enough to produce them (the real CLI also needs --output-format stream-json --verbose), so
+# gate on all three the way the CLI does — gating on one flag only would stay green even if
+# the streaming invocation silently downgraded to plain --output-format json, which produces
+# no stream_event records at all against the real CLI (fix round 1, F5).
+argv=" $* "
+if [[ $argv == *" --include-partial-messages "* && $argv == *" --output-format "* \
+   && $argv == *" stream-json "* && $argv == *" --verbose "* ]]; then
   for w in "stub " "says " "OK"; do
     printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$w"
-  done;;
-esac
+  done
+  # A delta that is itself just a paragraph break, and one that ends on a newline — the two
+  # shapes a plain `t=$(jq -r … <<<"$line")` silently loses (command substitution strips ALL
+  # trailing newlines from its capture): the first vanishes into "" and never even increments
+  # seq, the second loses its trailing "\n". Neither is hypothetical (fix round 1, F1).
+  # The \n below MUST be passed as a %s argument, not written into the format string: printf
+  # interprets a literal \n IN THE FORMAT STRING as a real newline byte, which would split
+  # this JSON record across multiple physical lines before `while read -r line` ever sees it
+  # (caught empirically — the deltas silently failed to register at all the first time).
+  printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' '\n\n'
+  printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' 'Second paragraph.\n'
+fi
 echo '{"type":"system","subtype":"init","session_id":"'$sid'"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]},"session_id":"'$sid'"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stub says OK"}]},"session_id":"'$sid'"}'
 res(){ echo '{"type":"result","subtype":"'$1'","is_error":'$2',"terminal_reason":"'$3'","num_turns":2,"session_id":"'$sid'","total_cost_usd":'$4',"permission_denials":[],"result":"'$5'"}'; }
 case $mode in
-  ok)       res success false completed 0.0123 "stub says OK";;
-  budget)   res error_max_budget_usd true budget_exceeded 1.5 "";;
-  maxturns) res error_max_turns true max_turns 0.5 "";;
-  error)    res success true api_error 0 "Not logged in";;
-  noresult) exit 1;;
-  hang)     sleep 3600;;
+  ok)         res success false completed 0.0123 "stub says OK";;
+  budget)     res error_max_budget_usd true budget_exceeded 1.5 "";;
+  maxturns)   res error_max_turns true max_turns 0.5 "";;
+  error)      res success true api_error 0 "Not logged in";;
+  noresult)   exit 1;;
+  hang)       sleep 3600;;
+  # crashafter: a result record DOES arrive (sawres=1) and the process THEN exits non-zero —
+  # the only shape that isolates the __mows_rc= sentinel's own half of the failure check
+  # (`[ "$rc" != 0 ]`) from sawres's half, which alone already catches every other mode here
+  # (fix round 1, F4).
+  crashafter) res success false completed 0.0123 "stub says OK"; exit 1;;
 esac
 S
 chmod +x "$T"/shim/*
@@ -374,10 +397,36 @@ chk "runs never pass --include-partial-messages" '! grep -q "include-partial-mes
 chk "chat --stream emits seq deltas"   'mows-agent chat good --stream "hi" 2>/dev/null | grep -q "\"seq\":"'
 chk "chat --stream ends with end line" 'mows-agent chat good --stream "hi" 2>/dev/null | tail -1 | jq -e ".end == true"'
 chk "chat --stream passes the flag"    'grep -q "include-partial-messages" "$CLAUDE_ARGS_FILE"'
+# F1 (fix round 1): a delta that is purely a paragraph break, and one that ends on a
+# newline, must both survive into the persisted transcript — this is the exact shape that
+# a plain `$(jq -r …)` extraction silently destroys (dropped entirely / trailing \n lost).
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat --stream preserves newline-bearing deltas in the transcript" \
+  'grep -qF "stub says OK\n\nSecond paragraph.\n" "$MOWS_AGENTS_STATE/good/chat.jsonl"'
 echo badtext > "$CLAUDE_MODE_FILE"
 chk "chat --stream fails loudly on plain-text notice" 'mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
 chk "chat --stream logs role:error"    'tail -1 "$MOWS_AGENTS_STATE/good/chat.jsonl" | jq -e ".role == \"error\""'
+# F3 (fix round 1): the failure path's fourth obligation — an `end` line carrying
+# is_error:true — is the only viewer-visible effect of a failed streaming turn. Deleting it
+# left the suite green before this assertion existed.
+chk "chat --stream failure end line carries is_error:true" \
+  'mows-agent chat good --stream "hi" 2>/dev/null | tail -1 | jq -e ".end == true and .is_error == true"'
+# F4 (fix round 1): isolate each half of `[ "$rc" != 0 ] || [ "$sawres" = 0 ]`. crashafter
+# emits a result record (sawres=1) and then exits 1, constraining the rc half specifically;
+# a real 1s `timeout` kill (via the now-overridable CHAT_TIMEOUT_SEC) constrains the
+# __mows_rc= sentinel's ability to carry a genuine process kill through a process
+# substitution, which `done < <(cmd)` otherwise discards outright.
+echo crashafter > "$CLAUDE_MODE_FILE"
+chk "chat --stream fails when claude exits non-zero despite a result record" \
+  'mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
+echo hang > "$CLAUDE_MODE_FILE"
+chk "chat --stream sentinel captures a real timeout kill (rc=124)" \
+  'CHAT_TIMEOUT_SEC=1 timeout 10 mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
 echo ok > "$CLAUDE_MODE_FILE"
+
+echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
+chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
+  'node scripts/chat-stream-utf8-check.mjs'
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

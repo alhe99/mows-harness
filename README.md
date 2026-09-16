@@ -466,8 +466,10 @@ flowchart TB
 - **`agents/`** — purpose-scoped agents that run unattended: `mows-agent` owns policy (lint,
   budget, refusal, run records, escalation, pruning) while the Claude daemon owns the process
   itself; systemd timers/path units and HMAC-signed webhooks trigger a run, staged into
-  `./rendered/` and never installed or enabled by `install.sh`. See
-  [`agents/SETUP.md`](agents/SETUP.md).
+  `./rendered/` and never installed or enabled by `install.sh`. `mows-agent chat <name>
+  [--stream]` resumes an agent's last completed run for a follow-up question; `--stream`
+  (first argument only) streams the reply token-by-token to the dashboard instead of
+  returning it whole. See [`agents/SETUP.md`](agents/SETUP.md).
 
 Deeper detail — port map, the profile-vs-agent model, watchdog rationale, known operational
 caveats — is in [`docs/architecture.md`](docs/architecture.md). Attributions:

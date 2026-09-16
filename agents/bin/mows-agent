@@ -3,7 +3,7 @@
 # The Claude Code daemon manages processes; this manages POLICY: lint, budget, refusal,
 # run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
 #   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
-#              chat <name> <message…>|--history|--clear · prune · render <name>|--all · residents [--json]
+#              chat <name> [--stream] <message…>|--history|--clear · prune · render <name>|--all · residents [--json]
 # Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
 set -uo pipefail
 CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
@@ -302,8 +302,12 @@ cmd_logs(){
 # across days because Claude Code keeps the session; we only ever store our own transcript.
 CHAT_USD="${CHAT_USD:-0.25}"   # per-turn cap; a chat turn is one question, not a work session
 CHAT_TURNS="${CHAT_TURNS:-6}"  # enough for a lookup or two, not enough to run a whole task
+# Overridable (not just a literal `timeout 300` below) so a real `timeout` kill — the specific
+# failure the __mows_rc= sentinel exists to catch — can be driven hermetically in ~1s instead
+# of needing an actual 300s wait (fix round 1, F4).
+CHAT_TIMEOUT_SEC="${CHAT_TIMEOUT_SEC:-300}"
 cmd_chat(){
-  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent chat <name> <message…>  ·  --history  ·  --clear"
+  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent chat <name> [--stream] <message…>  ·  --history  ·  --clear"
   shift
   local f; f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"
   local dir="$STATE_ROOT/$n" log="$STATE_ROOT/$n/chat.jsonl"
@@ -312,8 +316,15 @@ cmd_chat(){
     --clear)   rm -f "$log"; echo "cleared chat transcript for $n (the agent's own session is untouched)"; return 0;;
   esac
   local stream=0
+  # --stream is recognised ONLY as the very first argument after <name> — exactly as
+  # positional as the --history/--clear check above. A typo (--strem) or --stream given
+  # AFTER the message is silently treated as ordinary message text, not an error (fix round
+  # 1, F9): a message can legitimately start with `--` (see the guard below), so a parser
+  # that rejected an unrecognised leading `--token` here would also have to reject that —
+  # reintroducing the exact vulnerability the `--` guard exists to prevent. Documented
+  # rather than "fixed" for that reason.
   case "${1:-}" in --stream) stream=1; shift;; esac
-  local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> <message…>"
+  local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> [--stream] <message…>  (--stream is recognised only immediately after <name>)"
   # The message is attacker-reachable: the dashboard's POST /a/agent-chat passes a form field
   # straight through. Without a guard, a message starting with '-' is parsed by claude as a
   # FLAG, not text — verified: `claude -p "--output-format"` errors with "argument missing",
@@ -350,43 +361,59 @@ cmd_chat(){
   if [ "$stream" = 1 ]; then
     # Chat turns stream; unattended runs deliberately do not (spec: the flag is per-mode,
     # because it multiplies stream lines for no run-record value).
-    local seq=0 reply="" cost=0 iserr=false rc=0 sawres=0 notice="" line t
+    local seq=0 reply="" cost=0 iserr=false rc=0 sawres=0 notice="" resline="" line t rtype out
     while IFS= read -r line; do
       # The sentinel below is how a process substitution's exit status reaches us at all:
       # `done < <(cmd)` discards it, so a plain `timeout` kill or a non-zero claude exit
       # would otherwise look identical to a clean empty reply.
       case $line in __mows_rc=*) rc=${line#__mows_rc=}; continue;; esac
-      if ! jq -e . >/dev/null 2>&1 <<<"$line"; then
+      # One jq call gets both the record type and any delta text, and its own exit status
+      # doubles as the JSON-validity check that used to be a separate `jq -e .` fork — this
+      # also replaces a raw substring match on the record type (fix round 1, F6/F13: down
+      # from up to 4 forks per line to 1 for an ordinary delta). The delta text is joined
+      # with -j (raw, unescaped) rather than read back through ordinary command substitution:
+      # `t=$(jq -r …)` strips ALL trailing newlines from its capture, so a delta that is
+      # exactly "\n\n" (a paragraph break — a common single chunk from the real API) silently
+      # disappears, and any delta ending in "\n" loses it (fix round 1, F1). Terminating the
+      # jq program with a non-newline sentinel (\u0001, assumed never to appear literally in
+      # real model output — the same class of assumption the `--` guard below makes) means
+      # nothing in the capture is a TRAILING newline, so command substitution strips nothing.
+      if ! out=$(jq -j '(.type // ""), "\u0001", (.event.delta.text // empty), "\u0001"' <<<"$line" 2>/dev/null); then
         # claude exits 0 and prints a plain-text notice ("No conversation found with session
         # ID: …") when a session cannot be resumed. The non-streaming path above guards
         # against exactly this; dropping the line here reports a failure as an empty success.
         [ -n "$line" ] && notice="${notice:-$line}"
         continue
       fi
-      t=$(jq -r '(.event.delta.text // empty)' <<<"$line")
+      rtype=${out%%$'\x01'*}          # everything before the first \x01
+      t=${out#*$'\x01'}; t=${t%$'\x01'}  # everything between the two \x01s, newlines intact
+      if [ "$rtype" = result ]; then
+        sawres=1; resline="$line"
+        cost=$(jq -r '.total_cost_usd // 0' <<<"$line")
+        iserr=$(jq -r '(.is_error // false)|tostring' <<<"$line")
+      fi
       if [ -n "$t" ]; then
         seq=$((seq + 1)); reply="$reply$t"
         jq -nc --argjson s "$seq" --arg d "$t" '{seq:$s,delta:$d}'
       fi
-      case $line in *'"type":"result"'*)
-        sawres=1
-        cost=$(jq -r '.total_cost_usd // 0' <<<"$line")
-        iserr=$(jq -r '(.is_error // false)|tostring' <<<"$line");;
-      esac
-    done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
+    done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
               --resume "$sid" --output-format stream-json --verbose --include-partial-messages \
               --permission-prompts none --strict-mcp-config "${mcp[@]}" \
               --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
               -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
     if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
       local why="${notice:-claude exited $rc with no result record}"
-      [ "$rc" = 124 ] && why="timed out after 300s"
+      [ "$rc" = 124 ] && why="timed out after ${CHAT_TIMEOUT_SEC}s"
       jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
       jq -nc --arg t "$why" '{end:true,cost_usd:0,is_error:true,error:$t}'
       event "$n" "chat failed: $why"
       echo "mows-agent: chat turn failed: $why" >&2
       return 64
     fi
+    # A turn can succeed with no deltas at all — a tool-only turn, a CLI version that omits
+    # partial messages for some content type — so fall back to the result record's own text
+    # rather than silently persisting an empty reply as a success (fix round 1, F7).
+    [ -z "$reply" ] && reply=$(jq -r '.result // ""' <<<"$resline")
     jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$iserr" \
        '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
     jq -nc --argjson c "$cost" --arg e "$iserr" '{end:true,cost_usd:$c,is_error:($e=="true")}'
@@ -395,7 +422,7 @@ cmd_chat(){
   fi
 
   local out rc
-  out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout 300 "$CLAUDE_BIN" -p \
+  out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
         --resume "$sid" --output-format json \
         --permission-prompts none --strict-mcp-config "${mcp[@]}" \
         --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
@@ -405,7 +432,7 @@ cmd_chat(){
   # so a non-zero code is not the only failure shape to check for.
   if [ $rc -ne 0 ] || [ -z "$out" ] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
     local why="claude exited $rc"
-    [ $rc -eq 124 ] && why="timed out after 300s"
+    [ $rc -eq 124 ] && why="timed out after ${CHAT_TIMEOUT_SEC}s"
     [ -n "$out" ] && ! jq -e . >/dev/null 2>&1 <<<"$out" && why="$(printf '%s' "$out" | head -1)"
     jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
     event "$n" "chat failed: $why"

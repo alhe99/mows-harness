@@ -28,6 +28,7 @@ import path from 'node:path';
 import net from 'node:net';
 import os from 'node:os';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { wireChatStream } from './chat-stream.mjs';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -2374,7 +2375,13 @@ function chatBroadcast(agent, turn, seq, delta) {
   streamSend('chat', { agent, turn, seq, delta }, `chat:${agent}`, `${agent}:${turn}:${seq}`);
 }
 function chatEnd(agent, turn, summary) {
-  chatBuf.delete(agent);
+  // Only clear the buffer if it's still THIS turn's. Task 6 made a late second chatEnd call
+  // for the same turn routine (an authoritative `end` line plus a `close` fallback — see
+  // agentAction's chat branch), and an unconditional delete would wipe a NEWER turn's
+  // in-flight replay buffer if that second call arrives after the next turn has already
+  // started (fix round 1, F8).
+  const b = chatBuf.get(agent);
+  if (b && b.turn === turn) chatBuf.delete(agent);
   streamSend('chatend', { agent, turn, ...summary }, `chat:${agent}`);
 }
 async function streamView(req, res) {
@@ -3102,22 +3109,27 @@ async function agentAction(req, res, act) {
     if (!msg) { res.writeHead(400); return res.end('empty message'); }
     const child = spawn('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
       `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, '--stream', msg],
-      { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const turn = Date.now();
-    let buf = '';
-    child.stdout.on('data', d => {
-      buf += d;
-      const lines = buf.split('\n'); buf = lines.pop();
-      for (const l of lines) {
-        if (!l.trim()) continue;
-        try {
-          const o = JSON.parse(l);
-          if (o.end) chatEnd(name, turn, { cost_usd: o.cost_usd, is_error: o.is_error });
-          else chatBroadcast(name, turn, o.seq, o.delta);
-        } catch {}
-      }
+    // The `end` line, when it arrives, is authoritative (it carries the real is_error); the
+    // `close` handler below is only a fallback for a process that died without ever writing
+    // one. The FIRST end wins, not the last — a naive "close always calls chatEnd" would let
+    // the neutral close-triggered summary (no is_error) overwrite a real failure, discarding
+    // it (fix round 1, F8).
+    let ended = false;
+    const stream = wireChatStream(child.stdout,
+      o => chatBroadcast(name, turn, o.seq, o.delta),
+      o => { ended = true; chatEnd(name, turn, { cost_usd: o.cost_usd, is_error: o.is_error }); });
+    // mows-agent's own operator-visible failure line (`mows-agent: chat turn failed: …`) only
+    // reached events.log before this — stdio was ['ignore','pipe','ignore'], so on the one
+    // production caller of the streaming path it was discarded outright (fix round 1, F11).
+    child.stderr.on('data', d => process.stderr.write(d));
+    child.on('close', () => {
+      if (!ended) chatEnd(name, turn, { closed: true });
+      const drops = stream.drops();
+      if (drops) console.error(`chat ${name}:${turn}: dropped ${drops} malformed stream line(s)`);
+      agentsCache.t = 0;
     });
-    child.on('close', () => { chatEnd(name, turn, { closed: true }); agentsCache.t = 0; });
     child.unref();
     res.writeHead(303, { location: back }); return res.end();
   }
