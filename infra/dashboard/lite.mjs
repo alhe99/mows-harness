@@ -2400,10 +2400,15 @@ async function streamView(req, res) {
   const last = req.headers['last-event-id'];
   if (last) {
     const [agent, turnS, seqS] = String(last).split(':');
-    const b = chatBuf.get(agent);
-    if (b && String(b.turn) === turnS) {
-      for (const d of b.deltas) if (d.seq > Number(seqS)) {
-        streamWrite(c, 'chat', { agent, turn: b.turn, seq: d.seq, delta: d.text }, `${agent}:${b.turn}:${d.seq}`);
+    // Gate replay on the SAME topic check the live path uses. streamSend() enforces this for
+    // broadcasts, but replay calls streamWrite() directly and so inherits nothing — a client
+    // could name any agent in Last-Event-ID and read its in-flight turn without subscribing.
+    if (agent && topics.has(`chat:${agent}`)) {
+      const b = chatBuf.get(agent);
+      if (b && String(b.turn) === turnS) {
+        for (const d of b.deltas) if (d.seq > Number(seqS)) {
+          streamWrite(c, 'chat', { agent, turn: b.turn, seq: d.seq, delta: d.text }, `${agent}:${b.turn}:${d.seq}`);
+        }
       }
     }
   }
