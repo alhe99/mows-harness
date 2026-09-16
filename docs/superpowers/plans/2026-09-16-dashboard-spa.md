@@ -228,7 +228,9 @@ In `lite.mjs`, insert before `// ---------- server ----------`:
 const APP_DIR = new URL('./app/', import.meta.url).pathname;
 const appAssets = new Map(); // url-name -> {buf, etag, type}
 function appAssetName(rel, buf) {
-  return rel.replace(/\.(mjs|css)$/, '') + '.' + crc32(buf).toString(16) + '.$1'.replace('$1', rel.endsWith('.css') ? 'css' : 'mjs');
+  // vendor/preact.mjs -> vendor/preact.1a2b3c4d.mjs   (content hash busts the cache on deploy)
+  const dot = rel.lastIndexOf('.');
+  return `${rel.slice(0, dot)}.${crc32(buf).toString(16)}${rel.slice(dot)}`;
 }
 async function loadAppAssets() {
   appAssets.clear();
@@ -1064,11 +1066,23 @@ Commit subject: `dashboard: honest capability panel — effective, not declared`
 - [ ] **Step 1: Add the RSS ceiling and the HTTP/2 assertion**
 
 ```bash
-chk "http2 is negotiated (spec §3)" '[ "$(curl -s -o /dev/null -w "%{http_version}" https://127.0.0.1/ -k --resolve "$(hostname):443:127.0.0.1" 2>/dev/null)" = 2 ] || [ "$(curl -s -o /dev/null -w "%{http_version}" --http2-prior-knowledge http://127.0.0.1:3005/app 2>/dev/null)" != "" ]'
+# HTTP/2 matters on the LIVE host, which is the only place a browser negotiates it. An || of two
+# weak local checks would pass vacuously — SKIP loudly instead of inventing a pass.
+MOWS_HOST="${MOWS_HOST:-}"
+if [ -n "$MOWS_HOST" ]; then
+  HV=$(curl -s -o /dev/null -w '%{http_version}' "https://$MOWS_HOST/" 2>/dev/null)
+  chk "http2 negotiated on $MOWS_HOST (spec §3)" '[ "$HV" = 2 ]'
+else
+  echo "SKIP: http2 check — set MOWS_HOST to the live host to run it (spec §3, load-bearing)"
+fi
+
 RSS_KB=$(ps -o rss= -p "$DASH_PID" | tr -d ' ')
-chk "dashboard RSS <= 150MB (spec D3)" '[ "$RSS_KB" -le 153600 ]'
+chk "dashboard RSS <= 150MB (spec D3)" '[ -n "$RSS_KB" ] && [ "$RSS_KB" -le 153600 ]'
 echo "  dashboard RSS: $((RSS_KB / 1024))MB of 150MB ceiling"
 ```
+
+The RSS check requires `DASH_PID` to be non-empty; an unset variable would make `-le` compare
+nothing and pass. That is the same failure shape as the HTTP/2 check above, so it is guarded too.
 
 `DASH_PID` is the background dashboard this script already starts; capture it with `DASH_PID=$!` on that line if it is not captured today.
 
