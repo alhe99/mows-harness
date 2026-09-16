@@ -64,14 +64,24 @@ done < <(git grep -nIE "$IPV4" -- . ':!scripts/preflight.sh' 2>/dev/null | grep 
 # editing tool silently rewrote a \u0001 / $'\x01' escape NAMED IN SOURCE into a raw embedded
 # control byte (functionally harmless there -- every gate stayed green -- but invisible and
 # confusing on inspection), and separately a reviewing tool refused to run its own command for
-# containing that same escape. `grep -Iq ''` is grep's own binary-file heuristic (a NUL byte
-# in the first chunk of the file) -- used here to skip real binaries (docs/assets/*.png etc.)
-# without hardcoding a path/extension allowlist that would go stale as the tree grows.
+# containing that same escape.
+#
+# HOW "is this a text file" IS DECIDED, and why it changed (Task 7 fix round 1). This used to
+# ask `grep -Iq ''`, grep's own binary heuristic -- and that heuristic is precisely "does the
+# file contain a NUL". So a shipped .mjs with a stray NUL in it classified as BINARY and the
+# gate skipped the single worst case it exists to catch. Not theoretical: an editing tool
+# rewrote a backslash-u-0000 escape into a raw NUL in two .mjs files in one round, preflight
+# reported ALL CLEAN over both, and it then did it a THIRD time inside the comment being
+# written to describe it -- which this gate, once fixed, caught. The test is now "is the file
+# valid UTF-8", which does not beg the question: a .mjs with a stray NUL is still valid UTF-8
+# and gets scanned, while docs/assets/*.png and *.gif are not and still skip. Same property
+# as before (no path or extension allowlist to go stale), without the blind spot.
 CTRLBAD=0
 while IFS= read -r -d '' f; do
   [ -f "$f" ] || continue
-  grep -Iq '' "$f" 2>/dev/null || continue  # binary (has a NUL) -- not this check's business
-  if LC_ALL=C grep -qP '[\x00-\x08\x0B-\x1F\x7F]' "$f" 2>/dev/null; then
+  iconv -f UTF-8 -t UTF-8 <"$f" >/dev/null 2>&1 || continue  # not text at all -- not this check's business
+  # -a: grep must not bail out on a file it thinks is binary; deciding that is the line above's job.
+  if LC_ALL=C grep -aqP '[\x00-\x08\x0B-\x1F\x7F]' "$f" 2>/dev/null; then
     echo "preflight FAIL: control byte(s) other than tab/newline in $f"
     CTRLBAD=1
   fi

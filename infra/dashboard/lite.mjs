@@ -1896,6 +1896,9 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 @keyframes pulse{50%{opacity:.35}}
 .mb pre{white-space:pre-wrap;word-break:break-word}
 .jump{position:sticky;bottom:70px;align-self:center}
+/* A send that never reached the server, or a transcript refetch that failed. Previously both
+   were silent and the composer simply stayed disabled forever (fix round 1). */
+.cherr{color:#fca5a5;font-size:13px;margin:0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet

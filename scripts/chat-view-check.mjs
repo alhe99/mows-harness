@@ -121,7 +121,7 @@ const accents = 'café mañana Ångström — naïve "quoted" 日本語';
 const accentOut = visible(renderPartial(accents));
 check('non-ASCII text survives rendering byte-for-byte',
   accentOut.includes('café mañana Ångström') && accentOut.includes('日本語'), accentOut);
-check('no U+FFFD replacement character is introduced', !accentOut.includes('�'), accentOut);
+check('no U+FFFD replacement character is introduced', !accentOut.includes('\uFFFD'), accentOut);
 
 // ---- fence counting is parity, not presence -------------------------------------------------
 // Asserted on STRUCTURE, not on "are there backticks on screen": a balanced buffer that gets
@@ -138,5 +138,115 @@ check('an even fence count (4) is left alone — padding it would invent a third
 // ---- the empty buffer: rendered on every turn before the first delta ------------------------
 check('an empty buffer renders to empty output, not to "undefined"',
   renderPartial('').trim() === '', renderPartial(''));
+
+// ---- hostile replies (fix round 1) ----------------------------------------------------------
+// An agent's reply is not trusted input, and this output goes into dangerouslySetInnerHTML in a
+// DOM that can start and stop agents and read every conversation.
+//
+// The inertness test walks the EMITTED TAGS only. A substring search over the whole string
+// cannot tell `<img onerror=...>` from the escaped, inert `&lt;img onerror=...&gt;` — it scored
+// the working fix as broken when this check was first drafted. The scheme rule below is written
+// out independently rather than importing the view's own safeHref(), so the check cannot pass
+// by agreeing with a bug in the thing it is checking.
+const DANGEROUS_TAG = /^(?:script|iframe|object|embed|style|link|meta|form|base|svg|math|applet)$/;
+const URL_ATTR = /^(?:href|src|xlink:href|action|formaction|data|poster)$/;
+const TAG = /<([a-zA-Z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
+// Attribute NAME=VALUE pairs. Splitting these out matters: an earlier draft searched the whole
+// attribute blob for /\son[a-z]+=/ and flagged `alt="&quot; onerror=&quot;alert(1)"` as live. It
+// is not — an entity inside a quoted value decodes to part of the VALUE, because the delimiter
+// is settled before entities are decoded. A detector that cannot tell an attribute name from an
+// attribute value reports a working guard as broken, which is its own kind of useless.
+const ATTR = /([a-zA-Z_:][-\w:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+const decodeEntities = s => s
+  .replace(/&#x([0-9a-f]+);?/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);?/g, (_, d) => String.fromCodePoint(+d))
+  .replace(/&colon;/gi, ':').replace(/&tab;/gi, '\t').replace(/&newline;/gi, '\n');
+function liveBits(htmlStr) {
+  const bad = [];
+  TAG.lastIndex = 0;
+  let m;
+  while ((m = TAG.exec(htmlStr))) {
+    const tag = m[1].toLowerCase(), attrs = m[2] || '';
+    if (DANGEROUS_TAG.test(tag)) bad.push('tag:<' + tag + '>');
+    ATTR.lastIndex = 0;
+    let a;
+    while ((a = ATTR.exec(attrs))) {
+      const nm = a[1].toLowerCase();
+      const val = a[2] ?? a[3] ?? a[4] ?? '';
+      if (/^on[a-z]+$/.test(nm)) { bad.push('event-attr:' + nm); continue; }
+      if (nm === 'srcdoc') { bad.push('srcdoc'); continue; }
+      if (!URL_ATTR.test(nm)) continue;
+      const v = decodeEntities(val).replace(/[\u0000-\u0020]+/g, '');
+      const head = v.split(/[/?#]/, 1)[0];
+      const colon = head.indexOf(':');
+      if (colon !== -1 && !/^(?:https?|mailto)$/i.test(head.slice(0, colon))) bad.push('url:' + val);
+    }
+  }
+  return bad;
+}
+// Sanity-check the detector itself, both directions, so a detector that quietly stopped
+// detecting cannot carry the whole section green.
+check('[detector] flags a real script tag', liveBits('<script>x</script>').length > 0);
+check('[detector] flags a real event-handler attribute',
+  liveBits('<img src="a.png" onerror="alert(1)">').length > 0);
+check('[detector] flags a real javascript: href',
+  liveBits('<a href="javascript:alert(1)">x</a>').length > 0);
+check('[detector] does not flag escaped markup in text',
+  liveBits('<p>&lt;script&gt;x&lt;/script&gt; and &lt;img onerror=y&gt;</p>').length === 0,
+  liveBits('<p>&lt;script&gt;x&lt;/script&gt; and &lt;img onerror=y&gt;</p>'));
+check('[detector] does not flag an entity-quoted handler sitting INSIDE an attribute value',
+  liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">').length === 0,
+  liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">'));
+
+const HOSTILE = {
+  'a raw <script> block': '<script>alert(1)</script>',
+  'an <img onerror> handler': '<img src=x onerror="alert(1)">',
+  'an <svg onload> handler': '<svg onload="alert(1)"></svg>',
+  'an <iframe>': '<iframe src="javascript:alert(1)"></iframe>',
+  'a javascript: link': '[click me](javascript:alert(1))',
+  'a data:text/html link': '[click me](data:text/html;base64,PHN2Zz9vbmxvYWQ9YWxlcnQoMSk+)',
+  'inline HTML mid-sentence': 'the log said <img src=x onerror=alert(1)> and then stopped',
+  'a <style> block': '<style>body{display:none}</style>',
+  'a mixed-case JaVaScRiPt: link': '[x](JaVaScRiPt:alert(1))',
+  'an entity-smuggled scheme': '[x](&#106;avascript&#58;alert(1))',
+  'a tab-smuggled scheme (angle-bracket destination, which does reach the renderer)': '[x](<java\tscript:alert(1)>)',
+  'a NUL-smuggled scheme': '[x](<jav\u0000ascript:alert(1)>)',
+  'an alt-attribute breakout': '![" onerror="alert(1)](https://example.com/a.png)',
+  'a title-attribute breakout': '[t](https://example.com "\\" onmouseover=\\"alert(1)")',
+};
+for (const [label, src] of Object.entries(HOSTILE)) {
+  const out = renderPartial(src);
+  check(`hostile reply renders inert: ${label}`, liveBits(out).length === 0, { bits: liveBits(out), out });
+}
+// Inert must not mean invisible: the operator has to be able to SEE what the agent said, or a
+// hostile reply becomes an invisible one and the guard hides an attack instead of defusing it.
+const shown = visible(renderPartial('<script>alert(1)</script>'));
+check('a neutralised <script> is still shown to the operator as text',
+  shown.includes('<script>') && shown.includes('alert(1)'), shown);
+const linkText = visible(renderPartial('[click me](javascript:alert(1))'));
+check('a refused link degrades to its own link text, it is not dropped',
+  linkText.includes('click me'), linkText);
+
+// ---- the double-escaping trap, which is why the RENDERER is overridden and not the input -----
+// Pre-escaping the text before marked.parse() defuses the same attacks and silently corrupts
+// every code block that contains a comparison or an ampersand. This pins the behaviour that
+// rules that fix out.
+const codeOut = renderPartial('```js\nif (1 < 2 && 3 > 2) { ok(); }\n```');
+check('a code block containing < & > is escaped exactly once, not twice',
+  visible(codeOut).includes('if (1 < 2 && 3 > 2) { ok(); }'), visible(codeOut));
+check('no double-escaped entity (&amp;lt; / &amp;amp;) reaches the output',
+  !/&amp;(?:lt|gt|amp|quot|#\d)/.test(codeOut), codeOut);
+const proseOut = renderPartial('a < b and c > d, tom & jerry');
+check('ordinary prose with angle brackets and an ampersand survives intact',
+  visible(proseOut).includes('a < b and c > d, tom & jerry'), visible(proseOut));
+const okLink = renderPartial('[docs](https://example.com/a?b=1&c=2)');
+check('an ordinary https link still renders as a link',
+  /<a href="https:\/\/example\.com\/a\?b=1&c=2"[^>]*>docs<\/a>/.test(okLink), okLink);
+const relLink = renderPartial('[rel](./notes.md)');
+check('a relative link has no scheme to abuse and is still rendered',
+  /<a href="\.\/notes\.md"[^>]*>rel<\/a>/.test(relLink), relLink);
+const okImg = renderPartial('![a diagram](https://example.com/d.png)');
+check('an ordinary https image still renders as an image',
+  /<img src="https:\/\/example\.com\/d\.png" alt="a diagram">/.test(okImg), okImg);
 
 process.exit(failed ? 1 : 0);
