@@ -2774,20 +2774,57 @@ async function agentsIndex() {
     || (Date.parse(b.last?.last_event_at || 0) || 0) - (Date.parse(a.last?.last_event_at || 0) || 0));
   agentsCache.t = Date.now(); agentsCache.v = out; return out;
 }
-async function agentTimer(name) { // NEXT of the Phase 3 timer: '' (no timer) | 'paused' | 'Tue 2026-09-16 06:00:00 UTC'
-  const unit = `mows-agent-${name}.timer`;
-  // `systemctl show` always exits 0, unlike `is-enabled` (exits 1 for the perfectly normal
-  // "disabled"/"masked" states) or a naive parse of `list-timers` for a masked unit — sh()
-  // swallows stdout on ANY non-zero exit, so `show` is the only reliable way through it to
-  // tell "masked" (paused, via /a/agent-pause's `systemctl mask --now`) apart from "no timer
-  // configured for this agent" (verified live: `systemctl is-enabled foo.service` on a real
-  // disabled unit here exits 1 while still printing "disabled" — sh() would have discarded it).
-  const st = await sh('systemctl', ['show', unit, '--property=LoadState']);
-  if (/LoadState=masked/.test(st)) return 'paused';
-  if (!/LoadState=loaded/.test(st)) return ''; // not-found: agent has no timer at all
-  const o = await sh('systemctl', ['list-timers', '--all', '--no-legend', unit]);
-  const l = (o || '').trim().split('\n')[0] || '';
-  return l ? l.split(/\s+/).slice(0, 4).join(' ') : '';
+// Task 7's render_service (agents/bin/mows-agent cmd_render) emits ONE timer unit per cron
+// trigger: the first is the bare `mows-agent-<name>.timer`, the second+ are suffixed
+// `-2`, `-3`, ... with NO delimiter before the digits (see its `sfx="-$ci"` logic) — an agent
+// can genuinely have several. Pausing/resuming/reporting against only the bare unit (the
+// fix's original shape) is wrong for any multi-timer agent: mask would silently leave the
+// second timer armed while the page claimed "paused". agentTimers() enumerates every unit
+// that belongs to this agent instead of guessing one name.
+//
+// Known, inherited limitation: because Task 7 uses no delimiter, an agent LITERALLY named
+// "<name>-2" is structurally indistinguishable from "<name>"'s second cron timer — that
+// ambiguity is in the render script's own naming scheme, not introduced here, and this
+// dashboard has no information (short of re-parsing every agent's own trigger count) that
+// could resolve it. Fine for the common case; flagged rather than silently swept under.
+async function agentTimers(name) { // -> [{unit, masked, next}], bare unit first then -2, -3, ...
+  const esc_re = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownRe = new RegExp(`^mows-agent-${esc_re}(-\\d+)?\\.timer$`);
+  // `list-unit-files` (unlike `list-timers` or `is-enabled`) reliably reports a MASKED unit's
+  // state in its own STATE column and always exits 0 — verified live against this box's own
+  // masked ttyd.service (`systemctl list-unit-files 'ttyd*' --no-legend` -> "ttyd.service
+  // masked enabled", exit 0). One call gives us both "does this unit exist" and "is it
+  // masked" without the exit-code trap `sh()`'s error-swallowing set for the single-timer
+  // version of this fix (`is-enabled` exits 1 for the perfectly normal "masked" state).
+  const out = await sh('systemctl', ['list-unit-files', `mows-agent-${name}*.timer`, '--no-legend']);
+  const units = (out || '').trim().split('\n').filter(Boolean)
+    .map(l => l.trim().split(/\s+/))
+    .filter(([u]) => ownRe.test(u))
+    .map(([u, state]) => ({ unit: u, masked: state === 'masked', next: '' }))
+    // bare unit first, then -2, -3, ... by NUMBER — a plain string sort puts "-2.timer" before
+    // ".timer" (ASCII '-' < '.'), which put the wrong timer's NEXT first when this was tried
+    // live against a real multi-timer fixture; extract the suffix (0 for the bare unit) instead.
+    .sort((a, b) => (+(a.unit.match(/-(\d+)\.timer$/)?.[1] || 0)) - (+(b.unit.match(/-(\d+)\.timer$/)?.[1] || 0)));
+  for (const t of units) {
+    if (t.masked) continue; // masked: no schedule to report, and list-timers may not show it anyway
+    const lt = await sh('systemctl', ['list-timers', '--all', '--no-legend', t.unit]);
+    const l = (lt || '').trim().split('\n')[0] || '';
+    t.next = l ? l.split(/\s+/).slice(0, 4).join(' ') : '';
+  }
+  return units;
+}
+// Collapses N timer rows into one honest status. 'mixed' exists specifically so the page
+// can never claim a clean paused/active state when the timers disagree (spec ruling,
+// review round 1) — showing "N/M paused" instead of picking a side that's half true.
+function summarizeTimers(timers) {
+  if (!timers.length) return { state: 'none', label: 'no timer' };
+  const pausedN = timers.filter(t => t.masked).length;
+  if (pausedN === timers.length) return { state: 'paused', label: timers.length > 1 ? `paused (${timers.length} timers)` : 'paused' };
+  if (pausedN === 0) {
+    const next = (timers.find(t => t.next) || timers[0]).next || '—';
+    return { state: 'active', label: timers.length > 1 ? `${next} (+${timers.length - 1} more)` : next };
+  }
+  return { state: 'mixed', label: `mixed — ${pausedN}/${timers.length} timers paused` };
 }
 const agentPill = s => `<span class="pill st-${esc(s || 'never')}">${esc(s || 'never')}</span>`;
 const usd = n => '$' + (+n || 0).toFixed(2);
@@ -2804,13 +2841,20 @@ async function agentDetailView(req, res, name) {
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
   if (!a) { res.writeHead(404); return res.end('no such agent'); }
-  const next = await agentTimer(name);
+  const timers = await agentTimers(name);
+  const tsum = summarizeTimers(timers);
   const back = `/agents/${esc(name)}`;
   const btn = (act, label) => `<form method="post" action="/a/agent-${act}"><input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}"><button>${label}</button></form>`;
+  // 'mixed' (some of this agent's timers masked, some not) shows BOTH affordances — pause
+  // acts on every remaining unpaused timer, resume on every masked one — rather than
+  // guessing which single button the honest-but-ambiguous state should offer (review round 1).
+  const timerBtns = tsum.state === 'paused' ? btn('resume', 'Resume')
+    : tsum.state === 'mixed' ? btn('pause', 'Pause') + btn('resume', 'Resume')
+    : btn('pause', 'Pause');
   const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
   const body = `<h1><a href="/agents">← agents</a> <span class="muted">· ${esc(name)}</span></h1>
-<p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(next || 'no timer')}</span></p>
-<div class="actions">${btn('run', 'Run now')}${next === 'paused' ? btn('resume', 'Resume') : btn('pause', 'Pause')}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
+<p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(tsum.label)}</span></p>
+<div class="actions">${btn('run', 'Run now')}${timerBtns}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
 <h2>Runs</h2><ul class="runs">${runs || '<li class="muted">none</li>'}</ul>
 <h2>Events</h2><pre class="events">${esc(a.events.join('\n') || 'none')}</pre>`;
   send(req, res, 200, page(`${name} · agents`, body, '', '', 'agents', false, null, req.headers.host));
@@ -2826,9 +2870,16 @@ async function agentRunView(req, res, name, run) {
       try { for (const c of JSON.parse(l).message?.content || []) if (c.type === 'text') text += c.text + '\n\n'; } catch {}
     }
   } catch {}
+  // .mdv (the /md route's RENDERED-markdown style) has no whitespace handling of its own —
+  // wrapping raw escaped text in it collapsed every paragraph into one run-on block (review
+  // round 1). Reuse .m/.mh/pre instead: the exact markup detailView already uses for a
+  // transcript's claude messages, whose plain `pre{white-space:pre-wrap}` (global rule)
+  // preserves paragraph breaks. Escaped text through pre-wrap, never through mdHtml() — this
+  // is raw model output, and running it through a markdown renderer would hand a page whose
+  // only job is "show what the agent said" a markdown/HTML injection surface for no reason.
   const body = `<h1><a href="/agents/${esc(name)}">← ${esc(name)}</a> <span class="muted">· ${esc(run)}</span></h1>
 <pre class="status">${esc(JSON.stringify(status, null, 1))}</pre>
-<article class="mdv">${esc(text || '(no assistant text)')}</article>`;
+<div class="m claude"><div class="mh"><b>claude</b></div><pre>${esc(text || '(no assistant text)')}</pre></div>`;
   send(req, res, 200, page(`${run} · ${name}`, body, '', '', 'agents', false, null, req.headers.host));
 }
 async function agentAction(req, res, act) {
@@ -2842,8 +2893,20 @@ async function agentAction(req, res, act) {
   const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
   if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
   if (act === 'run') await sh('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]);
-  else if (act === 'pause') await sh('systemctl', ['mask', '--now', `mows-agent-${name}.timer`]);
-  else if (act === 'resume') { await sh('systemctl', ['unmask', `mows-agent-${name}.timer`]); await sh('systemctl', ['start', `mows-agent-${name}.timer`]); }
+  else if (act === 'pause' || act === 'resume') {
+    // every timer belonging to this agent (bare + -2, -3, ...), not just the bare unit —
+    // see agentTimers()'s header comment (review round 1: pause/resume ignored suffixed
+    // timers, so a 2-schedule agent kept running under a page that claimed it was paused).
+    // Fallback to the bare unit name if enumeration finds nothing: mask/unmask on a unit
+    // with no on-disk file is a harmless no-op, and it's a safety net if `list-unit-files`
+    // ever comes back empty for a unit that genuinely exists.
+    const timers = await agentTimers(name);
+    const units = timers.length ? timers.map(t => t.unit) : [`mows-agent-${name}.timer`];
+    for (const u of units) {
+      if (act === 'pause') await sh('systemctl', ['mask', '--now', u]);
+      else { await sh('systemctl', ['unmask', u]); await sh('systemctl', ['start', u]); }
+    }
+  }
   else if (act === 'stop') {
     const a = (await agentsIndex()).find(x => x.name === name);
     if (a?.last?.state === 'working' && a.last.pid) { try { process.kill(a.last.pid, 'SIGTERM'); } catch {} } // runner traps TERM -> kills claude's group
