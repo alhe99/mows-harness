@@ -58,7 +58,10 @@
 - Modify: `scripts/e2e-infra.sh`
 
 **Interfaces:**
-- Produces: `GET /api/agents` → `{agents:[{name,state,last_event_at,total,cost7d,timer}]}`;
+- Produces: `GET /api/agents` → `{agents:[{name,state,last_event_at,total,cost7d}]}`. **No `timer`
+  key:** computing it calls `agentTimers()`, which spawns `systemctl` subprocesses per agent, per
+  request, uncached — and the list view renders no next-fire time, so it would be real cost for
+  an unread field. The detail endpoint still returns `timer`, where it is displayed;
   `GET /api/agents/<name>` → `{name,recs,events,total,cost7d,timers,timer}`. `capability` is added by Task 8; no `meta` key exists — an earlier draft of this line promised one, but `agentsIndex()` has no such field and nothing downstream consumes it (verified);
   `GET /api/agents/<name>/chat` → `{turns:[{at,role,text,cost_usd,is_error}]}`;
   `GET /api/agents/<name>/runs/<run_id>` → `{status,text}`.
@@ -98,11 +101,14 @@ async function apiView(req, res, rest) {
   const [, name, kind, id] = rest.match(/^(?:agents)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/) || [];
   if (!rest.startsWith('agents')) { res.writeHead(404); return res.end(); }
   if (!name) {
+    // Deliberately no per-agent timer lookup here: agentTimers() spawns systemctl per agent and
+    // is uncached, and the list renders no next-fire time. The detail endpoint does it once,
+    // for the one agent being viewed.
     const list = await agentsIndex();
-    return sendJson(req, res, 200, { agents: await Promise.all(list.map(async a => ({
+    return sendJson(req, res, 200, { agents: list.map(a => ({
       name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null,
-      total: a.total, cost7d: a.cost7d, timer: summarizeTimers(await agentTimers(a.name)).label,
-    }))) });
+      total: a.total, cost7d: a.cost7d,
+    })) });
   }
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
