@@ -294,6 +294,80 @@ cmd_prune(){ # delete run dirs older than retention_days per agent; never the `l
   done < <(all_agents)
 }
 
+# ---------- render: systemd units -> $RENDER_DIR (never installed or enabled here; spec D8) ----------
+render_service(){ # one shared template; TimeoutStartSec = the largest max_turns * 3 min across agents
+  local n f m t maxt=40
+  while IFS=$'\t' read -r n f; do m=$(meta "$f") || continue; t=$(mget "$m" .mows.budget.max_turns); [ "${t:-0}" -gt "$maxt" ] && maxt=$t; done < <(all_agents)
+  cat > "$RENDER_DIR/mows-agent@.service" <<EOF
+[Unit]
+Description=mows agent run: %i (Layer 6, one bounded claude -p)
+Documentation=file://$HOME/.local/bin/mows-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$(id -un)
+Environment=HOME=$HOME
+UnsetEnvironment=ANTHROPIC_API_KEY
+WorkingDirectory=$HOME
+# generous: a run is already capped by --max-turns / --max-budget-usd and the stall kill
+TimeoutStartSec=$((maxt * 180))
+ExecStart=$HOME/.local/bin/mows-agent run %i
+# exit 6 (refused) and 4 (budget) are policy outcomes, not unit failures
+SuccessExitStatus=4 6
+EOF
+}
+cmd_render(){
+  local names=() n f m i=0 ci=0 pi=0 sfx t
+  mkdir -p "$RENDER_DIR"
+  if [ "${1:-}" = --all ]; then while IFS=$'\t' read -r n f; do names+=("$n"); done < <(all_agents)
+  else [ -n "${1:-}" ] || die "usage: mows-agent render <name>|--all"; names=("$1"); fi
+  render_service
+  for n in "${names[@]}"; do
+    f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"; m=$(meta "$f")
+    ci=0; pi=0
+    while IFS= read -r t; do
+      case $(jq -r .type <<<"$t") in
+        cron) ci=$((ci+1)); sfx=""; [ $ci -gt 1 ] && sfx="-$ci"
+              cat > "$RENDER_DIR/mows-agent-$n$sfx.timer" <<EOF
+[Unit]
+Description=mows agent timer: $n$sfx
+
+[Timer]
+OnCalendar=$(jq -r .spec <<<"$t")
+Persistent=true
+RandomizedDelaySec=2m
+Unit=mows-agent@$n.service
+
+[Install]
+WantedBy=timers.target
+EOF
+              ;;
+        path) pi=$((pi+1)); sfx=""; [ $pi -gt 1 ] && sfx="-$pi"
+              cat > "$RENDER_DIR/mows-agent-$n$sfx.path" <<EOF
+[Unit]
+Description=mows agent path trigger: $n$sfx
+
+[Path]
+PathChanged=$(expand_tilde "$(jq -r .path <<<"$t")")
+Unit=mows-agent@$n.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+              ;;
+      esac
+    done < <(jq -c '.mows.triggers[]? // empty' <<<"$m")
+  done
+  echo "rendered into $RENDER_DIR — review, then (nothing below is run for you):"
+  echo "  sudo install -m644 $RENDER_DIR/mows-agent@.service $RENDER_DIR/mows-agent-*.timer $RENDER_DIR/mows-agent-*.path /etc/systemd/system/ 2>/dev/null; sudo systemctl daemon-reload"
+  for n in "${names[@]}"; do
+    for u in "$RENDER_DIR"/mows-agent-"$n"*.timer "$RENDER_DIR"/mows-agent-"$n"*.path; do [ -f "$u" ] && echo "  sudo systemctl enable --now $(basename "$u")"; done
+  done
+  echo "  systemctl list-timers 'mows-agent-*'    # confirm NEXT; mows-agent list shows it too"
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
   lint)  shift; cmd_lint "$@";;
@@ -302,5 +376,6 @@ case "${1:-}" in
   last)  shift; cmd_last "$@";;
   logs)  shift; cmd_logs "$@";;
   prune) cmd_prune;;
+  render) shift; cmd_render "$@";;
   *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
 esac

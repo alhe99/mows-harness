@@ -287,5 +287,20 @@ chk "pr: event logged"                        'grep -q "PR opened from agent/fix
 git -C "$T/repo" checkout -q main
 chk "pr: on base branch is a logged no-op"    'mows-agent run prbot && grep -q "still on main" "$MOWS_AGENTS_STATE/prbot/events.log"'
 
+echo "### render"
+export RENDER_DIR="$T/rendered"
+mkagent "$A/timed.md" "$(printf '%s\n  triggers:\n    - {type: cron, spec: "*-*-* 06:00:00"}\n    - {type: cron, spec: "Mon *-*-* 09:00:00"}\n    - {type: path, path: %s/work/.git/refs/heads/main}' "$MOWS_BLOCK_OK" "$T")"
+chk "render: exits 0"                          'mows-agent render timed'
+chk "render: service template once"            'grep -q "^ExecStart=$HOME/.local/bin/mows-agent run %i" "$RENDER_DIR/mows-agent@.service"'
+chk "render: service is oneshot as this user"  'grep -q "^Type=oneshot" "$RENDER_DIR/mows-agent@.service" && grep -q "^User=$(id -un)" "$RENDER_DIR/mows-agent@.service"'
+chk "render: service unsets API key"           'grep -q "^UnsetEnvironment=ANTHROPIC_API_KEY" "$RENDER_DIR/mows-agent@.service"'
+chk "render: TimeoutStartSec = max_turns*3min" 'grep -q "^TimeoutStartSec=7200" "$RENDER_DIR/mows-agent@.service"'
+chk "render: first timer"                      'grep -q "^OnCalendar=\*-\*-\* 06:00:00" "$RENDER_DIR/mows-agent-timed.timer" && grep -q "^Persistent=true" "$RENDER_DIR/mows-agent-timed.timer"'
+chk "render: second timer suffixed -2"         'grep -q "^OnCalendar=Mon" "$RENDER_DIR/mows-agent-timed-2.timer"'
+chk "render: timer points at the instance"     'grep -q "^Unit=mows-agent@timed.service" "$RENDER_DIR/mows-agent-timed.timer"'
+chk "render: path unit"                        'grep -q "^PathChanged=$T/work/.git/refs/heads/main" "$RENDER_DIR/mows-agent-timed.path" && grep -q "^Unit=mows-agent@timed.service" "$RENDER_DIR/mows-agent-timed.path"'
+chk "render: prints sudo lines, enables nothing" 'mows-agent render timed | grep -q "sudo install" && ! grep -q "enable" "$SYSTEMCTL_LOG"'
+chk "render --all covers timed"                'rm -rf "$RENDER_DIR"; mows-agent render --all >/dev/null && [ -f "$RENDER_DIR/mows-agent-timed.timer" ]'
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

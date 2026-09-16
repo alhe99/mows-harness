@@ -451,6 +451,7 @@ layer_agents(){
   echo "installed: mows-agent mows-agent-meta -> ~/.local/bin"
   command -v jq >/dev/null 2>&1 || echo "WARN: jq not found — mows-agent requires jq: sudo apt-get install -y jq"
   python3 -c 'import yaml' 2>/dev/null || echo "WARN: python3 yaml missing — mows-agent lint requires it: sudo apt-get install -y python3-yaml"
+  RENDER_DIR="$PWD/rendered" "$HOME/.local/bin/mows-agent" render --all 2>/dev/null || echo "WARN: render skipped (lint errors? run: mows-agent lint --all)"
   echo "next: mows-agent lint --all && mows-agent run harness-reviewer   (one bounded run, ~\$1.50 cap)"
 }
 
