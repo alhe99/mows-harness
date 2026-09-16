@@ -3214,6 +3214,15 @@ function uiShellHtml(host) {
     htm: uiAssetUrlFor('vendor/htm.mjs'),
     marked: uiAssetUrlFor('vendor/marked.mjs'),
   };
+  // Relative imports between first-party modules resolve against the IMPORTING module's own
+  // (hashed) URL, producing a request for the unhashed path — which uiAssetView 404s. Import
+  // maps remap a relative specifier only AFTER the browser resolves it to an absolute URL, so
+  // a URL-keyed entry per file is what makes `import './ui.mjs'` reach the hashed file.
+  // Verified in Chromium against a server where the unhashed file did not exist at all.
+  for (const [k, v] of uiAssets) {
+    const unhashed = '/ui/assets/' + v.rel, hashed = '/ui/assets/' + k;
+    if (unhashed !== hashed) imports[unhashed] = hashed;
+  }
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
