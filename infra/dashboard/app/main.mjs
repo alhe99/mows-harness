@@ -18,6 +18,14 @@ window.addEventListener('click', e => {
   e.preventDefault(); navigate(a.getAttribute('href'));
 });
 // bfcache is gone (spec §2), so back/forward scroll restoration is ours now.
+// TODO(scroll-restore gap, confirmed live in Task 4): unlike navigate(), this handler never
+// saves scrollByPath for the page being left. Symptom: scroll here, then Back, then Forward,
+// then Back again — you land back at the OLD scroll (from the last click-navigation), not the
+// one you just set, because nothing captured it before this popstate fired. Fix, if taken: save
+// scrollByPath.set(location.pathname, window.scrollY) for the outgoing path before dispatching
+// 'route' — but note location.pathname has already changed to the new path by the time this
+// fires, so the outgoing path must be tracked separately (e.g. remember the previous path in a
+// closure variable) rather than read off `location` here.
 window.addEventListener('popstate', () => window.dispatchEvent(new Event('route')));
 
 function route(path) {

@@ -3219,7 +3219,11 @@ function uiShellHtml(host) {
   // maps remap a relative specifier only AFTER the browser resolves it to an absolute URL, so
   // a URL-keyed entry per file is what makes `import './ui.mjs'` reach the hashed file.
   // Verified in Chromium against a server where the unhashed file did not exist at all.
+  // vendor/* is excluded: those files are only ever reached by bare specifier (already mapped
+  // above), never by a relative import, so a URL-keyed entry for them would just bloat the
+  // inline map every page load with a redundant route to the same hashed URL.
   for (const [k, v] of uiAssets) {
+    if (v.rel.startsWith('vendor/')) continue;
     const unhashed = '/ui/assets/' + v.rel, hashed = '/ui/assets/' + k;
     if (unhashed !== hashed) imports[unhashed] = hashed;
   }
