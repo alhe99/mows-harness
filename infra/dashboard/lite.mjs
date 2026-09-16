@@ -2833,8 +2833,15 @@ async function agentsView(req, res) {
   const rows = list.map(a => `<a class="agent card" href="/agents/${esc(a.name)}">
 <b>${esc(a.name)}</b> ${agentPill(a.last?.state)}
 <span class="muted">${a.last ? rel(Date.parse(a.last.last_event_at)) : 'never ran'} · ${a.total} runs · 7d ${usd(a.cost7d)}</span></a>`).join('');
+  // Native background sessions: the daemon's own, not mows-agent's — read-only display,
+  // never an action surface (spec D2, Phase 6). mows-agent residents already excludes
+  // interactive sessions and claude-mem observer sessions (cwd prefix).
+  let res_ = []; try { res_ = JSON.parse(await runAs([], 'mows-agent', ['residents', '--json'], 20000)); } catch {}
+  const resRows = res_.flatMap(p => p.agents.map(a => `<li><b>${esc(a.name || a.id)}</b> ${agentPill(a.state)} <span class="muted">${esc(p.profile)} · ${esc(a.waitingFor || '')} · ${esc(a.cwd || '')}</span></li>`));
+  const fold = `<details><summary>Native background sessions (${resRows.length})</summary><ul>${resRows.join('') || '<li class="muted">none</li>'}</ul></details>`;
   const body = `<h1><a href="/">← sessions</a> <span class="muted">· agents</span></h1>
-${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}`;
+${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}
+${fold}`;
   send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
 }
 async function agentDetailView(req, res, name) {

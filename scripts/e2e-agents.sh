@@ -302,5 +302,18 @@ chk "render: path unit"                        'grep -q "^PathChanged=$T/work/.g
 chk "render: prints sudo lines, enables nothing" 'mows-agent render timed | grep -q "sudo install" && ! grep -q "enable" "$SYSTEMCTL_LOG"'
 chk "render --all covers timed"                'rm -rf "$RENDER_DIR"; mows-agent render --all >/dev/null && [ -f "$RENDER_DIR/mows-agent-timed.timer" ]'
 
+echo "### residents"
+export CLAUDE_AGENTS_JSON_FILE="$T/agents.json"
+cat > "$CLAUDE_AGENTS_JSON_FILE" <<EOF
+[{"id":"a517ab4b","cwd":"$HOME","kind":"background","name":"web harness autocomplete","state":"blocked","waitingFor":"permission prompt","sessionId":"x"},
+ {"pid":1,"cwd":"$HOME/.claude-mem/observer-sessions/293","kind":"background","id":"obs1","name":"293-86","state":"working"},
+ {"pid":2,"cwd":"$HOME","kind":"interactive","name":"alonso-c0","sessionId":"y"}]
+EOF
+chk "residents: background record listed"      'mows-agent residents | grep -q "a517ab4b .*blocked .*permission prompt"'
+chk "residents: interactive records dropped"   '! mows-agent residents | grep -q alonso-c0'
+chk "residents: claude-mem observers dropped"  '! mows-agent residents | grep -q obs1'
+chk "residents --json: array per profile"      '[ "$(mows-agent residents --json | jq -r ".[0].profile")" = default ]'
+chk "residents: work profile also polled"      '[ "$(mows-agent residents --json | jq length)" = 2 ]'
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

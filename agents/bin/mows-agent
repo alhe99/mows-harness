@@ -368,6 +368,21 @@ EOF
   echo "  systemctl list-timers 'mows-agent-*'    # confirm NEXT; mows-agent list shows it too"
 }
 
+# ---------- residents: the native daemon's background sessions, read-only (spec D2, Phase 6) ----------
+cmd_residents(){
+  local json=0; [ "${1:-}" = --json ] && json=1
+  local all='[]' p d recs
+  while IFS=$'\t' read -r p d; do
+    recs=$(CLAUDE_CONFIG_DIR="$d" timeout 15 "$CLAUDE_BIN" agents --json 2>/dev/null || echo '[]')
+    recs=$(jq --arg obs "$HOME/.claude-mem/observer-sessions" '[.[] | select(.kind=="background") | select((.cwd // "") | startswith($obs) | not)]' <<<"$recs" 2>/dev/null || echo '[]')
+    all=$(jq --arg p "$p" --argjson r "$recs" '. + [{profile:$p, agents:$r}]' <<<"$all")
+  done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"$MOWS_PROFILES_JSON")
+  if [ "$json" = 1 ]; then echo "$all"; return; fi
+  printf '%-10s %-9s %-32s %-9s %-18s %s\n' PROFILE ID NAME STATE WAITING CWD
+  jq -r '.[] | .profile as $p | .agents[] | [$p, (.id // "-"), ((.name // "-")[0:32]), (.state // "-"), (.waitingFor // "-"), (.cwd // "-")] | @tsv' <<<"$all" \
+    | while IFS=$'\t' read -r a b c d e f; do printf '%-10s %-9s %-32s %-9s %-18s %s\n' "$a" "$b" "$c" "$d" "$e" "$f"; done
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
   lint)  shift; cmd_lint "$@";;
@@ -377,5 +392,6 @@ case "${1:-}" in
   logs)  shift; cmd_logs "$@";;
   prune) cmd_prune;;
   render) shift; cmd_render "$@";;
+  residents) shift; cmd_residents "$@";;
   *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
 esac
