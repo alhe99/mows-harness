@@ -1862,6 +1862,17 @@ details>*:not(summary){transform-origin:top center}
 details[open]>*:not(summary){animation:pop-in .18s ease}
 @keyframes pop-in{from{opacity:0;transform:translateY(-4px)}}
 }
+/* /agents (Layer 6, spec 2026-09-15 §8): state pill + run-now/pause/resume/stop actions.
+   .agent.card reuses the .lp list-panel look (var(--card)/var(--r-lg)) as a clickable row. */
+.agent.card{display:block;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:10px 12px;margin:4px 0 10px;color:inherit}
+.agent.card:hover{background:var(--card2);border-color:var(--bd2)}
+.agent.card .muted{display:block;font-size:12px;margin-top:4px}
+.pill{padding:1px 6px;border-radius:9px;font-size:.75em}
+.st-working{background:#2563eb33}.st-done{background:#16a34a33}
+.st-failed,.st-stalled,.st-budget_exceeded{background:#dc262633}
+.st-never{background:#71717a33}
+.actions{display:flex;gap:8px;margin:8px 0}.actions form{display:inline}
+.runs li{margin:4px 0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2013,7 +2024,8 @@ function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false,
 <a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
 <a class="${tab === 'system' ? 'on' : ''}" href="/system">System</a>
-<a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a></nav>`;
+<a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a>
+<a class="${tab === 'agents' ? 'on' : ''}" href="/agents">Agents</a></nav>`;
   const hdr = `<header class="hdr navdup">
 <div class="hdl"><span class="hlogo" aria-hidden="true">&gt;_</span><div class="hcol"><div class="htitle">mows control</div><div class="hsub">Connected · ${esc(host || os.hostname())}</div></div></div>
 ${pnav}
@@ -2022,10 +2034,12 @@ ${pnav}
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">${ICO.list}</span>Sessions</a>
 <a class="tb${tab === 'history' ? ' on' : ''}" href="/history"><span class="ti">${ICO.history}</span>History</a>
 <a class="tb${tab === 'system' ? ' on' : ''}" href="/system"><span class="ti">${ICO.activity}</span>System</a>
-<a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a></nav>`;
+<a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
+<a class="tb${tab === 'agents' ? ' on' : ''}" href="/agents"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
   // terminal is an ACTION (opens the ttyd session picker), not a content page — kept as a
-  // persistent floating utility button (every tab, every width) instead of a 5th nav tab
-  // (gap #5: nav must read sessions·history·system·device, exactly 4).
+  // persistent floating utility button (every tab, every width) instead of a nav tab of its
+  // own (gap #5: nav read sessions·history·system·device, exactly 4, until the Agents tab
+  // (2026-09-15) made it five content tabs — terminal is still a FAB, never a 6th).
   const termFab = `<a class="termfab" href="${termHref('menu', '')}" title="open terminal" aria-label="open terminal">${ICO.terminal}</a>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
@@ -2034,7 +2048,7 @@ ${pnav}
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
-<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
+<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun]"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
 ${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
@@ -2727,6 +2741,117 @@ ${pgr}${msgs || '<p class="muted">no displayable messages.</p>'}${pgr}`;
   send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', 'sessions', '', false, null, req.headers.host));
 }
 
+// ---------- /agents: Layer 6 purpose-scoped agents (spec 2026-09-15 §8) ----------
+// Data = the run records mows-agent writes; rescanned per request behind a 3s cache, NEVER
+// at startup (discoverAccounts() is startup-only and the spec calls that staleness out).
+const AGENTS_STATE = TMUX_HOME + '/.local/state/mows-agents';
+const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const RUN_RE = /^\d{8}-\d{6}-\d+$/;
+const AGENT_BAD = new Set(['stalled', 'failed', 'budget_exceeded']);
+const agentsCache = { t: 0, v: [] };
+async function agentsIndex() {
+  if (Date.now() - agentsCache.t < 3000) return agentsCache.v;
+  const out = [];
+  let names = []; try { names = await fsp.readdir(AGENTS_STATE); } catch {}
+  for (const name of names) {
+    if (!AGENT_RE.test(name)) continue;
+    const dir = `${AGENTS_STATE}/${name}`;
+    let runs = []; try { runs = (await fsp.readdir(`${dir}/runs`)).filter(r => RUN_RE.test(r)).sort().reverse(); } catch {}
+    const recs = [];
+    for (const r of runs.slice(0, 20)) {
+      try { recs.push({ ...JSON.parse(await fsp.readFile(`${dir}/runs/${r}/status.json`, 'utf8')), run_id: r }); } catch {}
+    }
+    const last = recs[0] || null;
+    // a `working` record whose runner pid is gone is a crash, not a live run
+    if (last && last.state === 'working' && last.pid) { try { process.kill(last.pid, 0); } catch { last.state = 'failed'; last.crashed = true; } }
+    const week = Date.now() - 7 * 864e5;
+    const cost7d = recs.filter(x => Date.parse(x.started_at) > week).reduce((a, x) => a + (+x.cost_usd || 0), 0);
+    let events = []; try { events = readFileSync(`${dir}/events.log`, 'utf8').trim().split('\n').slice(-5); } catch {}
+    out.push({ name, last, recs, cost7d, total: runs.length, events });
+  }
+  const rank = s => s === 'working' ? 0 : AGENT_BAD.has(s) ? 1 : 2;
+  out.sort((a, b) => rank(a.last?.state) - rank(b.last?.state)
+    || (Date.parse(b.last?.last_event_at || 0) || 0) - (Date.parse(a.last?.last_event_at || 0) || 0));
+  agentsCache.t = Date.now(); agentsCache.v = out; return out;
+}
+async function agentTimer(name) { // NEXT of the Phase 3 timer: '' (no timer) | 'paused' | 'Tue 2026-09-16 06:00:00 UTC'
+  const unit = `mows-agent-${name}.timer`;
+  // `systemctl show` always exits 0, unlike `is-enabled` (exits 1 for the perfectly normal
+  // "disabled"/"masked" states) or a naive parse of `list-timers` for a masked unit — sh()
+  // swallows stdout on ANY non-zero exit, so `show` is the only reliable way through it to
+  // tell "masked" (paused, via /a/agent-pause's `systemctl mask --now`) apart from "no timer
+  // configured for this agent" (verified live: `systemctl is-enabled foo.service` on a real
+  // disabled unit here exits 1 while still printing "disabled" — sh() would have discarded it).
+  const st = await sh('systemctl', ['show', unit, '--property=LoadState']);
+  if (/LoadState=masked/.test(st)) return 'paused';
+  if (!/LoadState=loaded/.test(st)) return ''; // not-found: agent has no timer at all
+  const o = await sh('systemctl', ['list-timers', '--all', '--no-legend', unit]);
+  const l = (o || '').trim().split('\n')[0] || '';
+  return l ? l.split(/\s+/).slice(0, 4).join(' ') : '';
+}
+const agentPill = s => `<span class="pill st-${esc(s || 'never')}">${esc(s || 'never')}</span>`;
+const usd = n => '$' + (+n || 0).toFixed(2);
+async function agentsView(req, res) {
+  const list = await agentsIndex();
+  const rows = list.map(a => `<a class="agent card" href="/agents/${esc(a.name)}">
+<b>${esc(a.name)}</b> ${agentPill(a.last?.state)}
+<span class="muted">${a.last ? rel(Date.parse(a.last.last_event_at)) : 'never ran'} · ${a.total} runs · 7d ${usd(a.cost7d)}</span></a>`).join('');
+  const body = `<h1><a href="/">← sessions</a> <span class="muted">· agents</span></h1>
+${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}`;
+  send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentDetailView(req, res, name) {
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const a = (await agentsIndex()).find(x => x.name === name);
+  if (!a) { res.writeHead(404); return res.end('no such agent'); }
+  const next = await agentTimer(name);
+  const back = `/agents/${esc(name)}`;
+  const btn = (act, label) => `<form method="post" action="/a/agent-${act}"><input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}"><button>${label}</button></form>`;
+  const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
+  const body = `<h1><a href="/agents">← agents</a> <span class="muted">· ${esc(name)}</span></h1>
+<p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(next || 'no timer')}</span></p>
+<div class="actions">${btn('run', 'Run now')}${next === 'paused' ? btn('resume', 'Resume') : btn('pause', 'Pause')}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
+<h2>Runs</h2><ul class="runs">${runs || '<li class="muted">none</li>'}</ul>
+<h2>Events</h2><pre class="events">${esc(a.events.join('\n') || 'none')}</pre>`;
+  send(req, res, 200, page(`${name} · agents`, body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentRunView(req, res, name, run) {
+  if (!AGENT_RE.test(name) || !RUN_RE.test(run)) { res.writeHead(404); return res.end(); }
+  const dir = `${AGENTS_STATE}/${name}/runs/${run}`;
+  let status = null, text = '';
+  try { status = JSON.parse(await fsp.readFile(`${dir}/status.json`, 'utf8')); } catch { res.writeHead(404); return res.end('no such run'); }
+  try {
+    for (const l of (await fsp.readFile(`${dir}/stream.jsonl`, 'utf8')).split('\n')) {
+      if (!l.includes('"type":"assistant"')) continue;
+      try { for (const c of JSON.parse(l).message?.content || []) if (c.type === 'text') text += c.text + '\n\n'; } catch {}
+    }
+  } catch {}
+  const body = `<h1><a href="/agents/${esc(name)}">← ${esc(name)}</a> <span class="muted">· ${esc(run)}</span></h1>
+<pre class="status">${esc(JSON.stringify(status, null, 1))}</pre>
+<article class="mdv">${esc(text || '(no assistant text)')}</article>`;
+  send(req, res, 200, page(`${run} · ${name}`, body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentAction(req, res, act) {
+  if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+  // same-origin guard, same as every other mutating POST route (see line ~32)
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  const b = await readBody(req);
+  const name = b.name || '';
+  const bk = b.back || '/agents';
+  const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
+  if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
+  if (act === 'run') await sh('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]);
+  else if (act === 'pause') await sh('systemctl', ['mask', '--now', `mows-agent-${name}.timer`]);
+  else if (act === 'resume') { await sh('systemctl', ['unmask', `mows-agent-${name}.timer`]); await sh('systemctl', ['start', `mows-agent-${name}.timer`]); }
+  else if (act === 'stop') {
+    const a = (await agentsIndex()).find(x => x.name === name);
+    if (a?.last?.state === 'working' && a.last.pid) { try { process.kill(a.last.pid, 'SIGTERM'); } catch {} } // runner traps TERM -> kills claude's group
+  } else { res.writeHead(404); return res.end(); }
+  agentsCache.t = 0;
+  res.writeHead(303, { location: back }); res.end();
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -2735,6 +2860,12 @@ const server = http.createServer(async (req, res) => {
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
     if (p === '/events') return await eventsView(req, res);
+    if (p === '/agents') return await agentsView(req, res);
+    if (p.startsWith('/agents/')) {
+      const [name, run] = p.slice(8).split('/');
+      return run ? await agentRunView(req, res, name, run) : await agentDetailView(req, res, name);
+    }
+    if (p.startsWith('/a/agent-')) return await agentAction(req, res, p.slice(9));
     if (p === '/fleet.js') {
       const buf = Buffer.from(FLEET_JS);
       const etag = '"' + crc32(buf).toString(16) + '"';

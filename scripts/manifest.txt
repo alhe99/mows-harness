@@ -192,3 +192,4 @@ scripts/e2e-agents.sh
 agents/examples/harness-reviewer.md
 agents/config.example
 scripts/live-agents.sh
+docs/qa/journeys/agents-tab.md

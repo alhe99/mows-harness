@@ -37,6 +37,7 @@ chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
+chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'
