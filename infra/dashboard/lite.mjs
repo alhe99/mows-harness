@@ -2901,11 +2901,14 @@ async function apiView(req, res, rest) {
   const [section, name, kind, id] = rest.split('/').filter(Boolean);
   if (section !== 'agents') { res.writeHead(404); return res.end(); }
   if (!name) {
+    // Deliberately no per-agent timer lookup here: agentTimers() spawns systemctl per agent and
+    // is uncached, and the list renders no next-fire time. The detail endpoint does it once,
+    // for the one agent being viewed.
     const list = await agentsIndex();
-    return sendJson(req, res, 200, { agents: await Promise.all(list.map(async a => ({
+    return sendJson(req, res, 200, { agents: list.map(a => ({
       name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null,
-      total: a.total, cost7d: a.cost7d, timer: summarizeTimers(await agentTimers(a.name)).label,
-    }))) });
+      total: a.total, cost7d: a.cost7d,
+    })) });
   }
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
