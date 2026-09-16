@@ -960,15 +960,27 @@ export function Chat({ name, runs }) {
   const [live, setLive] = useState('');
   const [busy, setBusy] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const boxRef = useRef(null), taRef = useRef(null);
+  const boxRef = useRef(null), taRef = useRef(null), turnRef = useRef(0);
   const chatable = (runs || []).some(r => r.state === 'done');
 
   useEffect(() => {
     getJSON(`/api/agents/${name}/chat`).then(d => setTurns(d.turns)).catch(() => {});
     connect(['agents', `chat:${name}`]);
-    const offA = subscribe('chat', d => { if (d.agent === name) { setBusy(true); setLive(s => s + d.delta); } });
+    const offA = subscribe('chat', d => {
+      if (d.agent !== name) return;
+      // A delta from a newer turn replaces the buffer rather than appending to it. This is
+      // the same reset-on-mismatch rule the server's chatBuf uses, and it is what makes
+      // turnRef current before any `chatend` is compared against it.
+      if (d.turn !== turnRef.current) { turnRef.current = d.turn; setLive(''); }
+      setBusy(true); setLive(s => s + d.delta);
+    });
     const offB = subscribe('chatend', d => {
       if (d.agent !== name) return;
+      // The server is first-end-wins; the client is newest-turn-wins. Both are needed. When a
+      // turn's child dies, the server sends a `closed:true` fallback for THAT turn, which can
+      // arrive after a newer turn has already started streaming — clearing `live`
+      // unconditionally would wipe the in-flight reply the user is watching (Task 6 review, R3).
+      if (d.turn && d.turn < turnRef.current) return;
       setBusy(false); setLive('');
       getJSON(`/api/agents/${name}/chat`).then(x => setTurns(x.turns)).catch(() => {});
     });
