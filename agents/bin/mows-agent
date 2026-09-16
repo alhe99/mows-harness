@@ -193,6 +193,8 @@ merge_step(){ # merge.policy pr: push the agent's branch and open a PR; never to
     event "$AGENT" "merge: PR opened from $br"
   else
     escalate "$AGENT" "$VIA" "merge: PR creation failed for $br (see $RUNDIR/merge.log)"
+    return 1  # escalate() always returns 0 itself; without this, a failed push/PR fell through
+              # as a false "success" to cmd_run's `merge_step || exit 3` (see there)
   fi
 }
 
@@ -200,7 +202,12 @@ cmd_run(){
   AGENT=${1:-}; [ -n "$AGENT" ] || die "usage: mows-agent run <name> [task…]"; shift
   local f; f=$(agent_file "$AGENT") || exit 64; [ -n "$f" ] || die "no agent named $AGENT"
   check_version
-  if ! "$META" lint "$f" >&2; then event "$AGENT" "refused: lint errors in $f"; exit 6; fi
+  # A lint failure means we cannot trust the manifest well enough to read mows.escalate.via
+  # (it may not even parse), so this can't go through escalate()'s normal per-agent VIA gate.
+  # Post whenever DISCORD_WEBHOOK is configured at all — SETUP.md already promises refusals
+  # are notified, and forcing via=discord here (rather than the unknown "$VIA") is what makes
+  # that promise hold for the one refusal that happens before the manifest is ever read.
+  if ! "$META" lint "$f" >&2; then escalate "$AGENT" discord "refused: lint errors in $f"; exit 6; fi
   M=$(meta "$f")
   PROFILE=$(mget "$M" .mows.profile); CFGDIR=$(cfg_of "$PROFILE")
   WORKDIR=$(expand_tilde "$(mget "$M" .mows.workdir)")
@@ -233,12 +240,20 @@ cmd_run(){
       --append-system-prompt "$(run_context)" "$task" \
       > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
   CPID=$!; write_status working
+  # This trap covers an INTERACTIVE Ctrl-C only. A tty delivers SIGINT to the whole foreground
+  # process group, so `tail` and this script die immediately, the pipeline unwinds, and bash
+  # then runs the deferred trap against a still-live claude — that path works.
+  # It does NOT cover an external `kill -TERM $CPID` (e.g. the dashboard's Stop button): bash
+  # only runs a trap between commands, and this script sits foreground in `tail | tail_loop`
+  # for the whole run, so the trap never gets a chance to fire until claude has already exited
+  # on its own. The dashboard does not rely on this trap for Stop — it signals -claude_pid
+  # (the process group) directly instead (infra/dashboard/lite.mjs, agentAction 'stop').
   trap 'kill_tree "$CPID"' TERM INT
   tail -n +1 -f --pid="$CPID" "$RUNDIR/stream.jsonl" | tail_loop "$CPID"
   wait "$CPID" 2>/dev/null
   local st; st=$(jq -r .state "$RUNDIR/status.json")
   case $st in
-    done)            merge_step; exit 0;;
+    done)            merge_step || exit 3; exit 0;;
     budget_exceeded) escalate "$AGENT" "$VIA" "$RUN_ID budget_exceeded (cap \$$USD_RUN)"; exit 4;;
     stalled)         escalate "$AGENT" "$VIA" "$RUN_ID stalled: no stream event for ${STALL_SEC}s, killed"; exit 5;;
     *)               escalate "$AGENT" "$VIA" "$RUN_ID failed: $(jq -r '(.result // "") | .[0:200]' "$RUNDIR/result.json" 2>/dev/null || echo 'no result record')"; exit 3;;
@@ -363,7 +378,15 @@ EOF
   echo "rendered into $RENDER_DIR — review, then (nothing below is run for you):"
   echo "  sudo install -m644 $RENDER_DIR/mows-agent@.service $RENDER_DIR/mows-agent-*.timer $RENDER_DIR/mows-agent-*.path /etc/systemd/system/ 2>/dev/null; sudo systemctl daemon-reload"
   for n in "${names[@]}"; do
-    for u in "$RENDER_DIR"/mows-agent-"$n"*.timer "$RENDER_DIR"/mows-agent-"$n"*.path; do [ -f "$u" ] && echo "  sudo systemctl enable --now $(basename "$u")"; done
+    # Anchored: a bare glob (mows-agent-"$n"*.timer) also matches another agent whose name
+    # happens to start with this one plus anything (e.g. n=foo matching mows-agent-foobar.timer
+    # or mows-agent-foo-review.timer) and would print an enable hint for the wrong agent's
+    # unit. Only the bare unit or a numeric -2/-3/... suffix (this render's own naming scheme,
+    # see the cron/path loop above) belongs to "$n".
+    for u in "$RENDER_DIR"/mows-agent-"$n".timer "$RENDER_DIR"/mows-agent-"$n"-[0-9]*.timer \
+             "$RENDER_DIR"/mows-agent-"$n".path  "$RENDER_DIR"/mows-agent-"$n"-[0-9]*.path; do
+      [ -f "$u" ] && echo "  sudo systemctl enable --now $(basename "$u")"
+    done
   done
   echo "  systemctl list-timers 'mows-agent-*'    # confirm NEXT; mows-agent list shows it too"
 }

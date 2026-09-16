@@ -29,6 +29,15 @@ MODEL_ALIAS = {"sonnet", "opus", "haiku", "inherit"}
 MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days"}
 BUDGET_KEYS = {"usd_per_run", "max_turns", "usd_per_day", "quota_floor"}
 TRIGGER_TYPES = {"cron", "path", "webhook"}
+# The agent name is simultaneously a systemd instance name, a unit filename, a config key
+# (WEBHOOK_SECRET_<NAME>) and a URL path segment (/agents/<name>, /wh/<name>). This is the
+# intersection that keeps all four safe, and it must mirror lite.mjs's AGENT_RE exactly — a
+# future edit to either pattern should update the other (infra/dashboard/lite.mjs, AGENT_RE).
+AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# Tool names that confer write capability even when Write/Edit are both in disallowedTools:
+# a shell can always write via redirection (`echo x > f`), and Task can spawn a subagent that
+# has its own tools regardless of the parent's disallowedTools. See can_write below.
+WRITE_CAPABLE_TOOLS = {"Bash", "Task"}
 
 
 def frontmatter(path):
@@ -72,6 +81,9 @@ def lint(path):
     # ---- Claude Code namespace ----
     if fm.get("name") != stem:
         E.append(f"name must equal the filename stem '{stem}' (got {fm.get('name')!r})")
+    if not AGENT_NAME_RE.match(stem):
+        E.append(f"name '{stem}' must match {AGENT_NAME_RE.pattern} (mirrors lite.mjs's AGENT_RE — "
+                 "the name doubles as a systemd unit name, a config key, and a URL path segment)")
     if not isinstance(fm.get("description"), str) or not fm["description"].strip():
         E.append("description is required")
     if "maxTurns" in fm and not (is_int(fm["maxTurns"]) and fm["maxTurns"] > 0):
@@ -93,7 +105,10 @@ def lint(path):
         E.append("tools must be a list or comma-separated string")
     if dis is None:
         E.append("disallowedTools must be a list or comma-separated string")
-    can_write = not ({"Write", "Edit"} <= set(dis or []))
+    # "Read-only" from disallowedTools alone is a lie if the agent also has Bash or Task:
+    # a shell writes fine through redirection, and Task can hand a subagent its own tools —
+    # neither is stopped by disallowing Write/Edit on the parent (SETUP.md's safety posture).
+    can_write = not ({"Write", "Edit"} <= set(dis or [])) or bool(WRITE_CAPABLE_TOOLS & set(tools or []))
 
     # ---- mows namespace ----
     mows = fm.get("mows")

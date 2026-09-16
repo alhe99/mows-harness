@@ -105,8 +105,11 @@ Detail — recent runs with cost/turns/tools, events, and timer status rolled up
 `mows-agent-<name>(-N)?.timer` unit (a multi-timer agent reports "mixed" rather than a state
 that's only half true). Per-run — status.json plus the run's assistant text. Four actions: run
 (`systemctl start --no-block`), pause/resume (mask/unmask *every* timer belonging to the
-agent, together, never just the bare one), stop (SIGTERM to the recorded runner, which kills
-the whole `claude` process group). The index is cached 3s per dashboard process.
+agent, together, never just the bare one), stop (SIGTERM straight to `-claude_pid`, the
+recorded `claude` process's own group — *not* to the runner pid: `mows-agent`'s own `TERM`
+trap can't fire while it's blocked reading the stream in the foreground, so signalling the
+runner only stops it once `claude` has already exited on its own; the dashboard kills the
+`claude` group directly instead). The index is cached 3s per dashboard process.
 
 ## Safety posture — read this before trusting "read-only"
 

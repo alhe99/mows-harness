@@ -217,6 +217,10 @@ let tmuxInflight = null; // in-flight dedup: /events runs up to SSE_MAX concurre
 // after a restart (seen 2026-07-07 under the sandbox rollout) — a timeout here
 // silently blanks the live panel for 3s (cache), so keep headroom.
 const sh = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }, (e, out) => r(e ? '' : out)));
+// sh() collapses "errored" and "succeeded with empty stdout" to the same '' — fine for the
+// read-only callers above, but a caller that needs to know whether the command actually
+// worked (e.g. `systemctl start` on a unit that was never installed) needs the real result.
+const shOk = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }, e => r(!e)));
 async function tmuxLive() {
   if (Date.now() - tmuxCache.t < 3000) return tmuxCache.list;
   if (tmuxInflight) return tmuxInflight;
@@ -2745,6 +2749,12 @@ ${pgr}${msgs || '<p class="muted">no displayable messages.</p>'}${pgr}`;
 // Data = the run records mows-agent writes; rescanned per request behind a 3s cache, NEVER
 // at startup (discoverAccounts() is startup-only and the spec calls that staleness out).
 const AGENTS_STATE = TMUX_HOME + '/.local/state/mows-agents';
+// Mirrors agents/bin/mows-agent-meta's AGENT_NAME_RE exactly — the name doubles as a systemd
+// instance name, a unit filename, a config key (WEBHOOK_SECRET_<NAME>) and this URL path
+// segment. Widening either pattern without the other breaks injectivity of the config-key
+// mapping (webhookView below computes it as name.upper().replace('-','_')): admitting
+// underscores would make "a-b" and "a_b" collide on WEBHOOK_SECRET_A_B, letting one agent's
+// webhook secret authenticate another agent's webhook. Keep both patterns identical.
 const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const RUN_RE = /^\d{8}-\d{6}-\d+$/;
 const AGENT_BAD = new Set(['stalled', 'failed', 'budget_exceeded']);
@@ -2915,7 +2925,14 @@ async function agentAction(req, res, act) {
   const bk = b.back || '/agents';
   const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
   if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
-  if (act === 'run') await sh('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]);
+  if (act === 'run') {
+    // Honest failure, not a silent redirect that looks like success: the shared
+    // mows-agent@.service unit may never have been installed (SETUP.md's Triggers step is a
+    // manual `sudo install`), and `systemctl start` on a missing unit fails immediately.
+    if (!(await shOk('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]))) {
+      res.writeHead(409); return res.end('could not start mows-agent@' + name + '.service — is the unit installed? see agents/SETUP.md Triggers');
+    }
+  }
   else if (act === 'pause' || act === 'resume') {
     // every timer belonging to this agent (bare + -2, -3, ...), not just the bare unit —
     // see agentTimers()'s header comment (review round 1: pause/resume ignored suffixed
@@ -2932,7 +2949,15 @@ async function agentAction(req, res, act) {
   }
   else if (act === 'stop') {
     const a = (await agentsIndex()).find(x => x.name === name);
-    if (a?.last?.state === 'working' && a.last.pid) { try { process.kill(a.last.pid, 'SIGTERM'); } catch {} } // runner traps TERM -> kills claude's group
+    // Kill claude's own process group directly (claude_pid is its own group leader, per
+    // mows-agent's `setsid`) — SIGTERM to the runner pid does NOT work: mows-agent's `trap
+    // … TERM` only runs between commands, and the runner sits foreground in `tail | tail_loop`
+    // for the whole run, so the trap never gets scheduled until claude has already exited on
+    // its own (verified: after signalling exactly this way, claude was still alive and the
+    // record still said "working"). Killing the runner pid too is a harmless, no-op-once-dead
+    // secondary signal, not what actually stops the run.
+    if (a?.last?.state === 'working' && a.last.claude_pid > 0) { try { process.kill(-a.last.claude_pid, 'SIGTERM'); } catch {} }
+    if (a?.last?.state === 'working' && a.last.pid) { try { process.kill(a.last.pid, 'SIGTERM'); } catch {} }
   } else { res.writeHead(404); return res.end(); }
   agentsCache.t = 0;
   res.writeHead(303, { location: back }); res.end();
@@ -2957,7 +2982,13 @@ async function webhookView(req, res, name) {
   if (got.length !== want.length || !timingSafeEqual(got, want)) { res.writeHead(401); return res.end('bad signature'); }
   // one in-flight run per agent is enforced by mows-agent itself (refuses with exit 6); the unit's
   // SuccessExitStatus covers that, so a burst of webhooks is safe.
-  await sh('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]);
+  // A valid signature is not the same thing as a working trigger: the shared unit may never
+  // have been installed (SETUP.md's Triggers step is a manual `sudo install`), and answering
+  // 202 regardless would tell a caller (GitHub, retrying webhooks) that the run was queued
+  // when nothing happened at all.
+  if (!(await shOk('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]))) {
+    res.writeHead(503, { 'content-type': 'text/plain' }); return res.end('agent unit not installed');
+  }
   res.writeHead(202, { 'content-type': 'text/plain' }); res.end('queued');
 }
 

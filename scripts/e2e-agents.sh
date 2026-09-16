@@ -198,7 +198,13 @@ chk "run no result: no result.json"           '[ ! -f "$S/last/result.json" ]'
 echo hang > "$CLAUDE_MODE_FILE"; T0=$(date +%s); mows-agent run good >/dev/null 2>&1; RC=$?; T1=$(date +%s)
 chk "run hang: exit 5 stalled"                '[ "$RC" = 5 ] && [ "$(jq -r .state "$S/last/status.json")" = stalled ]'
 chk "run hang: killed within 15s"             '[ $((T1 - T0)) -lt 15 ]'
-chk "run hang: no leftover sleep"             '! pgrep -f "sleep 3600" -u "$(id -u)" >/dev/null || ! pgrep -P "$(jq -r .claude_pid "$S/last/status.json")" >/dev/null'
+# the `||` this replaced let the check pass whether or not the leak existed: its second half
+# (pgrep -P against the ORIGINAL claude_pid) still "passes" once that pid is dead and its
+# child got reparented to init, since pgrep -P no longer finds it as a child of that pid
+# either way — non-discriminating either direction. A single system-wide check for the
+# stub's own "sleep 3600" is what actually distinguishes a leaked child from a fully killed
+# process group.
+chk "run hang: no leftover sleep"             '! pgrep -f "sleep 3600" -u "$(id -u)" >/dev/null'
 echo ok > "$CLAUDE_MODE_FILE"
 
 echo "### run: escalation via discord"
@@ -212,6 +218,11 @@ echo "### run: refusals"
 mkagent "$A/broken.md" "$MOWS_BLOCK_OK"; sed -i 's/^maxTurns: 40/maxTurns: "abc"/' "$A/broken.md"
 mows-agent run broken >/dev/null 2>&1; RC=$?
 chk "refuse: lint error -> exit 6, no run dir" '[ "$RC" = 6 ] && [ ! -d "$MOWS_AGENTS_STATE/broken/runs" ]'
+# a lint refusal happens before the manifest is ever read, so escalate.via is unknowable;
+# DISCORD_WEBHOOK is set globally for this whole suite (top of file), which is exactly the
+# case a lint-error refusal should still notify on (fix round 2, finding 7).
+chk "refuse: lint error still posts to discord" 'grep -q broken "$CURL_LOG" && grep -q "lint errors" "$CURL_LOG"'
+: > "$CURL_LOG"
 chk "refuse: no agent named -> 64"             'mows-agent run nosuch >/dev/null 2>&1; [ $? = 64 ]'
 
 echo "### list / last / logs"
@@ -286,6 +297,17 @@ chk "pr: gh pr create --base main called"     'grep -q "pr create --fill --base 
 chk "pr: event logged"                        'grep -q "PR opened from agent/fix" "$MOWS_AGENTS_STATE/prbot/events.log"'
 git -C "$T/repo" checkout -q main
 chk "pr: on base branch is a logged no-op"    'mows-agent run prbot && grep -q "still on main" "$MOWS_AGENTS_STATE/prbot/events.log"'
+# regression (fix round 2, finding 6): a failed push/PR must not still exit 0. merge_step's
+# success path returns via event() (always exit 0) and, before this fix, its failure path
+# fell through the same way via escalate() (ALSO always exit 0 — it swallows curl's result)
+# -- so `done) merge_step; exit 0;;` could never tell the two apart no matter what the call
+# site checked. Break the push by pointing origin somewhere that doesn't exist.
+git -C "$T/repo" checkout -q agent/fix
+git -C "$T/repo" remote set-url origin "$T/no-such-origin.git"
+mows-agent run prbot >/dev/null 2>&1; RC=$?
+chk "pr: failed push/PR -> exit 3, not 0"     '[ "$RC" = 3 ]'
+chk "pr: failure event logged"                'grep -q "PR creation failed" "$MOWS_AGENTS_STATE/prbot/events.log"'
+git -C "$T/repo" remote set-url origin "$T/origin.git"
 
 echo "### render"
 export RENDER_DIR="$T/rendered"
