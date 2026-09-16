@@ -97,6 +97,8 @@ if [ -d infra/dashboard/app ]; then
   done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' \))
   [ "$GZ" -le 76800 ] || bad "client assets ${GZ}B gzipped exceeds the 76800B ceiling (spec D3)"
   note "client assets: ${GZ}B gzipped of 76800B"
+else
+  bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
 
 # 6. gitleaks if available (CI always runs it)
