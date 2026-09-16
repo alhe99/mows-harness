@@ -60,6 +60,17 @@ mkdir -p /etc/oauth2-proxy && echo "admin@example.test" > /etc/oauth2-proxy/emai
 oauth2-proxy --config /etc/oauth2-proxy.cfg >/tmp/oauth.log 2>&1 &
 sleep 4
 chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/'
+# /api/* reads the same agentsIndex() the HTML views do, so it needs the same fixture: a
+# real (if empty) directory under AGENTS_STATE named harness-reviewer. Without this, agent
+# detail/chat would 404 for "no such agent" — a true statement about the fixture, not about
+# the routing this task adds — and the assertions below couldn't tell the difference.
+mkdir -p "$DH/.local/state/mows-agents/harness-reviewer"
+chk "api: /api/agents is json"          'curl -s http://127.0.0.1:3005/api/agents | jq -e ".agents | type == \"array\""'
+chk "api: agent detail is json"         'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".name == \"harness-reviewer\""'
+chk "api: chat is json"                 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer/chat | jq -e ".turns | type == \"array\""'
+chk "api: unknown agent -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/nope)" = 404 ]'
+chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/BAD_NAME)" = 404 ]'
+chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'
 # desktop/tablet browsers open sessions in their own named windows (client-side, so just
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'

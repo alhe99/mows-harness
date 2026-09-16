@@ -2884,6 +2884,56 @@ async function agentChat(name) {
   } catch {}
   return out.slice(-CHAT_MAX);
 }
+// ---------- /api/*: JSON for the SPA (spec §1) ----------
+// These are the existing view functions with the HTML rendering removed — deliberately not new
+// logic, so the server-rendered pages and the app cannot disagree about what is true.
+function sendJson(req, res, status, obj) {
+  send(req, res, status, JSON.stringify(obj), 'application/json; charset=utf-8');
+}
+async function apiView(req, res, rest) {
+  // rest is p.slice(5) from a path that starts '/api/' — e.g. "agents", "agents/<name>",
+  // "agents/<name>/chat", "agents/<name>/runs/<run_id>". Parsed explicitly into segments
+  // rather than one four-group regex: the regex the brief for this task shipped destructured
+  // four capture groups from a three-group pattern (the fourth only ever coming from a
+  // never-added fourth path segment) and needed a separate rest.startsWith('agents') guard
+  // to reject non-agents paths — a guard the regex itself could express directly. Splitting
+  // makes every segment's role explicit and drops the redundant check.
+  const [section, name, kind, id] = rest.split('/').filter(Boolean);
+  if (section !== 'agents') { res.writeHead(404); return res.end(); }
+  if (!name) {
+    const list = await agentsIndex();
+    return sendJson(req, res, 200, { agents: await Promise.all(list.map(async a => ({
+      name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null,
+      total: a.total, cost7d: a.cost7d, timer: summarizeTimers(await agentTimers(a.name)).label,
+    }))) });
+  }
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const a = (await agentsIndex()).find(x => x.name === name);
+  if (!a) { res.writeHead(404); return res.end(); }
+  if (!kind) {
+    const timers = await agentTimers(name);
+    return sendJson(req, res, 200, {
+      name, recs: a.recs, events: a.events, total: a.total, cost7d: a.cost7d,
+      timers, timer: summarizeTimers(timers),
+    });
+  }
+  if (kind === 'chat') return sendJson(req, res, 200, { turns: await agentChat(name) });
+  if (kind === 'runs' && id) {
+    if (!RUN_RE.test(id)) { res.writeHead(404); return res.end(); }
+    const dir = `${AGENTS_STATE}/${name}/runs/${id}`;
+    let status = null, text = '';
+    try { status = JSON.parse(await fsp.readFile(`${dir}/status.json`, 'utf8')); }
+    catch { res.writeHead(404); return res.end(); }
+    try {
+      for (const l of (await fsp.readFile(`${dir}/stream.jsonl`, 'utf8')).split('\n')) {
+        if (!l.includes('"type":"assistant"')) continue;
+        try { for (const c of JSON.parse(l).message?.content || []) if (c.type === 'text') text += c.text + '\n\n'; } catch {}
+      }
+    } catch {}
+    return sendJson(req, res, 200, { status, text });
+  }
+  res.writeHead(404); return res.end();
+}
 async function agentDetailView(req, res, name) {
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
@@ -3043,6 +3093,7 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
+    if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     if (p === '/events') return await eventsView(req, res);
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
     if (p === '/agents') return await agentsView(req, res);
