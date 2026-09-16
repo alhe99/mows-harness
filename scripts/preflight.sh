@@ -59,6 +59,25 @@ while IFS= read -r hitline; do
 done < <(git grep -nIE "$IPV4" -- . ':!scripts/preflight.sh' 2>/dev/null | grep -v 'preflight-allow')
 [ "$IPV4_BAD" = 0 ] || bad "IPv4-looking literal(s) found (see above)"
 
+# 3c. control bytes: a shipped TEXT file must contain no control byte other than tab/newline.
+# Not theoretical -- this branch hit the failure mode from both directions in one session: an
+# editing tool silently rewrote a \u0001 / $'\x01' escape NAMED IN SOURCE into a raw embedded
+# control byte (functionally harmless there -- every gate stayed green -- but invisible and
+# confusing on inspection), and separately a reviewing tool refused to run its own command for
+# containing that same escape. `grep -Iq ''` is grep's own binary-file heuristic (a NUL byte
+# in the first chunk of the file) -- used here to skip real binaries (docs/assets/*.png etc.)
+# without hardcoding a path/extension allowlist that would go stale as the tree grows.
+CTRLBAD=0
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] || continue
+  grep -Iq '' "$f" 2>/dev/null || continue  # binary (has a NUL) -- not this check's business
+  if LC_ALL=C grep -qP '[\x00-\x08\x0B-\x1F\x7F]' "$f" 2>/dev/null; then
+    echo "preflight FAIL: control byte(s) other than tab/newline in $f"
+    CTRLBAD=1
+  fi
+done < <(git ls-files -z)
+[ "$CTRLBAD" = 0 ] || bad "shipped file(s) contain raw control bytes (see above)"
+
 # 4. placeholder lint: only the sanctioned {{ VARS }}
 ALLOWED='DOMAIN|EXAMPLE_SUB|OAUTH_CLIENT_ID|OAUTH_CLIENT_SECRET|COOKIE_SECRET|ADMIN_EMAIL|CONTEXT7_API_KEY|VPS_HOST|PROJECTS_ROOT|ADMIN_USER'
 # exclude this script: it documents the {{VAR}} convention in comments/patterns

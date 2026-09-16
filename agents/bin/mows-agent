@@ -375,18 +375,29 @@ cmd_chat(){
       # `t=$(jq -r …)` strips ALL trailing newlines from its capture, so a delta that is
       # exactly "\n\n" (a paragraph break — a common single chunk from the real API) silently
       # disappears, and any delta ending in "\n" loses it (fix round 1, F1). Terminating the
-      # jq program with a non-newline sentinel (\u0001, assumed never to appear literally in
-      # real model output — the same class of assumption the `--` guard below makes) means
-      # nothing in the capture is a TRAILING newline, so command substitution strips nothing.
-      if ! out=$(jq -j '(.type // ""), "\u0001", (.event.delta.text // empty), "\u0001"' <<<"$line" 2>/dev/null); then
+      # jq program with a non-newline separator (".") means nothing in the capture is a
+      # TRAILING newline, so command substitution strips nothing. The separator does NOT have
+      # to be absent from the delta text — re-review round 1 confirmed this by construction:
+      # the split below is POSITIONAL, not delimiter-uniqueness-dependent. `%%` takes the
+      # prefix before the FIRST "." (the record type, which the CLI controls and which is
+      # always a bare word with no punctuation), and the final `%` strips exactly the LAST
+      # character, which is always the terminator jq just wrote — regardless of how many
+      # periods appear earlier in the delta text itself. A delta containing, ending in, or
+      # consisting entirely of "." round-trips unchanged. A printable separator was chosen
+      # over a control byte (this file's own history: a tool once silently rewrote a raw
+      # control byte named in source into something else entirely) — nothing here depends on
+      # unlikeliness, so there is no reason to pay that price. The one residual, inherent to
+      # `$(…)` and not to this framing: a literal NUL in the delta text is silently dropped by
+      # command substitution regardless of separator choice.
+      if ! out=$(jq -j '(.type // ""), ".", (.event.delta.text // empty), "."' <<<"$line" 2>/dev/null); then
         # claude exits 0 and prints a plain-text notice ("No conversation found with session
         # ID: …") when a session cannot be resumed. The non-streaming path above guards
         # against exactly this; dropping the line here reports a failure as an empty success.
         [ -n "$line" ] && notice="${notice:-$line}"
         continue
       fi
-      rtype=${out%%$'\x01'*}          # everything before the first \x01
-      t=${out#*$'\x01'}; t=${t%$'\x01'}  # everything between the two \x01s, newlines intact
+      rtype=${out%%.*}       # everything before the first "."
+      t=${out#*.}; t=${t%.}  # everything after the first ".", minus the trailing "."
       if [ "$rtype" = result ]; then
         sawres=1; resline="$line"
         cost=$(jq -r '.total_cost_usd // 0' <<<"$line")

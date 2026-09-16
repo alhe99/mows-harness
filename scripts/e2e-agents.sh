@@ -50,7 +50,7 @@ S
 cat > "$T/shim/claude" <<'S'
 #!/usr/bin/env bash
 # stub claude: --version, `agents --json`, or a scripted -p run chosen by $CLAUDE_MODE_FILE
-# (ok|budget|maxturns|error|noresult|hang|badtext|crashafter). argv + CLAUDE_CONFIG_DIR land
+# (ok|budget|maxturns|error|noresult|hang|badtext|crashafter|nodelta). argv + CLAUDE_CONFIG_DIR land
 # in $CLAUDE_ARGS_FILE.
 [ "${1:-}" = --version ] && { echo "2.1.273 (Claude Code)"; exit 0; }
 [ "${1:-}" = agents ] && { [ -n "${CLAUDE_AGENTS_HANG:-}" ] && sleep 3600; cat "${CLAUDE_AGENTS_JSON_FILE:-/dev/null}"; exit 0; }
@@ -66,9 +66,13 @@ sid=00000000-0000-4000-8000-000000000001
 # gate on all three the way the CLI does — gating on one flag only would stay green even if
 # the streaming invocation silently downgraded to plain --output-format json, which produces
 # no stream_event records at all against the real CLI (fix round 1, F5).
+# nodelta additionally suppresses deltas regardless of flags (the flags are still present in
+# argv — mode is what gates this, not argv) — a tool-only turn, or a CLI version that omits
+# partial messages for some content type, still needs to succeed via the result record's own
+# .result text alone (fix round 1, F7; re-review round 1, R2: the fallback shipped unasserted).
 argv=" $* "
-if [[ $argv == *" --include-partial-messages "* && $argv == *" --output-format "* \
-   && $argv == *" stream-json "* && $argv == *" --verbose "* ]]; then
+if [ "$mode" != nodelta ] && [[ $argv == *" --include-partial-messages "* \
+   && $argv == *" --output-format "* && $argv == *" stream-json "* && $argv == *" --verbose "* ]]; then
   for w in "stub " "says " "OK"; do
     printf '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"%s"}}}\n' "$w"
   done
@@ -99,6 +103,10 @@ case $mode in
   # (`[ "$rc" != 0 ]`) from sawres's half, which alone already catches every other mode here
   # (fix round 1, F4).
   crashafter) res success false completed 0.0123 "stub says OK"; exit 1;;
+  # nodelta: a result record with real text, but no deltas at all (suppressed above by mode,
+  # not by argv — the streaming flags are still exactly what a real turn would send). Proves
+  # the fallback to .result when the delta stream is empty (fix round 1, F7).
+  nodelta)    res success false completed 0.0123 "reply via .result, no deltas arrived";;
 esac
 S
 chmod +x "$T"/shim/*
@@ -411,17 +419,29 @@ chk "chat --stream logs role:error"    'tail -1 "$MOWS_AGENTS_STATE/good/chat.js
 # left the suite green before this assertion existed.
 chk "chat --stream failure end line carries is_error:true" \
   'mows-agent chat good --stream "hi" 2>/dev/null | tail -1 | jq -e ".end == true and .is_error == true"'
-# F4 (fix round 1): isolate each half of `[ "$rc" != 0 ] || [ "$sawres" = 0 ]`. crashafter
-# emits a result record (sawres=1) and then exits 1, constraining the rc half specifically;
-# a real 1s `timeout` kill (via the now-overridable CHAT_TIMEOUT_SEC) constrains the
-# __mows_rc= sentinel's ability to carry a genuine process kill through a process
-# substitution, which `done < <(cmd)` otherwise discards outright.
+# F4 (fix round 1): `crashafter` isolates the `rc` half of `[ "$rc" != 0 ] || [ "$sawres" =
+# 0 ]` specifically — it emits a result record (sawres=1) and then exits 1, the one shape
+# where `sawres` alone would report success. The `hang` timeout test below does NOT isolate
+# the __mows_rc= sentinel the way an earlier version of this comment claimed: `hang` never
+# emits a result record, so `sawres=0` already fails it on its own, with or without the
+# sentinel working (re-review round 1, R1 — confirmed by mutation: both halves of the
+# condition, tested independently, leave this assertion passing). What it DOES prove is that
+# a real `timeout` kill surfaces as exit 64 within the harness's own bound rather than
+# hanging or misreporting success — and, per the implementer's own F4b mutation, that removing
+# `timeout` from the invocation entirely makes this specific assertion fail (the outer
+# `timeout 10` safety net then kills `mows-agent` itself, for a non-64 exit).
 echo crashafter > "$CLAUDE_MODE_FILE"
 chk "chat --stream fails when claude exits non-zero despite a result record" \
   'mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
 echo hang > "$CLAUDE_MODE_FILE"
-chk "chat --stream sentinel captures a real timeout kill (rc=124)" \
+chk "chat --stream real timeout kill surfaces as exit 64, not a hang" \
   'CHAT_TIMEOUT_SEC=1 timeout 10 mows-agent chat good --stream "hi" >/dev/null 2>&1; [ $? = 64 ]'
+# F7 / R2 (fix round 1 / re-review round 1): a turn that succeeds with no deltas at all must
+# still persist real text, via the .result fallback, not a silent empty "success".
+echo nodelta > "$CLAUDE_MODE_FILE"
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat --stream falls back to .result when no deltas arrive" \
+  'tail -1 "$MOWS_AGENTS_STATE/good/chat.jsonl" | jq -e ".text == \"reply via .result, no deltas arrived\""'
 echo ok > "$CLAUDE_MODE_FILE"
 
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
