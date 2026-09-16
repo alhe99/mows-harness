@@ -394,6 +394,12 @@ async function streamView(req, res) {
   const url = new URL(req.url, 'http://x');
   const topics = new Set((url.searchParams.get('topics') || 'fleet').split(',').map(s => s.trim()).filter(Boolean));
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  // writeHead only QUEUES headers — nothing reaches the client until the first write. eventsView
+  // is not a counter-example: its `last = ''` sentinel forces a write on the first tick, which
+  // flushes as a side effect. Here topics are optional, so a chat-only subscriber (which is what
+  // the SPA's chat view is) writes nothing and would receive no status line for up to 25s, until
+  // the heartbeat. Verified: without this, no headers within 1500ms; with it, 4ms.
+  res.flushHeaders();
   const c = { res, topics, id: ++streamSeq };
   streamClients.add(c);
   let done = false, poll = null, hb = null;
