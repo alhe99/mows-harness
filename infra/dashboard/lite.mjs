@@ -2423,7 +2423,7 @@ async function streamView(req, res) {
       }
       if (topics.has('agents')) {
         const list = await agentsIndex();
-        const pl = JSON.stringify(list.map(a => ({ name: a.name, state: a.last?.state ?? null, total: a.total, cost7d: a.cost7d })));
+        const pl = JSON.stringify(list.map(a => ({ name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null, total: a.total, cost7d: a.cost7d })));
         if (pl !== lastAgents) { lastAgents = pl; streamWrite(c, 'agents', JSON.parse(pl)); }
       }
     } catch { /* one bad tick must not kill the stream */ }

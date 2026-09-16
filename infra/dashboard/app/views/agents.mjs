@@ -8,7 +8,14 @@ export function AgentsList() {
   useEffect(() => {
     connect(['agents']);
     getJSON('/api/agents').then(d => setRows(d.agents)).catch(() => setRows([]));
-    return subscribe('agents', live => setRows(cur => (cur || []).map(r => ({ ...r, ...(live.find(l => l.name === r.name) || {}) }))));
+    // The server sends a FULL SNAPSHOT each tick, so the snapshot decides membership: mapping
+    // over `cur` instead could only ever patch rows already present — a new agent never
+    // appeared and a removed one never went away. Merge each snapshot row over any existing
+    // row to keep fields the snapshot does not carry.
+    return subscribe('agents', live => setRows(cur => {
+      const prev = new Map((cur || []).map(r => [r.name, r]));
+      return live.map(l => ({ ...prev.get(l.name), ...l }));
+    }));
   }, []);
   if (!rows) return html`<p class="muted">Loading…</p>`;
   if (!rows.length) return html`<p class="muted">No agents yet.</p>`;
