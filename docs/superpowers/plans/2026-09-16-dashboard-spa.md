@@ -539,7 +539,7 @@ Commit subject: `dashboard: /stream — one multiplexed SSE connection per tab, 
 - Create: `infra/dashboard/app/store.mjs`, `infra/dashboard/app/ui.mjs`
 
 **Interfaces:**
-- Produces from `store.mjs`: `connect(topics)`, `subscribe(ev, fn)`, `getJSON(path)`, `state` (a plain object), `notify()`.
+- Produces from `store.mjs`: `connect(topics)`, `subscribe(ev, fn)`, `getJSON(path)`, `state` (a plain object). **No `notify()`** — an earlier draft of this line advertised one, but the task's own code never exported it (only an internal `emit()`) and nothing downstream consumes it (verified). Second instance of this shape in this plan, after Task 1's phantom `meta` key.
 - Produces from `main.mjs`: a router matching `/ui`, `/ui/agents`, `/ui/agents/:name`, `/ui/agents/:name/:run`.
 - Produces from `ui.mjs`: `Pill({state})`, `usd(n)`, `rel(ms)`.
 
