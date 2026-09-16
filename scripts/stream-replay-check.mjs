@@ -47,4 +47,15 @@ const isolationOk = !leaked;
 console.log(isolationOk ? 'PASS: replay does not leak an unsubscribed agent\'s buffer to a spoofed Last-Event-ID'
                         : `FAIL: cross-agent replay leak — attacker with topics=fleet received:\n${leakedBuf}`);
 
-process.exit(replayOk && isolationOk ? 0 : 1);
+// Regression: an early GATE FIX ATTEMPT rejected the replay with a bare `return` inside
+// streamView, which exits the whole handler — headers already flushed, but no first tick, no
+// heartbeat, no intervals ever armed. A client whose Last-Event-ID names an agent it isn't
+// subscribed to (this attacker connection, above) must still get a perfectly normal stream
+// afterwards: its own topics.has('fleet') tick still has to run. Reuses the SAME attacker
+// connection/buffer from the isolation check above, so this also proves the fix didn't
+// merely suppress the leak by killing the connection instead of skipping the replay.
+const connectionAlive = /event: fleet/.test(leakedBuf);
+console.log(connectionAlive ? 'PASS: a rejected replay does not kill the connection — fleet events still arrive'
+                            : `FAIL: no fleet event reached the attacker connection — rejecting the replay killed it:\n${leakedBuf}`);
+
+process.exit(replayOk && isolationOk && connectionAlive ? 0 : 1);
