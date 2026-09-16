@@ -24,7 +24,11 @@ DEMO=demo; DH="/home/$DEMO"   # built, not literal: preflight forbids bare home 
 mkdir -p $DH/.claude/projects/-demo-api
 printf '{"type":"user","message":{"role":"user","content":"demo"},"timestamp":"2026-08-08T00:00:00Z"}\n' \
   > $DH/.claude/projects/-demo-api/aaaa1111-demo.jsonl
-mkdir -p "$DH/.config/mows-agents"; echo 'WEBHOOK_SECRET_HARNESS_REVIEWER=s3cret' > "$DH/.config/mows-agents/config"
+mkdir -p "$DH/.config/mows-agents"
+{ echo 'WEBHOOK_SECRET_HARNESS_REVIEWER=s3cret'
+  # same secret VALUE as harness-reviewer's, deliberately — see the a_b case below, which
+  # depends on one signature being valid against both keys so the only variable is the name.
+  echo 'WEBHOOK_SECRET_A_B=s3cret'; } > "$DH/.config/mows-agents/config"
 HOME=$DH node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
@@ -45,13 +49,33 @@ chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code
 chk "webhook: bad HMAC -> 401"       '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: sha256=00" --data-binary "{}" http://127.0.0.1:3005/wh/harness-reviewer)" = 401 ]'
 chk "webhook: no secret -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/nobody)" = 404 ]'
 chk "webhook: GET -> 405"            '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/wh/harness-reviewer)" = 405 ]'
-# name-gate regression (Task 9 coverage gap): AGENT_RE must reject anything that isn't
-# ^[a-z0-9][a-z0-9-]{0,63}$ before the name is ever used to build a unit name or a config
-# key. --path-as-is on the traversal case keeps curl from collapsing ../ locally, so the
-# literal bytes reach the dashboard the way a hostile client would send them.
-chk "webhook: path traversal name -> 404" '[ "$(curl -s --path-as-is -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/../etc")" = 404 ]'
-chk "webhook: uppercase name -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/FOO)" = 404 ]'
-chk "webhook: name with @ -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/a@b")" = 404 ]'
+# name-gate regression (Task 9 coverage gap, fix round 1): AGENT_RE must reject anything
+# that isn't ^[a-z0-9][a-z0-9-]{0,63}$ *before* the name is ever used to build a unit name
+# or a config key. The endpoint returns a byte-identical 404 for "no such agent" and for
+# "agent exists, no secret configured" (deliberate anti-enumeration, verified in Task 9) —
+# which means a malformed name with NO secret configured can never prove the gate did
+# anything: the same 404 would come back with AGENT_RE deleted outright. To actually
+# discriminate, the malformed name below has ITS OWN configured secret with the SAME
+# secret VALUE as harness-reviewer's, so $SIG (already computed above) is a byte-for-byte
+# valid signature against both keys — the only thing that can differ between the two
+# requests is whether AGENT_RE accepts the name.
+#
+# /wh/../etc is NOT a case of this: a WHATWG URL collapses ".." during parsing, so Node's
+# `new URL(req.url, 'http://x')` normalizes the path to /etc before routing ever sees
+# "/wh/" — confirmed directly: `node -e "console.log(new URL('/wh/../etc','http://x').pathname)"`
+# prints /etc. That 404 comes from the generic route fallback, not from AGENT_RE, so it is
+# a real defense (traversal never reaches webhookView) but not evidence about the pattern
+# gate specifically — recorded here, not asserted as a gate test.
+chk "webhook: malformed name (_) rejected despite a valid secret+signature" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/a_b)" = 404 ]'
+chk "webhook: the exact same signature IS valid for a well-formed name" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+# @ is outside AGENT_RE too, but WEBHOOK_SECRET_A@B can never parse as a config key under
+# agentsConfig()'s own ^([A-Z0-9_]+)=(.*)$ — no secret can be provisioned for it, so this
+# can only ever prove "an unconfigured bad name still 404s", the same thing AGENT_RE
+# deleted would also do. Left as a sanity check, not gate evidence.
+chk "webhook: name with @ -> 404 (sanity only, not gate evidence)" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/a@b")" = 404 ]'
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'
