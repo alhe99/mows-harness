@@ -45,6 +45,13 @@ chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code
 chk "webhook: bad HMAC -> 401"       '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: sha256=00" --data-binary "{}" http://127.0.0.1:3005/wh/harness-reviewer)" = 401 ]'
 chk "webhook: no secret -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/nobody)" = 404 ]'
 chk "webhook: GET -> 405"            '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/wh/harness-reviewer)" = 405 ]'
+# name-gate regression (Task 9 coverage gap): AGENT_RE must reject anything that isn't
+# ^[a-z0-9][a-z0-9-]{0,63}$ before the name is ever used to build a unit name or a config
+# key. --path-as-is on the traversal case keeps curl from collapsing ../ locally, so the
+# literal bytes reach the dashboard the way a hostile client would send them.
+chk "webhook: path traversal name -> 404" '[ "$(curl -s --path-as-is -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/../etc")" = 404 ]'
+chk "webhook: uppercase name -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/FOO)" = 404 ]'
+chk "webhook: name with @ -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/a@b")" = 404 ]'
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'

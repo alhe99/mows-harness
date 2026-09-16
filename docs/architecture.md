@@ -1,6 +1,6 @@
 # Architecture
 
-Technical reference for the five layers this harness ships. Start with
+Technical reference for the six layers this harness ships. Start with
 [`README.md`](../README.md) for the "which layer do I need" overview; this document is the
 detail underneath it — port map, the profile-vs-agent model, why the dashboard runs as root,
 watchdog rationale, and the operational caveats worth knowing before you rely on any of it.
@@ -14,6 +14,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,ccname,ccswap,ccwt,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts), plus per-session helpers — `ccname` (label a session), `ccswap` (continue a quota-blocked session on the other account), `ccwt` (per-session git worktrees, created by `cc -w`) |
 | 5. agy | `--agy` | `agy/bin/{ag,agy-run,agy-handoff,agy-gate,claude-quota,agy-notify}`, `agy/config.example` | Antigravity (agy) delegation bridge: synchronous (`agy-run`) and fire-and-forget worktree handoffs (`agy-handoff`/`agy-gate`) with re-run verification, review escalation, and auto-merge policy; `claude-quota` is the 70% delegation-trigger signal |
+| 6. agents | `--agents` | `agents/bin/{mows-agent,mows-agent-meta}`, `agents/examples/`, `agents/config.example` | Purpose-scoped agents that run unattended: `mows-agent` owns policy (lint, per-run/per-day/account-quota budget, refusal, run records, escalation, pruning) over a plain Claude Code agent file with a `mows:` block; systemd timers/path units and HMAC-signed webhooks trigger a run, an `/agents` dashboard tab lists/controls them |
 
 ## Port map
 
@@ -28,6 +29,40 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 9222 | 127.0.0.1, **on-demand** | Chrome remote debugging (CDP) | Only up while `claude-qa-watch` is running; never exposed outside loopback — agent MCP tools (`chrome-devtools-watch`, `playwright-watch`) attach here directly, a human never touches this port |
 | 8000 | 127.0.0.1, optional | ws-scrcpy (`infra/droid/`) | Android web console; reached publicly only through Caddy's `/droidview/*` route and the optional `droid.<domain>` vhost, behind the same Google OAuth gate — absent entirely unless the droid stack is installed |
 | 6555 | 127.0.0.1, optional | redroid's adb (Docker port map) | The Android container's adb endpoint, mapped outside adb's 5555+ emulator scan range so the device appears exactly once; loopback-only, adb/maestro/ws-scrcpy talk to it locally |
+
+## Layer 6 contracts
+
+The agents layer's whole design rests on a handful of boundaries that are easy to lose track
+of once lint, budgets, triggers, and the dashboard are all layered on top. Stated plainly:
+
+- **The agent file is the manifest.** There is no separate agents.yaml or database row — a
+  plain Claude Code agent file (`~/.claude/agents/<name>.md`) with a `mows:` block on top of
+  its ordinary frontmatter *is* the whole configuration: model, tools, budget, triggers,
+  merge policy, escalation, all in one file, one source of truth, one thing to lint.
+- **`mows-agent` owns policy; the Claude daemon owns processes.** `mows-agent` never manages
+  a long-lived process of its own — it lints, decides whether a run is allowed, execs
+  `claude -p` once, watches its stream-json output, and writes down what happened. The actual
+  agentic work is a normal, bounded Claude Code invocation like any other; nothing here
+  reimplements or wraps the agent loop itself.
+- **Run records are files.** `~/.local/state/mows-agents/<name>/runs/<run_id>/` — no daemon,
+  no database, no service that has to stay up for history to exist. `list`/`last`/`logs`/
+  `prune` are just directory and `jq` operations, and the dashboard's `/agents` tab reads the
+  same files a human would with `cat`.
+- **Timers are staged only.** `mows-agent render` writes unit files into `./rendered/` and
+  prints the exact `sudo install` / `sudo systemctl enable --now` lines — it never installs,
+  enables, or starts anything itself, the same rule `--infra` follows everywhere else in this
+  repo. A rendered timer sitting unenabled next to a real one is the expected steady state
+  right after `install.sh --agents`.
+- **The webhook body never reaches an agent.** `/wh/<name>` reads just enough of the request
+  to verify its HMAC signature, then discards it; the run that follows always uses the
+  agent's own configured `mows.task`, never anything from the payload. A webhook is strictly
+  a trigger — an untrusted network caller cannot inject a prompt through it.
+- **`/wh/*` is the one unauthenticated path on the whole site, and the HMAC signature is the
+  entire gate.** `infra/caddy/Caddyfile.template`'s `(webhook)` snippet imports *before*
+  `(gauth)` specifically to carve this route out from the Google OAuth wall every other route
+  sits behind (see the Port map above) — a webhook caller has no browser to redirect through
+  an OAuth flow. An unknown agent name and a known name with no configured secret both 404
+  identically, so the endpoint never confirms which agents exist to an unauthenticated prober.
 
 ## Profile model vs. agent model
 
