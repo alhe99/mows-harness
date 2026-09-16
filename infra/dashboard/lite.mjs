@@ -2348,6 +2348,86 @@ async function eventsView(req, res) {
   poll = setInterval(tick, 2000);
   hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 25000); // comment heartbeat, keeps idle proxies from closing the connection
 }
+// ---------- /stream: one multiplexed SSE connection per tab (spec §3) ----------
+// One connection carries every topic a tab needs. The Layer 6 spec already chose multiplexing
+// over a second stream for the same reason: SSE_MAX is small and this box runs hot. A tab now
+// costs one connection no matter how many views it shows.
+const streamClients = new Set(); // {res, topics:Set, id}
+let streamSeq = 0;
+// Ring buffer of the IN-FLIGHT turn only, per agent. A completed turn is already in chat.jsonl
+// and the client refetches it from /api/agents/<name>/chat, so buffering it twice would be
+// memory spent on data we already have.
+const chatBuf = new Map(); // agent -> {turn, deltas:[{seq,text}]}
+function streamWrite(c, ev, data, id) {
+  try {
+    if (id) c.res.write(`id: ${id}\n`);
+    c.res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch { /* a dead socket is cleaned up by its own close handler */ }
+}
+function streamSend(ev, data, topic, id) {
+  for (const c of streamClients) if (c.topics.has(topic)) streamWrite(c, ev, data, id);
+}
+function chatBroadcast(agent, turn, seq, delta) {
+  let b = chatBuf.get(agent);
+  if (!b || b.turn !== turn) { b = { turn, deltas: [] }; chatBuf.set(agent, b); }
+  b.deltas.push({ seq, text: delta });
+  streamSend('chat', { agent, turn, seq, delta }, `chat:${agent}`, `${agent}:${turn}:${seq}`);
+}
+function chatEnd(agent, turn, summary) {
+  chatBuf.delete(agent);
+  streamSend('chatend', { agent, turn, ...summary }, `chat:${agent}`);
+}
+async function streamView(req, res) {
+  if (streamClients.size >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many stream clients'); }
+  const url = new URL(req.url, 'http://x');
+  const topics = new Set((url.searchParams.get('topics') || 'fleet').split(',').map(s => s.trim()).filter(Boolean));
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  // writeHead() only QUEUES the status line/headers — Node doesn't put them on the wire until
+  // the first write()/end(). eventsView never needs this: its `last = ''` sentinel never equals
+  // the real payload, so its first tick always writes, flushing headers as a side effect. Here
+  // a topic set with no eager producer (chat-only, or unknown) writes NOTHING until the 25s
+  // heartbeat, so without this call the client gets no response — not even the 200 — for up to
+  // 25s. Found live: the chat view's own subscription is chat-only, so this is the common case.
+  res.flushHeaders();
+  const c = { res, topics, id: ++streamSeq };
+  streamClients.add(c);
+  let done = false, poll = null, hb = null;
+  const cleanup = () => { if (done) return; done = true; clearInterval(poll); clearInterval(hb); streamClients.delete(c); };
+  // registered BEFORE the first (slow) tick, for the same reason eventsView does it
+  req.on('aborted', cleanup); req.on('close', cleanup); res.on('close', cleanup);
+
+  // Replay: EventSource resends Last-Event-ID on reconnect. Replay only the in-flight turn.
+  const last = req.headers['last-event-id'];
+  if (last) {
+    const [agent, turnS, seqS] = String(last).split(':');
+    const b = chatBuf.get(agent);
+    if (b && String(b.turn) === turnS) {
+      for (const d of b.deltas) if (d.seq > Number(seqS)) {
+        streamWrite(c, 'chat', { agent, turn: b.turn, seq: d.seq, delta: d.text }, `${agent}:${b.turn}:${d.seq}`);
+      }
+    }
+  }
+
+  let lastFleet = '', lastAgents = '';
+  const tick = async () => {
+    if (done) return;
+    try {
+      if (topics.has('fleet')) {
+        const pl = JSON.stringify(fleetEventPayload(await fleetState()));
+        if (pl !== lastFleet) { lastFleet = pl; streamWrite(c, 'fleet', JSON.parse(pl)); }
+      }
+      if (topics.has('agents')) {
+        const list = await agentsIndex();
+        const pl = JSON.stringify(list.map(a => ({ name: a.name, state: a.last?.state ?? null, total: a.total, cost7d: a.cost7d })));
+        if (pl !== lastAgents) { lastAgents = pl; streamWrite(c, 'agents', JSON.parse(pl)); }
+      }
+    } catch { /* one bad tick must not kill the stream */ }
+  };
+  await tick();
+  if (done) return;
+  poll = setInterval(tick, 2000);
+  hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 25000);
+}
 // ---------- /fleet.js: dashboard live-update client island (Fleet Redesign §3) ----------
 // One hand-written file, zero deps, ~200 lines. EventSource + reconnect; patches the
 // server-rendered rows/cards in place by data-sid (see fleetRowHtml/fleetCardHtml/
@@ -3168,6 +3248,14 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
     if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res);
     if (p === '/events') return await eventsView(req, res);
+    if (p === '/stream') return await streamView(req, res);
+    // test-only delta injection, for scripts/stream-replay-check.mjs. Absent unless explicitly
+    // enabled, so it can never be reachable on the real dashboard.
+    if (process.env.MOWS_TEST_HOOKS === '1' && p === '/_test/chat') {
+      const q = url.searchParams;
+      chatBroadcast(q.get('agent'), Number(q.get('turn')), Number(q.get('seq')), q.get('delta'));
+      res.writeHead(204); return res.end();
+    }
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
     if (p === '/agents') return await agentsView(req, res);
     if (p.startsWith('/agents/')) {

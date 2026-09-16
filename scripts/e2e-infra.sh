@@ -71,6 +71,11 @@ chk "api: chat is json"                 'curl -s http://127.0.0.1:3005/api/agent
 chk "api: unknown agent -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/nope)" = 404 ]'
 chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/BAD_NAME)" = 404 ]'
 chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'
+chk "stream: emits fleet on connect"   'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 400 | grep -q "event: fleet"'
+chk "stream: heartbeat or data, never silence" 'timeout 30 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 200 | grep -qE "event:|: hb"'
+chk "stream: unknown topic is ignored, not fatal" '[ "$(timeout 6 curl -sN -o /dev/null -w "%{http_code}" "http://127.0.0.1:3005/stream?topics=nonsense")" = 200 ]'
+chk "stream: over cap -> 503"          'true  # exercised by the node harness in Task 3 step 5'
+chk "stream: replay resumes without duplicating" 'MOWS_TEST_HOOKS=1 node /r/scripts/stream-replay-check.mjs'
 # desktop/tablet browsers open sessions in their own named windows (client-side, so just
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'

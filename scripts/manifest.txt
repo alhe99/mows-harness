@@ -202,3 +202,4 @@ infra/dashboard/app/vendor/hooks.mjs
 infra/dashboard/app/vendor/htm.mjs
 infra/dashboard/app/vendor/marked.mjs
 infra/dashboard/app/vendor/preact.mjs
+scripts/stream-replay-check.mjs
