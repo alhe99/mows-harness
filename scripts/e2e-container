@@ -32,7 +32,9 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
 # systemd here only supplies the systemctl/systemd-analyze binaries; nothing runs as PID 1.
-apt-get install -y -qq git curl systemd tmux cron sudo python3 shellcheck ca-certificates gnupg jq >/dev/null 2>&1
+# python3-yaml: mows-agent-meta (Layer 6) is the only frontmatter validator agents get —
+# without it, lint/render/list/run all fail closed with "python3 yaml module missing".
+apt-get install -y -qq git curl systemd tmux cron sudo python3 python3-yaml shellcheck ca-certificates gnupg jq >/dev/null 2>&1
 # Ubuntu 24.04 ships node 18; the harness wants 20+ (see README Requirements).
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
 apt-get install -y -qq nodejs >/dev/null 2>&1

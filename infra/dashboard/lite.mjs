@@ -27,7 +27,7 @@ import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import net from 'node:net';
 import os from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -217,6 +217,10 @@ let tmuxInflight = null; // in-flight dedup: /events runs up to SSE_MAX concurre
 // after a restart (seen 2026-07-07 under the sandbox rollout) — a timeout here
 // silently blanks the live panel for 3s (cache), so keep headroom.
 const sh = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }, (e, out) => r(e ? '' : out)));
+// sh() collapses "errored" and "succeeded with empty stdout" to the same '' — fine for the
+// read-only callers above, but a caller that needs to know whether the command actually
+// worked (e.g. `systemctl start` on a unit that was never installed) needs the real result.
+const shOk = (cmd, args) => new Promise(r => execFile(cmd, args, { timeout: 5000 }, e => r(!e)));
 async function tmuxLive() {
   if (Date.now() - tmuxCache.t < 3000) return tmuxCache.list;
   if (tmuxInflight) return tmuxInflight;
@@ -1862,6 +1866,17 @@ details>*:not(summary){transform-origin:top center}
 details[open]>*:not(summary){animation:pop-in .18s ease}
 @keyframes pop-in{from{opacity:0;transform:translateY(-4px)}}
 }
+/* /agents (Layer 6, spec 2026-09-15 §8): state pill + run-now/pause/resume/stop actions.
+   .agent.card reuses the .lp list-panel look (var(--card)/var(--r-lg)) as a clickable row. */
+.agent.card{display:block;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:10px 12px;margin:4px 0 10px;color:inherit}
+.agent.card:hover{background:var(--card2);border-color:var(--bd2)}
+.agent.card .muted{display:block;font-size:12px;margin-top:4px}
+.pill{padding:1px 6px;border-radius:9px;font-size:.75em}
+.st-working{background:#2563eb33}.st-done{background:#16a34a33}
+.st-failed,.st-stalled,.st-budget_exceeded{background:#dc262633}
+.st-never{background:#71717a33}
+.actions{display:flex;gap:8px;margin:8px 0}.actions form{display:inline}
+.runs li{margin:4px 0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2013,7 +2028,8 @@ function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false,
 <a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
 <a class="${tab === 'system' ? 'on' : ''}" href="/system">System</a>
-<a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a></nav>`;
+<a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a>
+<a class="${tab === 'agents' ? 'on' : ''}" href="/agents">Agents</a></nav>`;
   const hdr = `<header class="hdr navdup">
 <div class="hdl"><span class="hlogo" aria-hidden="true">&gt;_</span><div class="hcol"><div class="htitle">mows control</div><div class="hsub">Connected · ${esc(host || os.hostname())}</div></div></div>
 ${pnav}
@@ -2022,10 +2038,12 @@ ${pnav}
 <a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">${ICO.list}</span>Sessions</a>
 <a class="tb${tab === 'history' ? ' on' : ''}" href="/history"><span class="ti">${ICO.history}</span>History</a>
 <a class="tb${tab === 'system' ? ' on' : ''}" href="/system"><span class="ti">${ICO.activity}</span>System</a>
-<a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a></nav>`;
+<a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
+<a class="tb${tab === 'agents' ? ' on' : ''}" href="/agents"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
   // terminal is an ACTION (opens the ttyd session picker), not a content page — kept as a
-  // persistent floating utility button (every tab, every width) instead of a 5th nav tab
-  // (gap #5: nav must read sessions·history·system·device, exactly 4).
+  // persistent floating utility button (every tab, every width) instead of a nav tab of its
+  // own (gap #5: nav read sessions·history·system·device, exactly 4, until the Agents tab
+  // (2026-09-15) made it five content tabs — terminal is still a FAB, never a 6th).
   const termFab = `<a class="termfab" href="${termHref('menu', '')}" title="open terminal" aria-label="open terminal">${ICO.terminal}</a>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
@@ -2034,7 +2052,7 @@ ${pnav}
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
-<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1']"}}]},"eagerness":"moderate"}]}</script>
+<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun]"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
 ${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
@@ -2727,6 +2745,253 @@ ${pgr}${msgs || '<p class="muted">no displayable messages.</p>'}${pgr}`;
   send(req, res, 200, page(`${sid8} · ${projName(e.proj)}`, body, '', 'sessions', '', false, null, req.headers.host));
 }
 
+// ---------- /agents: Layer 6 purpose-scoped agents (spec 2026-09-15 §8) ----------
+// Data = the run records mows-agent writes; rescanned per request behind a 3s cache, NEVER
+// at startup (discoverAccounts() is startup-only and the spec calls that staleness out).
+const AGENTS_STATE = TMUX_HOME + '/.local/state/mows-agents';
+// Mirrors agents/bin/mows-agent-meta's AGENT_NAME_RE exactly — the name doubles as a systemd
+// instance name, a unit filename, a config key (WEBHOOK_SECRET_<NAME>) and this URL path
+// segment. Widening either pattern without the other breaks injectivity of the config-key
+// mapping (webhookView below computes it as name.upper().replace('-','_')): admitting
+// underscores would make "a-b" and "a_b" collide on WEBHOOK_SECRET_A_B, letting one agent's
+// webhook secret authenticate another agent's webhook. Keep both patterns identical.
+const AGENT_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const RUN_RE = /^\d{8}-\d{6}-\d+$/;
+const AGENT_BAD = new Set(['stalled', 'failed', 'budget_exceeded']);
+const agentsCache = { t: 0, v: [] };
+async function agentsIndex() {
+  if (Date.now() - agentsCache.t < 3000) return agentsCache.v;
+  const out = [];
+  let names = []; try { names = await fsp.readdir(AGENTS_STATE); } catch {}
+  for (const name of names) {
+    if (!AGENT_RE.test(name)) continue;
+    const dir = `${AGENTS_STATE}/${name}`;
+    let runs = []; try { runs = (await fsp.readdir(`${dir}/runs`)).filter(r => RUN_RE.test(r)).sort().reverse(); } catch {}
+    const recs = [];
+    for (const r of runs.slice(0, 20)) {
+      try { recs.push({ ...JSON.parse(await fsp.readFile(`${dir}/runs/${r}/status.json`, 'utf8')), run_id: r }); } catch {}
+    }
+    const last = recs[0] || null;
+    // a `working` record whose runner pid is gone is a crash, not a live run
+    if (last && last.state === 'working' && last.pid) { try { process.kill(last.pid, 0); } catch { last.state = 'failed'; last.crashed = true; } }
+    const week = Date.now() - 7 * 864e5;
+    const cost7d = recs.filter(x => Date.parse(x.started_at) > week).reduce((a, x) => a + (+x.cost_usd || 0), 0);
+    let events = []; try { events = readFileSync(`${dir}/events.log`, 'utf8').trim().split('\n').slice(-5); } catch {}
+    out.push({ name, last, recs, cost7d, total: runs.length, events });
+  }
+  const rank = s => s === 'working' ? 0 : AGENT_BAD.has(s) ? 1 : 2;
+  out.sort((a, b) => rank(a.last?.state) - rank(b.last?.state)
+    || (Date.parse(b.last?.last_event_at || 0) || 0) - (Date.parse(a.last?.last_event_at || 0) || 0));
+  agentsCache.t = Date.now(); agentsCache.v = out; return out;
+}
+// Task 7's render_service (agents/bin/mows-agent cmd_render) emits ONE timer unit per cron
+// trigger: the first is the bare `mows-agent-<name>.timer`, the second+ are suffixed
+// `-2`, `-3`, ... with NO delimiter before the digits (see its `sfx="-$ci"` logic) — an agent
+// can genuinely have several. Pausing/resuming/reporting against only the bare unit (the
+// fix's original shape) is wrong for any multi-timer agent: mask would silently leave the
+// second timer armed while the page claimed "paused". agentTimers() enumerates every unit
+// that belongs to this agent instead of guessing one name.
+//
+// Known, inherited limitation: because Task 7 uses no delimiter, an agent LITERALLY named
+// "<name>-2" is structurally indistinguishable from "<name>"'s second cron timer — that
+// ambiguity is in the render script's own naming scheme, not introduced here, and this
+// dashboard has no information (short of re-parsing every agent's own trigger count) that
+// could resolve it. Fine for the common case; flagged rather than silently swept under.
+async function agentTimers(name) { // -> [{unit, masked, next}], bare unit first then -2, -3, ...
+  const esc_re = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownRe = new RegExp(`^mows-agent-${esc_re}(-\\d+)?\\.timer$`);
+  // `list-unit-files` (unlike `list-timers` or `is-enabled`) reliably reports a MASKED unit's
+  // state in its own STATE column and always exits 0 — verified live against this box's own
+  // masked ttyd.service (`systemctl list-unit-files 'ttyd*' --no-legend` -> "ttyd.service
+  // masked enabled", exit 0). One call gives us both "does this unit exist" and "is it
+  // masked" without the exit-code trap `sh()`'s error-swallowing set for the single-timer
+  // version of this fix (`is-enabled` exits 1 for the perfectly normal "masked" state).
+  const out = await sh('systemctl', ['list-unit-files', `mows-agent-${name}*.timer`, '--no-legend']);
+  const units = (out || '').trim().split('\n').filter(Boolean)
+    .map(l => l.trim().split(/\s+/))
+    .filter(([u]) => ownRe.test(u))
+    .map(([u, state]) => ({ unit: u, masked: state === 'masked', next: '' }))
+    // bare unit first, then -2, -3, ... by NUMBER — a plain string sort puts "-2.timer" before
+    // ".timer" (ASCII '-' < '.'), which put the wrong timer's NEXT first when this was tried
+    // live against a real multi-timer fixture; extract the suffix (0 for the bare unit) instead.
+    .sort((a, b) => (+(a.unit.match(/-(\d+)\.timer$/)?.[1] || 0)) - (+(b.unit.match(/-(\d+)\.timer$/)?.[1] || 0)));
+  for (const t of units) {
+    if (t.masked) continue; // masked: no schedule to report, and list-timers may not show it anyway
+    const lt = await sh('systemctl', ['list-timers', '--all', '--no-legend', t.unit]);
+    const l = (lt || '').trim().split('\n')[0] || '';
+    t.next = l ? l.split(/\s+/).slice(0, 4).join(' ') : '';
+  }
+  return units;
+}
+// Collapses N timer rows into one honest status. 'mixed' exists specifically so the page
+// can never claim a clean paused/active state when the timers disagree (spec ruling,
+// review round 1) — showing "N/M paused" instead of picking a side that's half true.
+function summarizeTimers(timers) {
+  if (!timers.length) return { state: 'none', label: 'no timer' };
+  const pausedN = timers.filter(t => t.masked).length;
+  if (pausedN === timers.length) return { state: 'paused', label: timers.length > 1 ? `paused (${timers.length} timers)` : 'paused' };
+  if (pausedN === 0) {
+    const next = (timers.find(t => t.next) || timers[0]).next || '—';
+    return { state: 'active', label: timers.length > 1 ? `${next} (+${timers.length - 1} more)` : next };
+  }
+  return { state: 'mixed', label: `mixed — ${pausedN}/${timers.length} timers paused` };
+}
+const agentPill = s => `<span class="pill st-${esc(s || 'never')}">${esc(s || 'never')}</span>`;
+const usd = n => '$' + (+n || 0).toFixed(2);
+// Ceiling for the whole `mows-agent residents --json` call. Must stay comfortably ABOVE
+// cmd_residents' own internal budget (agents/bin/mows-agent, RESIDENTS_BUDGET_SEC = 16s
+// total, adaptively split across however many profiles are discovered) so a normal poll
+// always finishes before this fires — if the two ever cross, a slow-but-real poll would
+// get killed here and misreport as "poll failed" instead of returning real data.
+const RESIDENTS_TIMEOUT_MS = 20000;
+async function agentsView(req, res) {
+  const list = await agentsIndex();
+  const rows = list.map(a => `<a class="agent card" href="/agents/${esc(a.name)}">
+<b>${esc(a.name)}</b> ${agentPill(a.last?.state)}
+<span class="muted">${a.last ? rel(Date.parse(a.last.last_event_at)) : 'never ran'} · ${a.total} runs · 7d ${usd(a.cost7d)}</span></a>`).join('');
+  // Native background sessions: the daemon's own, not mows-agent's — read-only display,
+  // never an action surface (spec D2, Phase 6). mows-agent residents already excludes
+  // interactive sessions and claude-mem observer sessions (cwd prefix).
+  //
+  // runAs resolves '' on ANY error, including a timeout — indistinguishable from a genuine
+  // empty response by content alone. JSON.parse('') throws, so we use "did parsing succeed"
+  // as the failure signal instead of collapsing both into an empty list: a poll that timed
+  // out or hit a missing/broken mows-agent must say so, never render as "0 sessions, none"
+  // (byte-identical to a real quiet box otherwise — the bug this comment is guarding against).
+  let residentsData = null;
+  try { residentsData = JSON.parse(await runAs([], 'mows-agent', ['residents', '--json'], RESIDENTS_TIMEOUT_MS)); } catch {}
+  const residentsFailed = residentsData === null;
+  const resRows = (residentsData || []).flatMap(p => p.agents.map(a => `<li><b>${esc(a.name || a.id)}</b> ${agentPill(a.state)} <span class="muted">${esc(p.profile)} · ${esc(a.waitingFor || '')} · ${esc(a.cwd || '')}</span></li>`));
+  const fold = residentsFailed
+    ? `<details><summary>Native background sessions — poll failed</summary><ul><li class="muted">mows-agent residents timed out or errored; not necessarily empty, try reloading</li></ul></details>`
+    : `<details><summary>Native background sessions (${resRows.length})</summary><ul>${resRows.join('') || '<li class="muted">none</li>'}</ul></details>`;
+  const body = `<h1><a href="/">← sessions</a> <span class="muted">· agents</span></h1>
+${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}
+${fold}`;
+  send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentDetailView(req, res, name) {
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const a = (await agentsIndex()).find(x => x.name === name);
+  if (!a) { res.writeHead(404); return res.end('no such agent'); }
+  const timers = await agentTimers(name);
+  const tsum = summarizeTimers(timers);
+  const back = `/agents/${esc(name)}`;
+  const btn = (act, label) => `<form method="post" action="/a/agent-${act}"><input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}"><button>${label}</button></form>`;
+  // 'mixed' (some of this agent's timers masked, some not) shows BOTH affordances — pause
+  // acts on every remaining unpaused timer, resume on every masked one — rather than
+  // guessing which single button the honest-but-ambiguous state should offer (review round 1).
+  const timerBtns = tsum.state === 'paused' ? btn('resume', 'Resume')
+    : tsum.state === 'mixed' ? btn('pause', 'Pause') + btn('resume', 'Resume')
+    : btn('pause', 'Pause');
+  const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
+  const body = `<h1><a href="/agents">← agents</a> <span class="muted">· ${esc(name)}</span></h1>
+<p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(tsum.label)}</span></p>
+<div class="actions">${btn('run', 'Run now')}${timerBtns}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
+<h2>Runs</h2><ul class="runs">${runs || '<li class="muted">none</li>'}</ul>
+<h2>Events</h2><pre class="events">${esc(a.events.join('\n') || 'none')}</pre>`;
+  send(req, res, 200, page(`${name} · agents`, body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentRunView(req, res, name, run) {
+  if (!AGENT_RE.test(name) || !RUN_RE.test(run)) { res.writeHead(404); return res.end(); }
+  const dir = `${AGENTS_STATE}/${name}/runs/${run}`;
+  let status = null, text = '';
+  try { status = JSON.parse(await fsp.readFile(`${dir}/status.json`, 'utf8')); } catch { res.writeHead(404); return res.end('no such run'); }
+  try {
+    for (const l of (await fsp.readFile(`${dir}/stream.jsonl`, 'utf8')).split('\n')) {
+      if (!l.includes('"type":"assistant"')) continue;
+      try { for (const c of JSON.parse(l).message?.content || []) if (c.type === 'text') text += c.text + '\n\n'; } catch {}
+    }
+  } catch {}
+  // .mdv (the /md route's RENDERED-markdown style) has no whitespace handling of its own —
+  // wrapping raw escaped text in it collapsed every paragraph into one run-on block (review
+  // round 1). Reuse .m/.mh/pre instead: the exact markup detailView already uses for a
+  // transcript's claude messages, whose plain `pre{white-space:pre-wrap}` (global rule)
+  // preserves paragraph breaks. Escaped text through pre-wrap, never through mdHtml() — this
+  // is raw model output, and running it through a markdown renderer would hand a page whose
+  // only job is "show what the agent said" a markdown/HTML injection surface for no reason.
+  const body = `<h1><a href="/agents/${esc(name)}">← ${esc(name)}</a> <span class="muted">· ${esc(run)}</span></h1>
+<pre class="status">${esc(JSON.stringify(status, null, 1))}</pre>
+<div class="m claude"><div class="mh"><b>claude</b></div><pre>${esc(text || '(no assistant text)')}</pre></div>`;
+  send(req, res, 200, page(`${run} · ${name}`, body, '', '', 'agents', false, null, req.headers.host));
+}
+async function agentAction(req, res, act) {
+  if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
+  // same-origin guard, same as every other mutating POST route (see line ~32)
+  const host = req.headers.host || '';
+  if (!sameOrigin(req, host)) { res.writeHead(403); return res.end('bad origin'); }
+  const b = await readBody(req);
+  const name = b.name || '';
+  const bk = b.back || '/agents';
+  const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
+  if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
+  if (act === 'run') {
+    // Honest failure, not a silent redirect that looks like success: the shared
+    // mows-agent@.service unit may never have been installed (SETUP.md's Triggers step is a
+    // manual `sudo install`), and `systemctl start` on a missing unit fails immediately.
+    if (!(await shOk('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]))) {
+      res.writeHead(409); return res.end('could not start mows-agent@' + name + '.service — is the unit installed? see agents/SETUP.md Triggers');
+    }
+  }
+  else if (act === 'pause' || act === 'resume') {
+    // every timer belonging to this agent (bare + -2, -3, ...), not just the bare unit —
+    // see agentTimers()'s header comment (review round 1: pause/resume ignored suffixed
+    // timers, so a 2-schedule agent kept running under a page that claimed it was paused).
+    // Fallback to the bare unit name if enumeration finds nothing: mask/unmask on a unit
+    // with no on-disk file is a harmless no-op, and it's a safety net if `list-unit-files`
+    // ever comes back empty for a unit that genuinely exists.
+    const timers = await agentTimers(name);
+    const units = timers.length ? timers.map(t => t.unit) : [`mows-agent-${name}.timer`];
+    for (const u of units) {
+      if (act === 'pause') await sh('systemctl', ['mask', '--now', u]);
+      else { await sh('systemctl', ['unmask', u]); await sh('systemctl', ['start', u]); }
+    }
+  }
+  else if (act === 'stop') {
+    const a = (await agentsIndex()).find(x => x.name === name);
+    // Kill claude's own process group directly (claude_pid is its own group leader, per
+    // mows-agent's `setsid`) — SIGTERM to the runner pid does NOT work: mows-agent's `trap
+    // … TERM` only runs between commands, and the runner sits foreground in `tail | tail_loop`
+    // for the whole run, so the trap never gets scheduled until claude has already exited on
+    // its own (verified: after signalling exactly this way, claude was still alive and the
+    // record still said "working"). Killing the runner pid too is a harmless, no-op-once-dead
+    // secondary signal, not what actually stops the run.
+    if (a?.last?.state === 'working' && a.last.claude_pid > 0) { try { process.kill(-a.last.claude_pid, 'SIGTERM'); } catch {} }
+    if (a?.last?.state === 'working' && a.last.pid) { try { process.kill(a.last.pid, 'SIGTERM'); } catch {} }
+  } else { res.writeHead(404); return res.end(); }
+  agentsCache.t = 0;
+  res.writeHead(303, { location: back }); res.end();
+}
+
+// ---------- /wh/<name>: webhook trigger (spec §6). HMAC is the auth; the body is discarded. ----------
+const AGENTS_CFG = TMUX_HOME + '/.config/mows-agents/config';
+function agentsConfig() { // KEY=value lines only; values may be quoted. Read per request: secrets rotate.
+  const out = {};
+  try { for (const l of readFileSync(AGENTS_CFG, 'utf8').split('\n')) { const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) out[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, '$2'); } } catch {}
+  return out;
+}
+async function webhookView(req, res, name) {
+  if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const secret = agentsConfig()['WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_')];
+  if (!secret) { res.writeHead(404); return res.end(); } // same response as a bad name: no agent enumeration
+  const chunks = []; let n = 0;
+  for await (const c of req) { n += c.length; if (n > 1e6) { res.writeHead(413); return res.end(); } chunks.push(c); }
+  const want = Buffer.from('sha256=' + createHmac('sha256', secret).update(Buffer.concat(chunks)).digest('hex'));
+  const got = Buffer.from(String(req.headers['x-mows-signature'] || req.headers['x-hub-signature-256'] || ''));
+  if (got.length !== want.length || !timingSafeEqual(got, want)) { res.writeHead(401); return res.end('bad signature'); }
+  // one in-flight run per agent is enforced by mows-agent itself (refuses with exit 6); the unit's
+  // SuccessExitStatus covers that, so a burst of webhooks is safe.
+  // A valid signature is not the same thing as a working trigger: the shared unit may never
+  // have been installed (SETUP.md's Triggers step is a manual `sudo install`), and answering
+  // 202 regardless would tell a caller (GitHub, retrying webhooks) that the run was queued
+  // when nothing happened at all.
+  if (!(await shOk('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]))) {
+    res.writeHead(503, { 'content-type': 'text/plain' }); return res.end('agent unit not installed');
+  }
+  res.writeHead(202, { 'content-type': 'text/plain' }); res.end('queued');
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -2735,6 +3000,13 @@ const server = http.createServer(async (req, res) => {
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
     if (p === '/events') return await eventsView(req, res);
+    if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
+    if (p === '/agents') return await agentsView(req, res);
+    if (p.startsWith('/agents/')) {
+      const [name, run] = p.slice(8).split('/');
+      return run ? await agentRunView(req, res, name, run) : await agentDetailView(req, res, name);
+    }
+    if (p.startsWith('/a/agent-')) return await agentAction(req, res, p.slice(9));
     if (p === '/fleet.js') {
       const buf = Buffer.from(FLEET_JS);
       const etag = '"' + crc32(buf).toString(16) + '"';

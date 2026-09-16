@@ -30,7 +30,7 @@ cd mows-harness && ./install.sh --claude
 That's the laptop install — config, skills, and commands only. Add `--watchdogs` on a server
 you leave running, `--all` for the full web cockpit.
 
-**Five layers, install any subset:**
+**Six layers, install any subset:**
 
 - **claude** — `CLAUDE.md`, 9 commands, 13 skills, an agent, settings + MCP templates
 - **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
@@ -41,6 +41,9 @@ you leave running, `--all` for the full web cockpit.
   git worktrees so parallel sessions never fight over one checkout
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
   `claude-quota`, `agy-notify` → `~/.local/bin`
+- **agents** — purpose-scoped agents that run unattended: one Claude Code agent file + a
+  `mows:` policy block, budgets per run/day/account, systemd timers and HMAC webhooks as
+  triggers, Discord escalation, an `/agents` dashboard tab
 
 ## Why you'd want this
 
@@ -85,6 +88,12 @@ is the on-demand QA browser (Xvfb + Chrome over noVNC) with remote keys — both
 agent drive a real UI, or taking over yourself.
 
 <img src="docs/assets/device.png" alt="The Device view, Mobile segment: a left rail with the Mobile/Web toggle, an Android Emulator card (state STOPPED, adb target), Start Emulator / Refresh / Console controls — and a dashed stage on the right reading 'Awaiting stream…'." width="820">
+
+**Agents** — purpose-scoped Claude Code agents that run unattended, on a timer, a filesystem
+path, or an HMAC-signed webhook, each capped by its own per-run/per-day/account-quota budget.
+The `/agents` tab lists every one with its last state and 7-day spend, a detail page per agent
+with its run history and timer status, and run/pause/resume/stop actions; a failed or
+budget-capped run escalates to Discord if configured. See [`agents/SETUP.md`](agents/SETUP.md).
 
 **On a phone** it's a PWA: bottom tab bar, floating terminal button, whole-card tap targets,
 pull-to-refresh, and each card's ⋯ menu as a floating popover — pause, rename inline, kill
@@ -154,8 +163,9 @@ running anything.
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `ccname`, `ccswap`, `ccwt`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
 | **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota`, `agy-notify` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
+| **agents** | `--agents` | `mows-agent`, `mows-agent-meta` → `~/.local/bin`; config seeded at `~/.config/mows-agents/config`; example agent seeded at `~/.claude/agents/harness-reviewer.md` | No — config and example never clobbered |
 
-All five are idempotent and independent. Re-running with a different flag set is safe.
+All six are idempotent and independent. Re-running with a different flag set is safe.
 
 ## Decide which layers to install
 
@@ -381,8 +391,16 @@ flowchart TB
         AGY["ag / agy-run / agy-handoff / agy-gate<br/>claude-quota (the 70% signal)"]
     end
 
+    subgraph Layer6["Layer 6: agents (purpose-scoped, unattended)"]
+        MAGENT["mows-agent: lint / run / list / prune / render / residents<br/>agents/*.md + mows: policy block"]
+    end
+
     subgraph RCUNITS["systemd: claude-remote@profile / claude-remote-control@profile"]
         RC["claude remote-control processes"]
+    end
+
+    subgraph AGENTUNIT["systemd: mows-agent@name.service, timer/path-triggered or webhook-started"]
+        ARUN["one bounded claude -p --agent name per run"]
     end
 
     subgraph Layer2["Layer 2: watchdogs (cron, every box)"]
@@ -412,6 +430,11 @@ flowchart TB
     AGY -.->|quota signal per profile| PROFILE
     DASH -.->|reads transcripts, drives tmux| RC
     WD -->|supervises, recovers| RC
+    MAGENT -->|systemctl start --no-block| ARUN
+    CFG -.->|CLAUDE_CONFIG_DIR| ARUN
+    DASH -.->|/agents tab: 4 actions| MAGENT
+    CADDY -->|/wh/*, HMAC-gated, no OAuth| DASH
+    DASH -.->|verified webhook: systemctl start| ARUN
 ```
 
 ## What each layer contains
@@ -440,13 +463,18 @@ flowchart TB
   `agy-handoff`/`agy-gate` worktree handoffs with a verify→review→auto-merge policy, and
   `claude-quota`, the per-account usage signal behind the 70% delegation rule. See
   [`agy/SETUP.md`](agy/SETUP.md).
+- **`agents/`** — purpose-scoped agents that run unattended: `mows-agent` owns policy (lint,
+  budget, refusal, run records, escalation, pruning) while the Claude daemon owns the process
+  itself; systemd timers/path units and HMAC-signed webhooks trigger a run, staged into
+  `./rendered/` and never installed or enabled by `install.sh`. See
+  [`agents/SETUP.md`](agents/SETUP.md).
 
 Deeper detail — port map, the profile-vs-agent model, watchdog rationale, known operational
 caveats — is in [`docs/architecture.md`](docs/architecture.md). Attributions:
 [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md). Per-module guides: [`infra/SETUP.md`](infra/SETUP.md),
 [`fleet/SETUP.md`](fleet/SETUP.md), [`watchdogs/SETUP.md`](watchdogs/SETUP.md),
 [`infra/os/SETUP.md`](infra/os/SETUP.md), [`infra/qa-watch/SETUP.md`](infra/qa-watch/SETUP.md),
-[`agy/SETUP.md`](agy/SETUP.md).
+[`agy/SETUP.md`](agy/SETUP.md), [`agents/SETUP.md`](agents/SETUP.md).
 
 ## The plugin route (skills/commands/agents only)
 

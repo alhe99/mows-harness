@@ -184,3 +184,13 @@ watchdogs/bin/reap-idle-claude
 watchdogs/bin/reap-mcp-orphans
 watchdogs/crontab.example
 watchdogs/logrotate.d/claude-harness
+docs/superpowers/plans/2026-09-15-agents-layer.md
+docs/superpowers/specs/2026-09-15-agents-layer-design.md
+agents/bin/mows-agent
+agents/bin/mows-agent-meta
+scripts/e2e-agents.sh
+agents/examples/harness-reviewer.md
+agents/config.example
+scripts/live-agents.sh
+docs/qa/journeys/agents-tab.md
+agents/SETUP.md

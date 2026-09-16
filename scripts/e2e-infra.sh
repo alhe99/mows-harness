@@ -24,6 +24,33 @@ DEMO=demo; DH="/home/$DEMO"   # built, not literal: preflight forbids bare home 
 mkdir -p $DH/.claude/projects/-demo-api
 printf '{"type":"user","message":{"role":"user","content":"demo"},"timestamp":"2026-08-08T00:00:00Z"}\n' \
   > $DH/.claude/projects/-demo-api/aaaa1111-demo.jsonl
+mkdir -p "$DH/.config/mows-agents"
+{ echo 'WEBHOOK_SECRET_HARNESS_REVIEWER=s3cret'
+  # same secret VALUE as harness-reviewer's, deliberately — see the a_b case below, which
+  # depends on one signature being valid against both keys so the only variable is the name.
+  echo 'WEBHOOK_SECRET_A_B=s3cret'; } > "$DH/.config/mows-agents/config"
+# The dashboard's own systemctl calls (webhook trigger, run-now) need a real init system to
+# succeed against, which this bare `docker run` container never boots (no PID 1 systemd) —
+# confirmed directly: `systemctl start foo.service` here always fails with "System has not
+# been booted with systemd as init system (PID 1). Can't operate.", regardless of whether the
+# unit exists. That's not what the webhook checks below are testing (they're testing the HMAC
+# accept/reject path), so stub systemctl the same way scripts/e2e-agents.sh does: a shim that
+# logs its invocation and exits 0, put ahead of the real binary on PATH before the dashboard
+# process starts — execFile resolves a bare command through PATH at spawn time, which is the
+# env this script hands the node process (no per-call env override in lite.mjs).
+mkdir -p /shim
+cat > /shim/systemctl <<'S'
+#!/usr/bin/env bash
+echo "systemctl $*" >> /tmp/systemctl.log
+# /shim/FAIL is a filesystem flag, not an env var: the dashboard is a long-running process
+# started once below, so a later test that needs systemctl to start failing can't do it
+# through an env var (the child's env is fixed at spawn) — but every systemctl call is a
+# fresh execFile, so a file check here is live for the rest of this script.
+[ -f /shim/FAIL ] && [ "${1:-}" = start ] && exit 1
+exit 0
+S
+chmod +x /shim/systemctl
+export PATH="/shim:$PATH"
 HOME=$DH node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
@@ -37,6 +64,49 @@ chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
+chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
+SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"
+chk "webhook: good HMAC -> 202"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Hub-Signature-256: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+chk "webhook: bad HMAC -> 401"       '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: sha256=00" --data-binary "{}" http://127.0.0.1:3005/wh/harness-reviewer)" = 401 ]'
+chk "webhook: no secret -> 404"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1:3005/wh/nobody)" = 404 ]'
+chk "webhook: GET -> 405"            '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/wh/harness-reviewer)" = 405 ]'
+# name-gate regression (Task 9 coverage gap, fix round 1): AGENT_RE must reject anything
+# that isn't ^[a-z0-9][a-z0-9-]{0,63}$ *before* the name is ever used to build a unit name
+# or a config key. The endpoint returns a byte-identical 404 for "no such agent" and for
+# "agent exists, no secret configured" (deliberate anti-enumeration, verified in Task 9) —
+# which means a malformed name with NO secret configured can never prove the gate did
+# anything: the same 404 would come back with AGENT_RE deleted outright. To actually
+# discriminate, the malformed name below has ITS OWN configured secret with the SAME
+# secret VALUE as harness-reviewer's, so $SIG (already computed above) is a byte-for-byte
+# valid signature against both keys — the only thing that can differ between the two
+# requests is whether AGENT_RE accepts the name.
+#
+# /wh/../etc is NOT a case of this: a WHATWG URL collapses ".." during parsing, so Node's
+# `new URL(req.url, 'http://x')` normalizes the path to /etc before routing ever sees
+# "/wh/" — confirmed directly: `node -e "console.log(new URL('/wh/../etc','http://x').pathname)"`
+# prints /etc. That 404 comes from the generic route fallback, not from AGENT_RE, so it is
+# a real defense (traversal never reaches webhookView) but not evidence about the pattern
+# gate specifically — recorded here, not asserted as a gate test.
+chk "webhook: malformed name (_) rejected despite a valid secret+signature" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/a_b)" = 404 ]'
+chk "webhook: the exact same signature IS valid for a well-formed name" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
+# @ is outside AGENT_RE too, but WEBHOOK_SECRET_A@B can never parse as a config key under
+# agentsConfig()'s own ^([A-Z0-9_]+)=(.*)$ — no secret can be provisioned for it, so this
+# can only ever prove "an unconfigured bad name still 404s", the same thing AGENT_RE
+# deleted would also do. Left as a sanity check, not gate evidence.
+chk "webhook: name with @ -> 404 (sanity only, not gate evidence)" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/a@b")" = 404 ]'
+# finding-8 proof: a valid signature must not still get 202 once systemctl actually fails —
+# otherwise the fix that made the dashboard stop lying about `systemctl start` is itself
+# unproven by this suite (this branch has already found four assertions that passed against
+# the defect they were meant to catch; this one must not be a fifth). Same request as the
+# "good HMAC -> 202" check above; only the shim's behavior changes.
+touch /shim/FAIL
+chk "webhook: systemctl failure -> honest 503, never 202" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 503 ]'
+rm -f /shim/FAIL
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'
@@ -53,6 +123,7 @@ chk "rendered Caddyfile adapts"  'caddy validate --config /tmp/Caddyfile.test --
 caddy start --config /tmp/Caddyfile.test --adapter caddyfile >/tmp/caddy.log 2>&1
 sleep 3
 chk "caddy listening :80" 'curl -s -o /dev/null http://127.0.0.1:80/'
+chk "caddy: /wh/* bypasses the auth gate" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1/wh/nobody)" = 404 ]'
 
 echo "### THE ACTUAL CLAIM: everything is gated behind Google sign-in"
 LOC=$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1/)

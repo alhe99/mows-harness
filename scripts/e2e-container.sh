@@ -22,7 +22,7 @@ git config --global --add safe.directory "$PWD" 2>/dev/null
 chk "preflight ALL CLEAN" "./scripts/preflight.sh | tail -1 | grep -q 'ALL CLEAN'"
 
 echo "### Part 2 step 2 — install (non-root, as a real adopter)"
-./install.sh --claude --watchdogs --fleet --agy --non-interactive > /tmp/inst.log 2>&1
+./install.sh --claude --watchdogs --fleet --agy --agents --non-interactive > /tmp/inst.log 2>&1
 chk "install.sh exit 0" "[ $? -eq 0 ]"
 grep -q 'WARN' /tmp/inst.log && echo "  (WARN lines present, expected for unset optional vars)"
 
@@ -30,8 +30,8 @@ echo "### Part 2 step 3 — the README's own verification commands"
 chk "CLAUDE.md installed"      "[ -f $HOME/.claude/CLAUDE.md ]"
 chk "settings.json installed"  "[ -f $HOME/.claude/settings.json ]"
 chk "mcp-interactive.json"     "[ -f $HOME/.claude/mcp-interactive.json ]"
-chk "skills == 13"             '[ "$(ls $HOME/.claude/skills | wc -l)" = 13 ]'
-chk "commands == 9"            '[ "$(ls $HOME/.claude/commands | wc -l)" = 9 ]'
+chk "skills == repo count"     '[ "$(ls $HOME/.claude/skills | wc -l)" = "$(ls /src/claude/skills | wc -l)" ]'
+chk "commands == repo count"   '[ "$(ls $HOME/.claude/commands | wc -l)" = "$(ls /src/claude/commands | wc -l)" ]'
 chk "settings.json parses"     "python3 -m json.tool $HOME/.claude/settings.json"
 chk "agents installed"         "[ -d $HOME/.claude/agents ]"
 chk "rules installed"          "[ -f $HOME/.claude/rules/context7.md ]"
@@ -152,6 +152,17 @@ if BIN_DIR="$HOME/.local/bin" REAP="$HOME/.local/bin/reap-idle-claude" bash scri
 else
   no "agy scenario matrix"; tail -20 /tmp/agy-matrix.log
 fi
+
+echo "### agents layer"
+chk "mows-agent installed"             "[ -x $HOME/.local/bin/mows-agent ]"
+chk "agents config seeded 600"         "[ \"\$(stat -c %a $HOME/.config/mows-agents/config)\" = 600 ]"
+chk "harness-reviewer seeded"          "[ -f $HOME/.claude/agents/harness-reviewer.md ]"
+mkdir -p "$HOME/Documents/Projects/mows-harness"   # the example's workdir must exist for lint
+chk "mows-agent lint --all clean"      "mows-agent lint --all"
+chk "mows-agent list shows example"    "mows-agent list | grep -q '^harness-reviewer'"
+chk "rendered timer staged, not enabled" "[ -f rendered/mows-agent-harness-reviewer.timer ] && ! systemctl is-enabled mows-agent-harness-reviewer.timer 2>/dev/null"
+echo "### agents hermetic matrix (installed copies)"
+if BIN_DIR="$HOME/.local/bin" bash scripts/e2e-agents.sh > /tmp/agents-matrix.log 2>&1; then ok "e2e-agents all green"; else no "e2e-agents (see /tmp/agents-matrix.log)"; tail -20 /tmp/agents-matrix.log; fi
 
 echo "### Part 2 step 4 — crontab recipe from the README"
 { crontab -l 2>/dev/null; sed "s|\$HOME|$HOME|g" watchdogs/crontab.example | grep -v '^#'; } | crontab -

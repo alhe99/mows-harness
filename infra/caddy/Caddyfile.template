@@ -72,6 +72,16 @@
     }
 }
 
+# --- /wh/*: Layer 6 webhook ingress (spec §6). GitHub cannot log in through the Google
+# gate, so this is the one path on the site deliberately outside it — the HMAC signature
+# webhookView checks in lite.mjs is the entire authentication. Import this BEFORE gauth
+# in every site block that proxies the dashboard, same rule as (sse) below. ---
+(webhook) {
+    handle /wh/* {
+        reverse_proxy 127.0.0.1:3005
+    }
+}
+
 # --- PWA statics skip the auth gate: OS installers fetch manifest/icons/sw without
 # cookies; they contain nothing private (an app name + a drawn icon) ---
 (pwa) {
@@ -113,6 +123,7 @@
     encode @nosse zstd gzip
     route {
         import pwa
+        import webhook
         import gauth
         import vncproxy
         import droidproxy
@@ -153,6 +164,7 @@
     encode @nosse zstd gzip
     route {
         import pwa
+        import webhook
         import gauth
         import vncproxy
         import droidproxy

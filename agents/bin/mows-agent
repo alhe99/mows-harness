@@ -1,0 +1,464 @@
+#!/usr/bin/env bash
+# mows-agent — policy runner for purpose-scoped agents (Layer 6).
+# The Claude Code daemon manages processes; this manages POLICY: lint, budget, refusal,
+# run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
+#   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
+#              prune · render <name>|--all · residents [--json]
+# Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
+set -uo pipefail
+CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
+STATE_ROOT="${MOWS_AGENTS_STATE:-$HOME/.local/state/mows-agents}"
+META="${MOWS_AGENT_META:-$(dirname "$(readlink -f "$0")")/mows-agent-meta}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+QUOTA_BIN="${QUOTA_BIN:-claude-quota}"
+STALL_MIN="${STALL_MIN:-10}"
+STALL_SEC="${STALL_SEC:-$((STALL_MIN * 60))}"
+MCP_CONFIG="${MCP_CONFIG:-}"
+RENDER_DIR="${RENDER_DIR:-$PWD/rendered}"
+
+die(){ echo "mows-agent: $*" >&2; exit 64; }
+command -v jq >/dev/null 2>&1 || die "jq required"
+[ -x "$META" ] || die "mows-agent-meta not found at $META"
+
+# ---------- discovery: default=~/.claude plus every ~/.claude-<suffix> (same rule as fleet/bin/cc) ----------
+profiles_json(){
+  local j='{}' d s
+  [ -d "$HOME/.claude" ] && j=$(jq -n --arg d "$HOME/.claude" '{default:$d}')
+  for d in "$HOME"/.claude-*/; do
+    [ -d "$d" ] || continue; d=${d%/}; s=${d##*/.claude-}
+    j=$(jq --arg k "$s" --arg v "$d" '.[$k]=$v' <<<"$j")
+  done
+  echo "$j"
+}
+MOWS_PROFILES_JSON=$(profiles_json); export MOWS_PROFILES_JSON
+cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
+
+# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key
+has_mows(){ awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}' "$1"; }
+agent_file(){ # prints the single file for <name>; dies on genuine duplicates; empty if none
+  # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
+  # is missing its mows: block, so lint can report the exact "mows: block is required"
+  # error instead of a generic "no agent named". Bulk discovery (all_agents) keeps the
+  # has_mows filter so plain Claude Code subagents aren't swept into --all.
+  #
+  # Dedupe by RESOLVED path: two profile dirs can alias the same physical agents/ dir
+  # (e.g. ~/.claude-work/agents symlinked to ~/.claude/agents, a legitimate setup), in
+  # which case the same file just gets discovered twice — that is one agent, not a
+  # duplicate. Only files that resolve to genuinely different paths are a real duplicate.
+  local n=$1 f rf dup r found=() resolved=()
+  while IFS= read -r d; do
+    f="$d/agents/$n.md"; [ -f "$f" ] || continue
+    rf=$(readlink -f "$f")
+    dup=0; for r in "${resolved[@]:-}"; do [ "$r" = "$rf" ] && dup=1 && break; done
+    [ "$dup" = 1 ] && continue
+    resolved+=("$rf"); found+=("$f")
+  done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON")
+  [ ${#found[@]} -gt 1 ] && die "agent $n defined in more than one profile: ${found[*]}"
+  [ ${#found[@]} -eq 1 ] && echo "${found[0]}"; return 0
+}
+all_agents(){ # name<TAB>file, sorted; same resolved-path dedupe as agent_file (see there)
+  local d f rf dup r resolved=()
+  while IFS= read -r d; do
+    for f in "$d"/agents/*.md; do
+      [ -f "$f" ] || continue
+      has_mows "$f" || continue
+      rf=$(readlink -f "$f")
+      dup=0; for r in "${resolved[@]:-}"; do [ "$r" = "$rf" ] && dup=1 && break; done
+      [ "$dup" = 1 ] && continue
+      resolved+=("$rf")
+      printf '%s\t%s\n' "$(basename "${f%.md}")" "$f"
+    done
+  done < <(jq -r '.[]' <<<"$MOWS_PROFILES_JSON") | sort
+}
+meta(){ "$META" json "$1"; }
+mget(){ jq -r "$2 // empty" <<<"$1"; }
+expand_tilde(){ case $1 in "~") echo "$HOME";; "~/"*) echo "$HOME/${1#\~/}";; *) echo "$1";; esac; }
+check_version(){ # --permission-prompts / --max-budget-usd need >= 2.1.217
+  local v; v=$("$CLAUDE_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  [ -n "$v" ] || { echo "WARN: cannot read claude version" >&2; return 0; }
+  [ "$(printf '%s\n2.1.217\n' "$v" | sort -V | head -1)" = 2.1.217 ] || die "claude $v too old (need >= 2.1.217)"
+}
+
+# ---------- events + escalation ----------
+event(){ mkdir -p "$STATE_ROOT/$1"; echo "$(date -Is) $2" >> "$STATE_ROOT/$1/events.log"; }
+escalate(){ # escalate <name> <via> <msg>: always logs; posts to Discord only when via=discord and a webhook is set
+  event "$1" "$3"
+  [ "$2" = discord ] && [ -n "${DISCORD_WEBHOOK:-}" ] || return 0
+  curl -fsS --max-time 10 -H 'content-type: application/json' \
+    --data "$(jq -nc --arg c "🤖 $1: $3" '{content:$c}')" "$DISCORD_WEBHOOK" >/dev/null 2>&1 || true
+}
+
+# ---------- lint ----------
+cmd_lint(){
+  local rc=0 n f
+  if [ "${1:-}" = --all ]; then
+    while IFS=$'\t' read -r n f; do echo "== $n"; "$META" lint "$f" || rc=1; done < <(all_agents)
+  else
+    [ -n "${1:-}" ] || die "usage: mows-agent lint <name>|--all"
+    f=$(agent_file "$1") || exit 64; [ -n "$f" ] || die "no agent named $1"
+    "$META" lint "$f" || rc=1
+  fi
+  return $rc
+}
+
+# ---------- run records ----------
+write_status(){ # write_status <state>  (uses the run globals; atomic)
+  jq -n --arg a "$AGENT" --arg r "$RUN_ID" --arg s "$1" --arg sid "${SID:-}" --arg st "$STARTED" \
+        --argjson turns "${TURNS:-0}" --argjson tools "${TOOLS:-0}" --argjson cost "${COST:-0}" \
+        --argjson den "${DENIALS:-0}" --argjson pid "$$" --argjson cpid "${CPID:-0}" \
+        '{agent:$a,run_id:$r,state:$s,session_id:$sid,started_at:$st,last_event_at:(now|todate),
+          turns:$turns,tool_calls:$tools,cost_usd:$cost,permission_denials:$den,pid:$pid,claude_pid:$cpid}' \
+        > "$RUNDIR/status.json.tmp" && mv "$RUNDIR/status.json.tmp" "$RUNDIR/status.json"
+}
+run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
+  local prev
+  prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
+  printf 'mows-agent run context\n- agent: %s\n- run_id: %s\n- profile: %s\n- workdir: %s\n- budget: %s USD, %s turns\n' \
+    "$AGENT" "$RUN_ID" "$PROFILE" "$WORKDIR" "$USD_RUN" "$MAXT"
+  if [ -n "$prev" ] && [ -f "$prev/status.json" ]; then
+    printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
+    [ -f "$prev/result.json" ] && printf -- '- previous result: %s\n' "$(jq -r '(.result // "") | .[0:600]' "$prev/result.json")"
+  fi
+  printf 'You have no human available: never ask questions, decide and finish within budget.\n'
+}
+kill_tree(){ # kill the claude process GROUP. $! is not reliably the pgid leader (setsid execs
+  # only when the caller is not already a process-group leader), so read the real pgid.
+  local pid=$1 pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ]; then kill -TERM -- "-$pgid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
+}
+tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decides the final state.
+  local cpid=$1 line final="" stalled=0 rc
+  TURNS=0; TOOLS=0; COST=0; DENIALS=0; SID=""
+  while true; do
+    if IFS= read -r -t "$STALL_SEC" line; then
+      [ -n "$line" ] || continue
+      case $line in
+        *'"type":"system"'*)    SID=$(jq -r '.session_id // empty' <<<"$line"); write_status working;;
+        *'"type":"assistant"'*) TURNS=$((TURNS + 1))
+                                TOOLS=$((TOOLS + $(jq '[.message.content[]? | select(.type=="tool_use")] | length' <<<"$line")))
+                                write_status working;;
+        *'"type":"result"'*)    final=$line; break;;
+      esac
+    else
+      rc=$?; [ "$rc" -gt 128 ] || break            # EOF without a result record
+      kill_tree "$cpid"; stalled=1; break
+    fi
+  done
+  local st
+  if [ -n "$final" ]; then
+    printf '%s\n' "$final" > "$RUNDIR/result.json"
+    COST=$(jq '.total_cost_usd // 0' <<<"$final"); TURNS=$(jq '.num_turns // 0' <<<"$final")
+    DENIALS=$(jq '(.permission_denials // []) | length' <<<"$final"); SID=$(jq -r '.session_id // empty' <<<"$final")
+    case "$(jq -r '[.subtype // "", .terminal_reason // "", (.is_error|tostring)] | join("|")' <<<"$final")" in
+      success\|*\|false) st=done;;
+      *budget*)          st=budget_exceeded;;
+      *max_turns*)       st=failed;;
+      *)                 st=failed;;
+    esac
+  elif [ "$stalled" = 1 ]; then st=stalled
+  else st=failed; fi
+  write_status "$st"
+}
+today_spend(){ # sum of today's total_cost_usd for <name>
+  local d="$STATE_ROOT/$1/runs"; [ -d "$d" ] || { echo 0; return; }
+  cat "$d/$(date +%Y%m%d)"-*/result.json 2>/dev/null | jq -s '[.[].total_cost_usd // 0] | add // 0'
+}
+quota_ok(){ # quota_ok <profile> <floor>: 1 = refuse. Unknown/absent quota never refuses (spec §4).
+  local prof=$1 floor=$2 j pct
+  [ "$floor" -gt 0 ] 2>/dev/null || return 0
+  command -v "$QUOTA_BIN" >/dev/null 2>&1 || { echo "WARN: $QUOTA_BIN not installed, quota_floor skipped" >&2; return 0; }
+  j=$("$QUOTA_BIN" --json 2>/dev/null) || return 0
+  # claude-quota keys accounts personal|work; profile default -> personal, others by name
+  pct=$(jq -r --arg p "$prof" '(.[$p] // (if $p=="default" then .personal else {} end)) as $a
+        | [($a.five_hour_pct // 0), ($a.weekly_pct // 0)] | max' <<<"$j" 2>/dev/null) || return 0
+  awk -v p="${pct:-0}" -v f="$floor" 'BEGIN{exit !(p > 100 - f)}' && return 1
+  return 0
+}
+running_pid(){ # pid of a live `working` run of <name>, else nothing
+  local s="$STATE_ROOT/$1/last/status.json" pid
+  [ -f "$s" ] || return 0
+  [ "$(jq -r .state "$s")" = working ] || return 0
+  pid=$(jq -r '.pid // empty' "$s"); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "$pid"; return 0
+}
+merge_step(){ # merge.policy pr: push the agent's branch and open a PR; never touches base
+  local mg base br; mg=$(jq -c '.mows | .merge // {}' <<<"$M")
+  [ "$(mget "$mg" .policy)" = pr ] || return 0
+  base=$(mget "$mg" .base); base=${base:-main}
+  git -C "$WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { event "$AGENT" "merge: $WORKDIR is not a git repo"; return 0; }
+  br=$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD)
+  [ "$br" != "$base" ] || { event "$AGENT" "merge: still on $base, nothing to open"; return 0; }
+  [ "$(git -C "$WORKDIR" rev-list --count "$base..HEAD" 2>/dev/null || echo 0)" -gt 0 ] || { event "$AGENT" "merge: no commits ahead of $base"; return 0; }
+  if (cd "$WORKDIR" && git push -u origin HEAD && gh pr create --fill --base "$base") >> "$RUNDIR/merge.log" 2>&1; then
+    event "$AGENT" "merge: PR opened from $br"
+  else
+    escalate "$AGENT" "$VIA" "merge: PR creation failed for $br (see $RUNDIR/merge.log)"
+    return 1  # escalate() always returns 0 itself; without this, a failed push/PR fell through
+              # as a false "success" to cmd_run's `merge_step || exit 3` (see there)
+  fi
+}
+
+cmd_run(){
+  AGENT=${1:-}; [ -n "$AGENT" ] || die "usage: mows-agent run <name> [task…]"; shift
+  local f; f=$(agent_file "$AGENT") || exit 64; [ -n "$f" ] || die "no agent named $AGENT"
+  check_version
+  # A lint failure means we cannot trust the manifest well enough to read mows.escalate.via
+  # (it may not even parse), so this can't go through escalate()'s normal per-agent VIA gate.
+  # Post whenever DISCORD_WEBHOOK is configured at all — SETUP.md already promises refusals
+  # are notified, and forcing via=discord here (rather than the unknown "$VIA") is what makes
+  # that promise hold for the one refusal that happens before the manifest is ever read.
+  if ! "$META" lint "$f" >&2; then escalate "$AGENT" discord "refused: lint errors in $f"; exit 6; fi
+  M=$(meta "$f")
+  PROFILE=$(mget "$M" .mows.profile); CFGDIR=$(cfg_of "$PROFILE")
+  WORKDIR=$(expand_tilde "$(mget "$M" .mows.workdir)")
+  USD_RUN=$(mget "$M" .mows.budget.usd_per_run); MAXT=$(mget "$M" .mows.budget.max_turns)
+  VIA=$(mget "$M" .mows.escalate.via); VIA=${VIA:-none}
+  local usd_day floor task pid spent
+  usd_day=$(mget "$M" .mows.budget.usd_per_day); floor=$(mget "$M" .mows.budget.quota_floor)
+  task=${*:-$(mget "$M" .mows.task)}
+  # ---- refusals (spec §3.1 step 2) ----
+  pid=$(running_pid "$AGENT")
+  if [ -n "$pid" ]; then escalate "$AGENT" "$VIA" "refused: $(readlink "$STATE_ROOT/$AGENT/last") still working (pid $pid)"; exit 6; fi
+  if [ -n "$usd_day" ]; then
+    spent=$(today_spend "$AGENT")
+    if awk -v s="$spent" -v c="$usd_day" 'BEGIN{exit !(s >= c)}'; then
+      escalate "$AGENT" "$VIA" "refused: daily cap \$$usd_day reached (spent \$$spent today)"; exit 6; fi
+  fi
+  if ! quota_ok "$PROFILE" "${floor:-0}"; then escalate "$AGENT" "$VIA" "refused: account quota below ${floor}% headroom (claude-quota)"; exit 6; fi
+  # ---- run record ----
+  RUN_ID=$(date +%Y%m%d-%H%M%S)-$$; RUNDIR="$STATE_ROOT/$AGENT/runs/$RUN_ID"; mkdir -p "$RUNDIR"
+  : > "$RUNDIR/stream.jsonl"  # pre-create: `tail -f` errors out (no --retry) if the file doesn't exist yet
+  ln -sfn "runs/$RUN_ID" "$STATE_ROOT/$AGENT/last"
+  STARTED=$(date -Is); CPID=0; write_status working
+  cd "$WORKDIR" || die "cannot cd $WORKDIR"
+  local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+  # setsid: claude leads its own process group so a stall kill takes its MCP/tool children too
+  # (kill_tree reads the real pgid rather than assuming it equals $!)
+  CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
+      --output-format stream-json --verbose --permission-prompts none \
+      --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
+      --append-system-prompt "$(run_context)" "$task" \
+      > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
+  CPID=$!; write_status working
+  # This trap covers an INTERACTIVE Ctrl-C only. A tty delivers SIGINT to the whole foreground
+  # process group, so `tail` and this script die immediately, the pipeline unwinds, and bash
+  # then runs the deferred trap against a still-live claude — that path works.
+  # It does NOT cover an external `kill -TERM $CPID` (e.g. the dashboard's Stop button): bash
+  # only runs a trap between commands, and this script sits foreground in `tail | tail_loop`
+  # for the whole run, so the trap never gets a chance to fire until claude has already exited
+  # on its own. The dashboard does not rely on this trap for Stop — it signals -claude_pid
+  # (the process group) directly instead (infra/dashboard/lite.mjs, agentAction 'stop').
+  trap 'kill_tree "$CPID"' TERM INT
+  tail -n +1 -f --pid="$CPID" "$RUNDIR/stream.jsonl" | tail_loop "$CPID"
+  wait "$CPID" 2>/dev/null
+  local st; st=$(jq -r .state "$RUNDIR/status.json")
+  case $st in
+    done)            merge_step || exit 3; exit 0;;
+    budget_exceeded) escalate "$AGENT" "$VIA" "$RUN_ID budget_exceeded (cap \$$USD_RUN)"; exit 4;;
+    stalled)         escalate "$AGENT" "$VIA" "$RUN_ID stalled: no stream event for ${STALL_SEC}s, killed"; exit 5;;
+    *)               escalate "$AGENT" "$VIA" "$RUN_ID failed: $(jq -r '(.result // "") | .[0:200]' "$RUNDIR/result.json" 2>/dev/null || echo 'no result record')"; exit 3;;
+  esac
+}
+
+# ---------- list / last / logs ----------
+next_fire(){ # NEXT column from the Phase 3 timer; '' when systemd/timer absent
+  command -v systemctl >/dev/null 2>&1 || return 0
+  local l; l=$(systemctl list-timers --all --no-legend "mows-agent-$1.timer" 2>/dev/null | head -1)
+  [ -n "$l" ] || return 0
+  case $l in n/a*|-*) echo paused;; *) awk '{print $1" "$2" "$3}' <<<"$l";; esac
+}
+cmd_list(){
+  local n f m prof st last next
+  printf '%-22s %-10s %-16s %-19s %s\n' NAME PROFILE LAST-STATE LAST-RUN NEXT
+  while IFS=$'\t' read -r n f; do
+    m=$(meta "$f") || continue; prof=$(mget "$m" .mows.profile)
+    if [ -f "$STATE_ROOT/$n/last/status.json" ]; then
+      st=$(jq -r .state "$STATE_ROOT/$n/last/status.json"); last=$(jq -r '.started_at[0:19]' "$STATE_ROOT/$n/last/status.json")
+    else st=never; last=-; fi
+    next=$(next_fire "$n"); printf '%-22s %-10s %-16s %-19s %s\n' "$n" "$prof" "$st" "$last" "${next:--}"
+  done < <(all_agents)
+}
+cmd_last(){
+  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent last <name>"
+  local d="$STATE_ROOT/$n/last"; [ -f "$d/status.json" ] || die "no runs for $n"
+  jq . "$d/status.json"
+  [ -f "$d/result.json" ] && jq -r '"result: " + ((.result // "") | .[0:2000])' "$d/result.json"
+  [ -s "$STATE_ROOT/$n/events.log" ] && { echo "recent events:"; tail -3 "$STATE_ROOT/$n/events.log"; }
+  return 0
+}
+cmd_logs(){
+  local n=${1:-} raw=0 rid="" a; [ -n "$n" ] || die "usage: mows-agent logs <name> [run_id] [--raw]"; shift
+  for a in "$@"; do [ "$a" = --raw ] && raw=1 || rid=$a; done
+  local d; d="$STATE_ROOT/$n/${rid:+runs/$rid}"; [ -n "$rid" ] || d="$STATE_ROOT/$n/last"
+  [ -f "$d/stream.jsonl" ] || die "no stream for $n ${rid:-last}"
+  if [ "$raw" = 1 ]; then cat "$d/stream.jsonl"
+  else jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$d/stream.jsonl"; fi
+}
+
+# ---------- prune ----------
+cmd_prune(){ # delete run dirs older than retention_days per agent; never the `last` target
+  local n f m days d keep r
+  while IFS=$'\t' read -r n f; do
+    m=$(meta "$f") || continue; days=$(mget "$m" .mows.retention_days); days=${days:-30}
+    d="$STATE_ROOT/$n/runs"; [ -d "$d" ] || continue
+    keep=$(readlink "$STATE_ROOT/$n/last" 2>/dev/null); keep=${keep#runs/}
+    while IFS= read -r r; do
+      [ "$(basename "$r")" = "$keep" ] && continue
+      rm -rf "$r" && event "$n" "pruned $(basename "$r") (> ${days}d)"
+    done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -mtime "+$days")
+  done < <(all_agents)
+}
+
+# ---------- render: systemd units -> $RENDER_DIR (never installed or enabled here; spec D8) ----------
+render_service(){ # one shared template; TimeoutStartSec = the largest max_turns * 3 min across agents
+  local n f m t maxt=40
+  while IFS=$'\t' read -r n f; do m=$(meta "$f") || continue; t=$(mget "$m" .mows.budget.max_turns); [ "${t:-0}" -gt "$maxt" ] && maxt=$t; done < <(all_agents)
+  cat > "$RENDER_DIR/mows-agent@.service" <<EOF
+[Unit]
+Description=mows agent run: %i (Layer 6, one bounded claude -p)
+Documentation=file://$HOME/.local/bin/mows-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$(id -un)
+Environment=HOME=$HOME
+UnsetEnvironment=ANTHROPIC_API_KEY
+WorkingDirectory=$HOME
+# generous: a run is already capped by --max-turns / --max-budget-usd and the stall kill
+TimeoutStartSec=$((maxt * 180))
+ExecStart=$HOME/.local/bin/mows-agent run %i
+# exit 6 (refused) and 4 (budget) are policy outcomes, not unit failures
+SuccessExitStatus=4 6
+EOF
+}
+cmd_render(){
+  local names=() n f m i=0 ci=0 pi=0 sfx t
+  mkdir -p "$RENDER_DIR"
+  if [ "${1:-}" = --all ]; then while IFS=$'\t' read -r n f; do names+=("$n"); done < <(all_agents)
+  else [ -n "${1:-}" ] || die "usage: mows-agent render <name>|--all"; names=("$1"); fi
+  # ---- collision pre-pass: two DIFFERENT agents can render the SAME unit filename (e.g. an
+  # agent literally named "foo-2"'s bare timer IS the filename agent "foo"'s second cron
+  # trigger renders — the suffix scheme below has no delimiter separating the two). A silent
+  # `cat >` would clobber one with the other, and reviewing rendered/ by hand can never catch
+  # it: what's left after a clobber is one perfectly well-formed file, so the reviewer sees
+  # one fewer file than expected, not a red flag anywhere. Compute every filename this render
+  # would produce BEFORE writing any of them, and refuse outright if one repeats — naming
+  # every agent that claims it — rather than silently overwrite. (Mirrors the ci/pi/sfx
+  # counting the write loop below does per agent; if that counting ever changes, this must
+  # change with it.)
+  local plan=() n2 f2 m2 ci2 pi2 sfx2 t2
+  for n2 in "${names[@]}"; do
+    f2=$(agent_file "$n2") || exit 64; [ -n "$f2" ] || die "no agent named $n2"; m2=$(meta "$f2")
+    ci2=0; pi2=0
+    while IFS= read -r t2; do
+      case $(jq -r .type <<<"$t2") in
+        cron) ci2=$((ci2+1)); sfx2=""; [ "$ci2" -gt 1 ] && sfx2="-$ci2"; plan+=("mows-agent-$n2$sfx2.timer	$n2");;
+        path) pi2=$((pi2+1)); sfx2=""; [ "$pi2" -gt 1 ] && sfx2="-$pi2"; plan+=("mows-agent-$n2$sfx2.path	$n2");;
+      esac
+    done < <(jq -c '.mows.triggers[]? // empty' <<<"$m2")
+  done
+  local dupes dfn owners rc=0
+  dupes=$(printf '%s\n' "${plan[@]:-}" | awk -F'\t' 'NF{print $1}' | sort | uniq -d)
+  if [ -n "$dupes" ]; then
+    while IFS= read -r dfn; do
+      [ -n "$dfn" ] || continue
+      owners=$(printf '%s\n' "${plan[@]}" | awk -F'\t' -v f="$dfn" '$1==f{print $2}' | paste -sd, -)
+      echo "mows-agent: render: unit filename collision: $dfn would be written by more than one agent ($owners) — refusing to overwrite" >&2
+      rc=1
+    done <<<"$dupes"
+  fi
+  [ "$rc" = 0 ] || exit 64
+  render_service
+  for n in "${names[@]}"; do
+    f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"; m=$(meta "$f")
+    ci=0; pi=0
+    while IFS= read -r t; do
+      case $(jq -r .type <<<"$t") in
+        cron) ci=$((ci+1)); sfx=""; [ $ci -gt 1 ] && sfx="-$ci"
+              cat > "$RENDER_DIR/mows-agent-$n$sfx.timer" <<EOF
+[Unit]
+Description=mows agent timer: $n$sfx
+
+[Timer]
+OnCalendar=$(jq -r .spec <<<"$t")
+Persistent=true
+RandomizedDelaySec=2m
+Unit=mows-agent@$n.service
+
+[Install]
+WantedBy=timers.target
+EOF
+              ;;
+        path) pi=$((pi+1)); sfx=""; [ $pi -gt 1 ] && sfx="-$pi"
+              cat > "$RENDER_DIR/mows-agent-$n$sfx.path" <<EOF
+[Unit]
+Description=mows agent path trigger: $n$sfx
+
+[Path]
+PathChanged=$(expand_tilde "$(jq -r .path <<<"$t")")
+Unit=mows-agent@$n.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+              ;;
+      esac
+    done < <(jq -c '.mows.triggers[]? // empty' <<<"$m")
+  done
+  echo "rendered into $RENDER_DIR — review, then (nothing below is run for you):"
+  echo "  sudo install -m644 $RENDER_DIR/mows-agent@.service $RENDER_DIR/mows-agent-*.timer $RENDER_DIR/mows-agent-*.path /etc/systemd/system/ 2>/dev/null; sudo systemctl daemon-reload"
+  for n in "${names[@]}"; do
+    # Anchored: a bare glob (mows-agent-"$n"*.timer) also matches another agent whose name
+    # happens to start with this one plus anything (e.g. n=foo matching mows-agent-foobar.timer
+    # or mows-agent-foo-review.timer) and would print an enable hint for the wrong agent's
+    # unit. Only the bare unit or a numeric -2/-3/... suffix (this render's own naming scheme,
+    # see the cron/path loop above) belongs to "$n".
+    for u in "$RENDER_DIR"/mows-agent-"$n".timer "$RENDER_DIR"/mows-agent-"$n"-[0-9]*.timer \
+             "$RENDER_DIR"/mows-agent-"$n".path  "$RENDER_DIR"/mows-agent-"$n"-[0-9]*.path; do
+      [ -f "$u" ] && echo "  sudo systemctl enable --now $(basename "$u")"
+    done
+  done
+  echo "  systemctl list-timers 'mows-agent-*'    # confirm NEXT; mows-agent list shows it too"
+}
+
+# ---------- residents: the native daemon's background sessions, read-only (spec D2, Phase 6) ----------
+# Per-profile timeout shrinks as the number of discovered profiles grows, so the WHOLE serial
+# poll below stays bounded regardless of how many ~/.claude-* dirs exist on the box: budget
+# RESIDENTS_BUDGET_SEC total /w a floor so a single profile still gets a real chance. This
+# must stay comfortably UNDER the dashboard's runAs(...) ceiling for `residents --json`
+# (infra/dashboard/lite.mjs, RESIDENTS_TIMEOUT_MS near agentsView) — that call has to finish
+# before its own timeout fires, or the fold can't tell "no sessions" from "poll timed out"
+# and misreports the former. A pathological profile count (>8) can still push the total over
+# that ceiling; the dashboard degrades that to a plain "poll failed", never a hang or a wrong
+# "none" (see agentsView).
+RESIDENTS_BUDGET_SEC=16
+cmd_residents(){
+  local json=0; [ "${1:-}" = --json ] && json=1
+  local nprof; nprof=$(jq 'length' <<<"$MOWS_PROFILES_JSON" 2>/dev/null); [ "${nprof:-0}" -gt 0 ] || nprof=1
+  local per_timeout=$((RESIDENTS_BUDGET_SEC / nprof)); [ "$per_timeout" -ge 2 ] || per_timeout=2
+  local all='[]' p d recs
+  while IFS=$'\t' read -r p d; do
+    recs=$(CLAUDE_CONFIG_DIR="$d" timeout "$per_timeout" "$CLAUDE_BIN" agents --json 2>/dev/null || echo '[]')
+    recs=$(jq --arg obs "$HOME/.claude-mem/observer-sessions" '[.[] | select(.kind=="background") | select((.cwd // "") | startswith($obs) | not)]' <<<"$recs" 2>/dev/null || echo '[]')
+    all=$(jq --arg p "$p" --argjson r "$recs" '. + [{profile:$p, agents:$r}]' <<<"$all")
+  done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"$MOWS_PROFILES_JSON")
+  if [ "$json" = 1 ]; then echo "$all"; return; fi
+  printf '%-10s %-9s %-32s %-9s %-18s %s\n' PROFILE ID NAME STATE WAITING CWD
+  jq -r '.[] | .profile as $p | .agents[] | [$p, (.id // "-"), ((.name // "-")[0:32]), (.state // "-"), (.waitingFor // "-"), (.cwd // "-")] | @tsv' <<<"$all" \
+    | while IFS=$'\t' read -r a b c d e f; do printf '%-10s %-9s %-32s %-9s %-18s %s\n' "$a" "$b" "$c" "$d" "$e" "$f"; done
+}
+
+# ---------- dispatch ----------
+case "${1:-}" in
+  lint)  shift; cmd_lint "$@";;
+  run)   shift; cmd_run "$@";;
+  list)  cmd_list;;
+  last)  shift; cmd_last "$@";;
+  logs)  shift; cmd_logs "$@";;
+  prune) cmd_prune;;
+  render) shift; cmd_render "$@";;
+  residents) shift; cmd_residents "$@";;
+  *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
+esac
