@@ -2828,6 +2828,12 @@ function summarizeTimers(timers) {
 }
 const agentPill = s => `<span class="pill st-${esc(s || 'never')}">${esc(s || 'never')}</span>`;
 const usd = n => '$' + (+n || 0).toFixed(2);
+// Ceiling for the whole `mows-agent residents --json` call. Must stay comfortably ABOVE
+// cmd_residents' own internal budget (agents/bin/mows-agent, RESIDENTS_BUDGET_SEC = 16s
+// total, adaptively split across however many profiles are discovered) so a normal poll
+// always finishes before this fires — if the two ever cross, a slow-but-real poll would
+// get killed here and misreport as "poll failed" instead of returning real data.
+const RESIDENTS_TIMEOUT_MS = 20000;
 async function agentsView(req, res) {
   const list = await agentsIndex();
   const rows = list.map(a => `<a class="agent card" href="/agents/${esc(a.name)}">
@@ -2836,9 +2842,19 @@ async function agentsView(req, res) {
   // Native background sessions: the daemon's own, not mows-agent's — read-only display,
   // never an action surface (spec D2, Phase 6). mows-agent residents already excludes
   // interactive sessions and claude-mem observer sessions (cwd prefix).
-  let res_ = []; try { res_ = JSON.parse(await runAs([], 'mows-agent', ['residents', '--json'], 20000)); } catch {}
-  const resRows = res_.flatMap(p => p.agents.map(a => `<li><b>${esc(a.name || a.id)}</b> ${agentPill(a.state)} <span class="muted">${esc(p.profile)} · ${esc(a.waitingFor || '')} · ${esc(a.cwd || '')}</span></li>`));
-  const fold = `<details><summary>Native background sessions (${resRows.length})</summary><ul>${resRows.join('') || '<li class="muted">none</li>'}</ul></details>`;
+  //
+  // runAs resolves '' on ANY error, including a timeout — indistinguishable from a genuine
+  // empty response by content alone. JSON.parse('') throws, so we use "did parsing succeed"
+  // as the failure signal instead of collapsing both into an empty list: a poll that timed
+  // out or hit a missing/broken mows-agent must say so, never render as "0 sessions, none"
+  // (byte-identical to a real quiet box otherwise — the bug this comment is guarding against).
+  let residentsData = null;
+  try { residentsData = JSON.parse(await runAs([], 'mows-agent', ['residents', '--json'], RESIDENTS_TIMEOUT_MS)); } catch {}
+  const residentsFailed = residentsData === null;
+  const resRows = (residentsData || []).flatMap(p => p.agents.map(a => `<li><b>${esc(a.name || a.id)}</b> ${agentPill(a.state)} <span class="muted">${esc(p.profile)} · ${esc(a.waitingFor || '')} · ${esc(a.cwd || '')}</span></li>`));
+  const fold = residentsFailed
+    ? `<details><summary>Native background sessions — poll failed</summary><ul><li class="muted">mows-agent residents timed out or errored; not necessarily empty, try reloading</li></ul></details>`
+    : `<details><summary>Native background sessions (${resRows.length})</summary><ul>${resRows.join('') || '<li class="muted">none</li>'}</ul></details>`;
   const body = `<h1><a href="/">← sessions</a> <span class="muted">· agents</span></h1>
 ${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}
 ${fold}`;

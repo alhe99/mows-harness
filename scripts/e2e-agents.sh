@@ -52,7 +52,7 @@ cat > "$T/shim/claude" <<'S'
 # stub claude: --version, `agents --json`, or a scripted -p run chosen by $CLAUDE_MODE_FILE
 # (ok|budget|maxturns|error|noresult|hang). argv + CLAUDE_CONFIG_DIR land in $CLAUDE_ARGS_FILE.
 [ "${1:-}" = --version ] && { echo "2.1.273 (Claude Code)"; exit 0; }
-[ "${1:-}" = agents ] && { cat "${CLAUDE_AGENTS_JSON_FILE:-/dev/null}"; exit 0; }
+[ "${1:-}" = agents ] && { [ -n "${CLAUDE_AGENTS_HANG:-}" ] && sleep 3600; cat "${CLAUDE_AGENTS_JSON_FILE:-/dev/null}"; exit 0; }
 { printf '%s\n' "$@"; echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-}"; echo "PWD=$PWD"; } > "${CLAUDE_ARGS_FILE:-/dev/null}"
 mode=$(cat "${CLAUDE_MODE_FILE:-/dev/null}" 2>/dev/null || echo ok)
 sid=00000000-0000-4000-8000-000000000001
@@ -314,6 +314,14 @@ chk "residents: interactive records dropped"   '! mows-agent residents | grep -q
 chk "residents: claude-mem observers dropped"  '! mows-agent residents | grep -q obs1'
 chk "residents --json: array per profile"      '[ "$(mows-agent residents --json | jq -r ".[0].profile")" = default ]'
 chk "residents: work profile also polled"      '[ "$(mows-agent residents --json | jq length)" = 2 ]'
+# regression: a stalled `claude agents --json` must never make the WHOLE residents call run
+# unbounded — cmd_residents' per-profile timeout must shrink with the profile count so 2
+# hung profiles still finish comfortably inside the dashboard's runAs ceiling (20s).
+export CLAUDE_AGENTS_HANG=1
+T0=$(date +%s); mows-agent residents --json >"$T/residents-hang.json" 2>&1; RC=$?; T1=$(date +%s)
+chk "residents: bounded total time despite a hung claude" '[ $((T1 - T0)) -lt 18 ]'
+chk "residents: still valid JSON when every profile hangs" '[ "$(jq length < "$T/residents-hang.json")" = 2 ] && [ "$(jq "[.[].agents[]] | length" < "$T/residents-hang.json")" = 0 ]'
+unset CLAUDE_AGENTS_HANG
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

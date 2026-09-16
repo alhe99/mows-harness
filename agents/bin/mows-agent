@@ -369,11 +369,23 @@ EOF
 }
 
 # ---------- residents: the native daemon's background sessions, read-only (spec D2, Phase 6) ----------
+# Per-profile timeout shrinks as the number of discovered profiles grows, so the WHOLE serial
+# poll below stays bounded regardless of how many ~/.claude-* dirs exist on the box: budget
+# RESIDENTS_BUDGET_SEC total /w a floor so a single profile still gets a real chance. This
+# must stay comfortably UNDER the dashboard's runAs(...) ceiling for `residents --json`
+# (infra/dashboard/lite.mjs, RESIDENTS_TIMEOUT_MS near agentsView) — that call has to finish
+# before its own timeout fires, or the fold can't tell "no sessions" from "poll timed out"
+# and misreports the former. A pathological profile count (>8) can still push the total over
+# that ceiling; the dashboard degrades that to a plain "poll failed", never a hang or a wrong
+# "none" (see agentsView).
+RESIDENTS_BUDGET_SEC=16
 cmd_residents(){
   local json=0; [ "${1:-}" = --json ] && json=1
+  local nprof; nprof=$(jq 'length' <<<"$MOWS_PROFILES_JSON" 2>/dev/null); [ "${nprof:-0}" -gt 0 ] || nprof=1
+  local per_timeout=$((RESIDENTS_BUDGET_SEC / nprof)); [ "$per_timeout" -ge 2 ] || per_timeout=2
   local all='[]' p d recs
   while IFS=$'\t' read -r p d; do
-    recs=$(CLAUDE_CONFIG_DIR="$d" timeout 15 "$CLAUDE_BIN" agents --json 2>/dev/null || echo '[]')
+    recs=$(CLAUDE_CONFIG_DIR="$d" timeout "$per_timeout" "$CLAUDE_BIN" agents --json 2>/dev/null || echo '[]')
     recs=$(jq --arg obs "$HOME/.claude-mem/observer-sessions" '[.[] | select(.kind=="background") | select((.cwd // "") | startswith($obs) | not)]' <<<"$recs" 2>/dev/null || echo '[]')
     all=$(jq --arg p "$p" --argjson r "$recs" '. + [{profile:$p, agents:$r}]' <<<"$all")
   done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"$MOWS_PROFILES_JSON")
