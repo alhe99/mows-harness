@@ -411,7 +411,14 @@ async function streamView(req, res) {
   const last = req.headers['last-event-id'];
   if (last) {
     const [agent, turnS, seqS] = String(last).split(':');
-    const b = chatBuf.get(agent);
+    // Gate replay on the SAME topic check the live path uses. streamSend() enforces this for
+    // broadcasts, but replay calls streamWrite() directly and inherits nothing — without this,
+    // a client could name ANY agent in Last-Event-ID and read its in-flight turn without ever
+    // subscribing to it. Proven exploitable in review: ?topics=fleet plus a spoofed header
+    // returned another agent's buffered deltas verbatim.
+    // NOTE: skip the replay, never `return` — the connection setup below (tick, heartbeat,
+    // intervals) still has to run for a client whose Last-Event-ID is simply not replayable.
+    const b = agent && topics.has(`chat:${agent}`) ? chatBuf.get(agent) : null;
     if (b && String(b.turn) === turnS) {
       for (const d of b.deltas) if (d.seq > Number(seqS)) {
         streamWrite(c, 'chat', { agent, turn: b.turn, seq: d.seq, delta: d.text }, `${agent}:${b.turn}:${d.seq}`);
