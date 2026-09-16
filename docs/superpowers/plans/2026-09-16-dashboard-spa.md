@@ -4,7 +4,7 @@
 
 **Goal:** Turn mows control into a single-page app whose agent chat streams model output token by token, on desktop and phone equally, without rebuilding the 500 MB React dashboard it replaced.
 
-**Architecture:** `lite.mjs` stays one process and gains three responsibilities: an app shell at `/app/*`, a JSON API at `/api/*`, and one multiplexed Server-Sent Events stream at `/stream`. The client is Preact + hooks + htm, vendored as pinned ES modules and wired with an import map — no npm, no bundler, no build artifact. Routes move to the app one at a time; every server-rendered page keeps working until its replacement has run for a week.
+**Architecture:** `lite.mjs` stays one process and gains three responsibilities: an app shell at `/ui/*`, a JSON API at `/api/*`, and one multiplexed Server-Sent Events stream at `/stream`. The client is Preact + hooks + htm, vendored as pinned ES modules and wired with an import map — no npm, no bundler, no build artifact. Routes move to the app one at a time; every server-rendered page keeps working until its replacement has run for a week.
 
 **Tech Stack:** Node 20 (no new runtime deps), Preact 10.24.3 + hooks + htm 3.1.1 (vendored ESM), marked (vendored, markdown), Server-Sent Events, CSS same-document View Transitions, `visualViewport`.
 
@@ -34,7 +34,7 @@
 
 | Path | Responsibility |
 |---|---|
-| `infra/dashboard/lite.mjs` | Server. Gains `/app/*` shell, `/api/*` JSON, `/stream` multiplexed SSE, static asset serving, the chat stream runner, and the effective-capability model. |
+| `infra/dashboard/lite.mjs` | Server. Gains `/ui/*` shell, `/api/*` JSON, `/stream` multiplexed SSE, static asset serving, the chat stream runner, and the effective-capability model. |
 | `infra/dashboard/app/main.mjs` | Client entry: router, view transitions, prefetch, scroll restore. |
 | `infra/dashboard/app/store.mjs` | Client state: the SSE subscription, topic filtering, chat buffers, resume bookkeeping. |
 | `infra/dashboard/app/views/agents.mjs` | Agents list + agent detail (capability panel lives here). |
@@ -173,7 +173,7 @@ Commit subject: `dashboard: /api/* JSON endpoints for the SPA`
 - Modify: `scripts/preflight.sh`, `scripts/manifest.txt`
 
 **Interfaces:**
-- Produces: `GET /app` and `GET /app/*` → the shell HTML. `GET /app/assets/<name>.mjs` → a module with a strong `etag` and `cache-control: public, max-age=31536000, immutable`. The shell's import map maps `preact`, `preact/hooks`, `htm`, `marked` to those URLs.
+- Produces: `GET /ui` and `GET /ui/*` → the shell HTML. `GET /ui/assets/<name>.mjs` → a module with a strong `etag` and `cache-control: public, max-age=31536000, immutable`. The shell's import map maps `preact`, `preact/hooks`, `htm`, `marked` to those URLs.
 
 - [ ] **Step 1: Vendor the modules**
 
@@ -255,10 +255,10 @@ async function loadAppAssets() {
   try { await walk(APP_DIR.replace(/\/$/, '')); } catch {}
 }
 const assetUrlFor = rel => {
-  for (const [k, v] of appAssets) if (v.rel === rel) return '/app/assets/' + k;
-  return '/app/assets/' + rel;
+  for (const [k, v] of appAssets) if (v.rel === rel) return '/ui/assets/' + k;
+  return '/ui/assets/' + rel;
 };
-function appShell(host) {
+function uiShellHtml(host) {
   const imports = {
     preact: assetUrlFor('vendor/preact.mjs'),
     'preact/hooks': assetUrlFor('vendor/hooks.mjs'),
@@ -278,11 +278,11 @@ function appShell(host) {
 <script type="module" src="${assetUrlFor('main.mjs')}"></script>
 </body></html>`;
 }
-async function appView(req, res) {
+async function uiView(req, res) {
   if (!appAssets.size) await loadAppAssets();
-  send(req, res, 200, appShell(req.headers.host || ''));
+  send(req, res, 200, uiShellHtml(req.headers.host || ''));
 }
-async function appAssetView(req, res, name) {
+async function uiAssetView(req, res, name) {
   if (!appAssets.size) await loadAppAssets();
   const a = appAssets.get(name);
   if (!a) { res.writeHead(404); return res.end(); }
@@ -300,8 +300,8 @@ async function appAssetView(req, res, name) {
 In the dispatcher, after the `/api/` line:
 
 ```js
-    if (p.startsWith('/app/assets/')) return await appAssetView(req, res, p.slice(12));
-    if (p === '/app' || p.startsWith('/app/')) return await appView(req, res);
+    if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(12));
+    if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res);
 ```
 
 - [ ] **Step 6: Manifest, gates, verify**
@@ -318,7 +318,7 @@ Start your own instance on a spare port with a throwaway HOME (the pattern `scri
 ```bash
 curl -s http://127.0.0.1:3105/app | grep -c importmap        # 1
 curl -s http://127.0.0.1:3105/app | grep -o 'assets/[^"]*'   # hashed URLs
-curl -sI "http://127.0.0.1:3105/app/assets/$(curl -s http://127.0.0.1:3105/app | grep -o 'main[^"]*mjs')" | grep -i cache-control
+curl -sI "http://127.0.0.1:3105/ui/assets/$(curl -s http://127.0.0.1:3105/app | grep -o 'main[^"]*mjs')" | grep -i cache-control
 ```
 
 Do not deploy to `/opt/claude-dashboard`.
@@ -517,7 +517,7 @@ Commit subject: `dashboard: /stream — one multiplexed SSE connection per tab, 
 
 **Interfaces:**
 - Produces from `store.mjs`: `connect(topics)`, `subscribe(ev, fn)`, `getJSON(path)`, `state` (a plain object), `notify()`.
-- Produces from `main.mjs`: a router matching `/app`, `/app/agents`, `/app/agents/:name`, `/app/agents/:name/:run`.
+- Produces from `main.mjs`: a router matching `/ui`, `/ui/agents`, `/ui/agents/:name`, `/ui/agents/:name/:run`.
 - Produces from `ui.mjs`: `Pill({state})`, `usd(n)`, `rel(ms)`.
 
 - [ ] **Step 1: Write `store.mjs`**
@@ -588,7 +588,7 @@ function navigate(to, replace = false) {
   if (document.startViewTransition) document.startViewTransition(go); else go();
 }
 window.addEventListener('click', e => {
-  const a = e.target.closest?.('a[href^="/app"]');
+  const a = e.target.closest?.('a[href^="/ui"]');
   if (!a || e.metaKey || e.ctrlKey || e.shiftKey || a.target) return;
   e.preventDefault(); navigate(a.getAttribute('href'));
 });
@@ -597,8 +597,8 @@ window.addEventListener('popstate', () => window.dispatchEvent(new Event('route'
 
 function route(path) {
   let m;
-  if ((m = path.match(/^\/app\/agents\/([^/]+)\/([^/]+)$/))) return html`<${RunView} name=${m[1]} run=${m[2]} />`;
-  if ((m = path.match(/^\/app\/agents\/([^/]+)$/))) return html`<${AgentDetail} name=${m[1]} />`;
+  if ((m = path.match(/^\/ui\/agents\/([^/]+)\/([^/]+)$/))) return html`<${RunView} name=${m[1]} run=${m[2]} />`;
+  if ((m = path.match(/^\/ui\/agents\/([^/]+)$/))) return html`<${AgentDetail} name=${m[1]} />`;
   return html`<${AgentsList} />`;
 }
 function App() {
@@ -616,7 +616,7 @@ export { navigate };
 
 - [ ] **Step 4: Verify against your own instance**
 
-Start your instance, open `/app/agents`, and confirm: the list renders, clicking an agent changes the URL without a full load, and back returns to the list at its previous scroll position. Report whether `document.startViewTransition` was exercised (Chrome) or fell through (older Safari).
+Start your instance, open `/ui/agents`, and confirm: the list renders, clicking an agent changes the URL without a full load, and back returns to the list at its previous scroll position. Report whether `document.startViewTransition` was exercised (Chrome) or fell through (older Safari).
 
 - [ ] **Step 5: Gates and commit**
 
@@ -657,7 +657,7 @@ export function AgentsList() {
   if (!rows.length) return html`<p class="muted">No agents yet.</p>`;
   return html`<div>
     <h1>agents</h1>
-    ${rows.map(a => html`<a class="agent card" href="/app/agents/${a.name}" key=${a.name}>
+    ${rows.map(a => html`<a class="agent card" href="/ui/agents/${a.name}" key=${a.name}>
       <b>${a.name}</b> <${Pill} state=${a.state} />
       <span class="muted">${a.last_event_at ? rel(Date.parse(a.last_event_at)) : 'never ran'} · ${a.total} runs · 7d ${usd(a.cost7d)}</span>
     </a>`)}
@@ -670,12 +670,12 @@ export function AgentDetail({ name }) {
   if (d === false) return html`<p class="muted">No such agent.</p>`;
   if (!d) return html`<p class="muted">Loading…</p>`;
   return html`<div>
-    <h1><a href="/app/agents">← agents</a> <span class="muted">· ${name}</span></h1>
+    <h1><a href="/ui/agents">← agents</a> <span class="muted">· ${name}</span></h1>
     <p><${Pill} state=${d.recs?.[0]?.state} /> <span class="muted">7d ${usd(d.cost7d)} · ${d.total} runs · Next: ${d.timer?.label || '—'}</span></p>
     <h2>Chat</h2><${Chat} name=${name} runs=${d.recs} />
     <h2>Runs</h2>
     <ul class="runs">${(d.recs || []).map(r => html`<li key=${r.run_id}>
-      <a href="/app/agents/${name}/${r.run_id}">${r.run_id}</a> <${Pill} state=${r.state} />
+      <a href="/ui/agents/${name}/${r.run_id}">${r.run_id}</a> <${Pill} state=${r.state} />
       <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`)}</ul>
     <h2>Events</h2><pre class="events">${(d.events || []).join('\n') || 'none'}</pre>
   </div>`;
@@ -695,7 +695,7 @@ export function RunView({ name, run }) {
   if (d === false) return html`<p class="muted">No such run.</p>`;
   if (!d) return html`<p class="muted">Loading…</p>`;
   return html`<div>
-    <h1><a href="/app/agents/${name}">← ${name}</a> <span class="muted">· ${run}</span></h1>
+    <h1><a href="/ui/agents/${name}">← ${name}</a> <span class="muted">· ${run}</span></h1>
     <p><${Pill} state=${d.status?.state} /> <span class="muted">${usd(d.status?.cost_usd)} · ${d.status?.turns} turns</span></p>
     <div class="m claude"><div class="mh"><b>${name}</b></div><pre>${d.text || '(no assistant text)'}</pre></div>
   </div>`;
@@ -909,7 +909,7 @@ export function Chat({ name, runs }) {
     taRef.current.value = '';
     setTurns(t => [...t, { at: new Date().toISOString(), role: 'user', text: msg }]);
     setBusy(true); setAtBottom(true);
-    const body = new URLSearchParams({ name, back: `/app/agents/${name}`, msg });
+    const body = new URLSearchParams({ name, back: `/ui/agents/${name}`, msg });
     await fetch('/a/agent-chat', { method: 'POST', body, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   };
 
@@ -1105,7 +1105,7 @@ target: http://127.0.0.1:3005
 ---
 # Agent chat streams
 
-1. Open `/app/agents`. Expect at least one agent card.
+1. Open `/ui/agents`. Expect at least one agent card.
 2. Click an agent that has a completed run. Expect a Chat section with a composer.
 3. Type "In one line: what did your last run find?" and send.
 4. Expect the message to appear immediately as a `you` bubble, before any reply.
@@ -1136,19 +1136,19 @@ Commit subject: `dashboard: resource ceiling, http2 assertion, chat QA journey`
 
 **Files:**
 - Modify: `docs/architecture.md`, `README.md`, `agents/SETUP.md`
-- Modify: `infra/dashboard/lite.mjs` (speculation-rule exclusions for `/app`)
+- Modify: `infra/dashboard/lite.mjs` (speculation-rule exclusions for `/ui`)
 
 - [ ] **Step 1: Correct the architecture doc**
 
-`docs/architecture.md` has a section titled **"The 'app' feel is platform features, not a framework"**. It is now partly false, and leaving it is worse than not having written it. Rewrite it to say: server-rendered routes still work that way; `/app/*` routes use same-document View Transitions and client prefetch instead; and record what was traded away — bfcache and the no-JS fallback — with the measured ceilings that replaced them.
+`docs/architecture.md` has a section titled **"The 'app' feel is platform features, not a framework"**. It is now partly false, and leaving it is worse than not having written it. Rewrite it to say: server-rendered routes still work that way; `/ui/*` routes use same-document View Transitions and client prefetch instead; and record what was traded away — bfcache and the no-JS fallback — with the measured ceilings that replaced them.
 
 - [ ] **Step 2: README and SETUP**
 
-Add the `/app` routes to the README's dashboard description. In `agents/SETUP.md`, document `mows-agent chat <name> --stream` beside the existing `chat` entry, and note that unattended runs deliberately do not stream.
+Add the `/ui` routes to the README's dashboard description. In `agents/SETUP.md`, document `mows-agent chat <name> --stream` beside the existing `chat` entry, and note that unattended runs deliberately do not stream.
 
-- [ ] **Step 3: Exclude `/app` from the old speculation rules**
+- [ ] **Step 3: Exclude `/ui` from the old speculation rules**
 
-The server-rendered pages prerender links. `/app` routes must not be prerendered by that mechanism, since the app owns its own prefetch. Add `/app*` to the `not` selector in the speculation-rules block.
+The server-rendered pages prerender links. `/ui` routes must not be prerendered by that mechanism, since the app owns its own prefetch. Add `/ui*` to the `not` selector in the speculation-rules block.
 
 - [ ] **Step 4: Do NOT retire the server-rendered twins**
 

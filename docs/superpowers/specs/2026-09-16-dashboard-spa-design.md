@@ -66,8 +66,21 @@ flag becomes **per-mode**: chat turns pass it, runs do not.
 
 `lite.mjs` keeps its current responsibilities and adds three:
 
-- `GET /app/*` — the app shell: one small HTML document, the import map, and a module entry
+- `GET /ui/*` — the app shell: one small HTML document, the import map, and a module entry
   point. Identical for every SPA route; the client router reads the path.
+
+  **The namespace is `/ui`, not `/app`, and that is load-bearing.** This spec originally said
+  `/app` — and so did the plan, and so did the pre-flight conflict scan that was supposed to
+  catch exactly this. `/app` is already taken: `appView` (`lite.mjs:2191`) mints a tabid and
+  302s into the persistent terminal, `/app/live.json` feeds its chip list, and
+  `manifest()` sets `start_url: '/app'`. **An installed PWA caches its start URL**, so taking
+  `/app` would have broken the installed app on the phone it is used from most, to make room
+  for a shell that rendered one line. Found by Task 2's implementer, which stopped and asked
+  rather than transcribing the brief. `/ui` was verified free: no route, no reference in
+  `lite.mjs`, none in the Caddy template, and a live request returned 404.
+
+  Do not name the new handler `appView`. A second top-level declaration of that name silently
+  replaces the terminal launcher's — which is the same shadowing failure, one scope down.
 - `GET /api/*` — JSON for what the views need: `agents`, `agents/<name>`, `agents/<name>/runs/<id>`,
   `agents/<name>/chat`, `fleet`, `system`. These are the existing view functions with the HTML
   rendering removed, not new logic.
@@ -87,7 +100,7 @@ URL so a deploy busts the cache without a build step.
 | `preact.mjs` | preact@10.24.3 `dist/preact.module.js` | 11,429 |
 | `hooks.mjs` | preact@10.24.3 `hooks/dist/hooks.module.js` | 3,729 |
 | `htm.mjs` | htm@3.1.1 `dist/htm.module.js` | 1,207 |
-| `marked.mjs` | marked, pinned | ~12 KB gzipped |
+| `marked.mjs` | marked@14.1.3 `lib/marked.esm.js` | 92,829 raw / **18,322 gzipped** (measured; an earlier estimate of ~12 KB was wrong) |
 
 `hooks.mjs` imports bare `"preact"`; the import map resolves it. Verified: `htm.mjs` is
 self-contained. `preflight.sh` asserts each vendored file's SHA-256 against a recorded manifest,
@@ -106,7 +119,7 @@ carrying `fresh=1` or `reclaim=1`.
 - **bfcache.** Back and forward become the client's responsibility. The router restores scroll
   position per route and the chat view restores its transcript from the store, not the network.
 - **The no-JS fallback.** The fleet spec deliberately preserved a correct no-JavaScript view.
-  This design ends that for app routes. `GET /app/*` serves a `<noscript>` block linking to the
+  This design ends that for app routes. `GET /ui/*` serves a `<noscript>` block linking to the
   server-rendered equivalent for as long as one exists (§6).
 - **Two navigation models during migration**, until §6 completes.
 
@@ -195,12 +208,12 @@ file and would otherwise dominate the layout.
 
 One route at a time, each independently revertible:
 
-1. `/app/agents` and `/app/agents/<name>` — including chat. The reason for the whole change.
-2. `/app/agents/<name>/<run_id>` — the run stream.
-3. `/app/` (fleet) and `/app/system`.
+1. `/ui/agents` and `/ui/agents/<name>` — including chat. The reason for the whole change.
+2. `/ui/agents/<name>/<run_id>` — the run stream.
+3. `/ui/` (fleet) and `/ui/system`.
 4. Retire each server-rendered twin only after its replacement has run on the box for a week.
 
-`/agents` keeps serving server-rendered HTML throughout step 1–3 and redirects to `/app/agents`
+`/agents` keeps serving server-rendered HTML throughout step 1–3 and redirects to `/ui/agents`
 only at step 4. Reverting is deleting a redirect.
 
 ## 7. Not in this spec
