@@ -29,6 +29,28 @@ mkdir -p "$DH/.config/mows-agents"
   # same secret VALUE as harness-reviewer's, deliberately — see the a_b case below, which
   # depends on one signature being valid against both keys so the only variable is the name.
   echo 'WEBHOOK_SECRET_A_B=s3cret'; } > "$DH/.config/mows-agents/config"
+# The dashboard's own systemctl calls (webhook trigger, run-now) need a real init system to
+# succeed against, which this bare `docker run` container never boots (no PID 1 systemd) —
+# confirmed directly: `systemctl start foo.service` here always fails with "System has not
+# been booted with systemd as init system (PID 1). Can't operate.", regardless of whether the
+# unit exists. That's not what the webhook checks below are testing (they're testing the HMAC
+# accept/reject path), so stub systemctl the same way scripts/e2e-agents.sh does: a shim that
+# logs its invocation and exits 0, put ahead of the real binary on PATH before the dashboard
+# process starts — execFile resolves a bare command through PATH at spawn time, which is the
+# env this script hands the node process (no per-call env override in lite.mjs).
+mkdir -p /shim
+cat > /shim/systemctl <<'S'
+#!/usr/bin/env bash
+echo "systemctl $*" >> /tmp/systemctl.log
+# /shim/FAIL is a filesystem flag, not an env var: the dashboard is a long-running process
+# started once below, so a later test that needs systemctl to start failing can't do it
+# through an env var (the child's env is fixed at spawn) — but every systemctl call is a
+# fresh execFile, so a file check here is live for the rest of this script.
+[ -f /shim/FAIL ] && [ "${1:-}" = start ] && exit 1
+exit 0
+S
+chmod +x /shim/systemctl
+export PATH="/shim:$PATH"
 HOME=$DH node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
@@ -76,6 +98,15 @@ chk "webhook: the exact same signature IS valid for a well-formed name" \
 # deleted would also do. Left as a sanity check, not gate evidence.
 chk "webhook: name with @ -> 404 (sanity only, not gate evidence)" \
   '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" "http://127.0.0.1:3005/wh/a@b")" = 404 ]'
+# finding-8 proof: a valid signature must not still get 202 once systemctl actually fails —
+# otherwise the fix that made the dashboard stop lying about `systemctl start` is itself
+# unproven by this suite (this branch has already found four assertions that passed against
+# the defect they were meant to catch; this one must not be a fifth). Same request as the
+# "good HMAC -> 202" check above; only the shim's behavior changes.
+touch /shim/FAIL
+chk "webhook: systemctl failure -> honest 503, never 202" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 503 ]'
+rm -f /shim/FAIL
 chk "ttyd listening :7681"         'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:7681/term/ | grep -q "200"'
 chk "oauth2-proxy listening :4180" 'curl -s -o /dev/null http://127.0.0.1:4180/ping'
 chk "oauth2-proxy /ping healthy"   '[ "$(curl -s http://127.0.0.1:4180/ping)" = "OK" ]'
