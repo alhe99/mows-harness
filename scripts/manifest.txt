@@ -210,3 +210,4 @@ infra/dashboard/app/views/agents.mjs
 infra/dashboard/app/views/chat.mjs
 infra/dashboard/app/views/runs.mjs
 scripts/stream-replay-check.mjs
+scripts/chat-view-check.mjs

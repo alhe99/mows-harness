@@ -1881,6 +1881,21 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .chatf textarea{flex:1;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font:inherit;resize:vertical}
 .m.me{opacity:.85}.m.me .mh b{color:var(--fg)}
 .runs li{margin:4px 0}
+/* Task 7, the SPA's streaming chat view. Three notes on how this differs from the brief's block:
+   (1) the sticky composer is scoped ".chat .chatf", NOT bare ".chatf". The same class is on the
+   SERVER-rendered /agents/<name> form three rules up, and a bare override would make that page's
+   composer float over its own Runs/Events sections for the whole scroll — a visible regression on
+   a page this task does not touch. The values are the brief's, verbatim; only the selector is
+   narrowed to the SPA wrapper. (2) the brief also restated ".chatf textarea" and ".m.me" with
+   byte-for-byte the same declarations as the rules already above; re-declaring them would only
+   spend bytes against the size ceiling. (3) --kb is set by the view's visualViewport handler. */
+.chat{display:flex;flex-direction:column;gap:8px}
+.chatbox{max-height:60vh;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:10px}
+.chat .chatf{position:sticky;bottom:calc(var(--kb,0px) + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:flex-end;background:var(--bg);padding:6px 0}
+.m.streaming .mh .muted{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.mb pre{white-space:pre-wrap;word-break:break-word}
+.jump{position:sticky;bottom:70px;align-self:center}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -3298,6 +3313,19 @@ const server = http.createServer(async (req, res) => {
     if (process.env.MOWS_TEST_HOOKS === '1' && p === '/_test/chat') {
       const q = url.searchParams;
       chatBroadcast(q.get('agent'), Number(q.get('turn')), Number(q.get('seq')), q.get('delta'));
+      res.writeHead(204); return res.end();
+    }
+    // The symmetric end injector. Task 7's client guard — ignore a `chatend` whose turn is
+    // older than the one currently streaming — only fires when a DEAD turn's `closed:true`
+    // fallback lands AFTER a newer turn has started. Racing two real chat turns to reproduce
+    // that costs money and is flaky; this makes it a deterministic two-request sequence.
+    // Same MOWS_TEST_HOOKS gate as above, so it is absent on the real dashboard.
+    if (process.env.MOWS_TEST_HOOKS === '1' && p === '/_test/chatend') {
+      const q = url.searchParams;
+      const summary = {};
+      if (q.get('closed')) summary.closed = true;
+      if (q.get('cost_usd')) summary.cost_usd = Number(q.get('cost_usd'));
+      chatEnd(q.get('agent'), Number(q.get('turn')), summary);
       res.writeHead(204); return res.end();
     }
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
