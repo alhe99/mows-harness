@@ -58,11 +58,22 @@ cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
 # arriving from a Windows editor or carrying one trailing space is not exotic.
 #
 # So: strip a trailing CR from every line, allow [ \t]* after either delimiter, and require the
-# close. Asserted shape by shape in scripts/e2e-agents.sh against the REAL mows-agent-meta, so the
-# two cannot drift apart again without a red line. What awk still cannot do is tell a top-level
-# `mows:` key from the text "mows:" at column 0 inside a quoted YAML block -- that needs a parser,
-# and such a file is caught by lint the moment it is named.
-has_mows(){ awk '{sub(/\r$/,"")} NR==1&&$0!~/^---[ \t]*$/{bad=1;exit} NR>1&&!done&&$0~/^---[ \t]*$/{done=1} NR>1&&!done&&/^mows:/{f=1} END{exit !(f&&done&&!bad)}' "$1"; }
+# close. Two more shapes went the same silent way and are fixed with the key pattern (re-review,
+# R3) -- `"mows":` / `'mows':` (a quoted top-level key) and `mows :` (a space before the colon) are
+# both ordinary YAML that PyYAML reads as a top-level `mows` key, and a bare /^mows:/ matched
+# neither. Less likely than a trailing space, which is exactly what would have been said about a
+# trailing space.
+#
+# Asserted shape by shape in scripts/e2e-agents.sh against the REAL mows-agent-meta, so the two
+# cannot drift apart again without a red line, and the assertions include three files the pattern
+# must keep REFUSING (`mowsy:`, a nested `mows:` under another key, and "mows:" inside a quoted
+# string value) -- widening a regex is how you trade a false negative for a false positive.
+#
+# Named because the comment previously named only the false positive and not these false negatives,
+# and the false negatives are the direction that silently drops an agent: what awk still cannot do
+# is tell a top-level `mows:` key from the text "mows:" at column 0 inside a quoted multi-line YAML
+# block. That needs a parser, and such a file is caught by lint the moment it is named.
+has_mows(){ awk '{sub(/\r$/,"")} NR==1&&$0!~/^---[ \t]*$/{bad=1;exit} NR>1&&!done&&$0~/^---[ \t]*$/{done=1} NR>1&&!done&&/^["'"'"']?mows["'"'"']?[ \t]*:/{f=1} END{exit !(f&&done&&!bad)}' "$1"; }
 agent_file(){ # prints the single file for <name>; dies on genuine duplicates; empty if none
   # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
   # is missing its mows: block, so lint can report the exact "mows: block is required"

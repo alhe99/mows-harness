@@ -1,6 +1,6 @@
 // Browser probes for the dashboard SPA — the scripted form of docs/qa/journeys/agent-chat.md.
 //
-//   node docs/qa/probes/probes.mjs <journey|lost|repeat|csp|base> <chromium|webkit>
+//   node docs/qa/probes/probes.mjs <journey|lost|repeat|csp|base|layout> <chromium|webkit>
 //
 // Normally started by run.sh, which stands up the fixture dashboard and the proxy first. See
 // README.md in this directory for what these are, what they cannot tell you, and why preflight
@@ -131,6 +131,7 @@ try {
   else if (MODE === 'repeat') await repeat();
   else if (MODE === 'csp') await csp();
   else if (MODE === 'base') await baselinePages();
+  else if (MODE === 'layout') await layout();
   else { console.log('unknown mode: ' + MODE); failed = 1; }
 } catch (e) {
   failed = 1;
@@ -290,11 +291,31 @@ async function journey() {
 
   // The socket cut above is deliberate and every engine logs its own network error for it. Those
   // are this probe's noise; a JS error is the app's.
-  const appErrors = consoleErrors.filter(t => !/ERR_INCOMPLETE_CHUNKED_ENCODING|ERR_NETWORK_CHANGED|ERR_CONNECTION|Failed to load resource|network connection was lost|Load failed|Connection reset|failed to load/i.test(t));
+  const cutNoise = /ERR_INCOMPLETE_CHUNKED_ENCODING|ERR_NETWORK_CHANGED|ERR_CONNECTION|Failed to load resource|network connection was lost|Load failed|Connection reset|failed to load/i;
+  // ...and one engine-parsing message that is not an error at all and never was: WebKit does not
+  // implement `interactive-widget`, says so once per page load, and reports it on the console
+  // channel Playwright classifies as an error. It is not the app's, it is not uncaught, and it is
+  // not a surprise — it is the EXACT divergence the chat view's hand-written --kb handler exists to
+  // compensate for, measured in Task 9 and documented in docs/architecture.md. A check labelled
+  // "no uncaught JS errors" that fails on it is measuring something adjacent to its own name.
+  //
+  // THIS IS NOT A FILTER ADDED TO TURN A RED LINE GREEN. It made `webkit/journey` red from the day
+  // the probes were written: verified by running this exact probe against the tree at 37e540b,
+  // where it fails identically, with the same two messages, on code this round never touched. So
+  // the WebKit half of this branch's strongest client-side evidence has never once been green, and
+  // nobody noticed, because nobody ran it. Matched by its exact text and surfaced as a NOTE rather
+  // than dropped, so it stays visible and a DIFFERENT viewport warning still fails.
+  const knownEngineNotes = /Viewport argument key "interactive-widget" not recognized and ignored\./;
+  const appErrors = consoleErrors.filter(t => !cutNoise.test(t) && !knownEngineNotes.test(t));
   check('no uncaught JS errors in this engine', appErrors.length === 0, appErrors.slice(0, 5));
-  if (consoleErrors.length !== appErrors.length) {
-    note('network errors from the deliberate socket cut, ignored: '
-      + JSON.stringify(consoleErrors.filter(t => !appErrors.includes(t)).slice(0, 3)));
+  const engineNotes = consoleErrors.filter(t => knownEngineNotes.test(t));
+  if (engineNotes.length) {
+    note(`engine ignored interactive-widget=resizes-content (${engineNotes.length}x) — expected in `
+      + 'WebKit, and the reason the view carries its own --kb handler');
+  }
+  const cutErrors = consoleErrors.filter(t => cutNoise.test(t));
+  if (cutErrors.length) {
+    note('network errors from the deliberate socket cut, ignored: ' + JSON.stringify(cutErrors.slice(0, 3)));
   }
 }
 
@@ -428,4 +449,111 @@ async function baselinePages() {
   const styled = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   check('inline styles still apply (the baseline names no style-src)',
     styled !== '' && styled !== 'rgba(0, 0, 0, 0)', styled);
+}
+
+// ---- layout: the assertions that need a renderer -----------------------------------------------
+//
+// WHY THIS MODE EXISTS. The eleven assertions e2e-infra.sh makes about /ui's chrome are greps over
+// the served markup. They prove the right elements with the right hrefs are IN the document, and
+// they are structurally incapable of seeing where those elements land. The fix that added the tab
+// bar also added a fixed terminal FAB, which covered the chat composer's Send button on every
+// phone width in both engines -- elementFromPoint at the button's own centre returned the FAB, so
+// tapping Send opened the terminal -- and all eleven stayed green (re-review, R1).
+//
+// It also closes the residual the same re-review named: nothing asserted that .tabs is actually
+// RENDERED below 701px and the pill-nav header above it. Changing .navdup's media query would
+// leave both navs in the markup, neither one visible, and every grep green.
+//
+// Everything here is read from getBoundingClientRect() and document.elementFromPoint() after a
+// real layout, at four viewports. No markup matching.
+async function layout() {
+  // Overlap in CSS pixels; null when the two boxes do not intersect at all.
+  const overlap = (a, b) => {
+    const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    return (w > 0 && h > 0) ? { w: Math.round(w), h: Math.round(h) } : null;
+  };
+  const probe = () => page.evaluate(() => {
+    // THE PRECONDITION, and without it this whole mode is vacuous — measured, not assumed: the
+    // first version of this probe passed at all four viewports against the BROKEN code.
+    //
+    // The composer is position:sticky, and sticky can never push an element outside its own
+    // containing block. That block is .chat, whose height is .chatbox + the composer — so the
+    // composer only reaches its sticky offset (and therefore the FAB) once .chat's own bottom edge
+    // is at or below it, which needs a TALL TRANSCRIPT, not merely a tall page. The fixture agent
+    // has a two-line transcript, so .chat ends ~290px above the line and nothing can collide.
+    //
+    // Both dimensions are grown through CSSOM (element.style, which CSP does not govern — the same
+    // reason the view's own --kb handler works under the /ui policy; an injected <style> tag would
+    // be refused). .chatbox is taken to 60vh, which is its OWN designed max-height, so this is the
+    // shape any real chat reaches after a few turns rather than an invented one; .events is padded
+    // so the document scrolls. Whether it worked is asserted, not assumed.
+    const box = document.querySelector('.chatbox');
+    if (box) box.style.minHeight = '60vh';
+    const ev = document.querySelector('.events');
+    if (ev) ev.style.minHeight = '1400px';
+    const r = el => { if (!el) return null; const b = el.getBoundingClientRect();
+      return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, w: Math.round(b.width), h: Math.round(b.height) }; };
+    const send = document.querySelector('.chat .chatf button');
+    const b = send && send.getBoundingClientRect();
+    // The element a tap at the Send button's own centre would actually reach. This is the whole
+    // assertion: a button can be present, correctly sized and completely unclickable.
+    const hit = b ? document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) : null;
+    const form = document.querySelector('.chat .chatf');
+    const fb = form && form.getBoundingClientRect();
+    return {
+      fab: r(document.querySelector('.termfab')),
+      send: r(send),
+      // Stuck = the page can scroll AND the composer is sitting at its sticky offset (70px above
+      // the scrollport bottom, since env(safe-area-inset-bottom) and --kb are both 0 headless)
+      // rather than in flow. Asserted separately, so a probe that quietly measured a short page
+      // reads as a failure instead of as a pass.
+      scrollable: document.scrollingElement.scrollHeight > window.innerHeight + 50,
+      composerStuck: !!fb && Math.abs((window.innerHeight - fb.bottom) - 70) <= 2,
+      composerGap: fb ? Math.round(window.innerHeight - fb.bottom) : null,
+      hitIsSend: hit === send,
+      // className on an SVG element is an SVGAnimatedString, which JSON.stringify renders as {} —
+      // and the thing on top here is the FAB's inline <svg>, so the naive read told you nothing
+      // about what you had actually hit. Report the nearest element that carries a real class.
+      hitClass: hit ? (hit.closest('[class]')?.getAttribute('class') || hit.tagName) : null,
+      tabsShown: (() => { const e = document.querySelector('nav.tabs'); if (!e) return null;
+        const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; })(),
+      hdrShown: (() => { const e = document.querySelector('header.hdr'); if (!e) return null;
+        const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; })(),
+    };
+  });
+
+  // 375x812 is the viewport docs/qa/journeys/agent-chat.md step 8 names; 414x896 is the other
+  // phone geometry the mobile journey uses; 1024 and 1400 are where .tabs is gone and the header
+  // is the navigation. The desktop widths are not decoration -- R1's overlap was 12x26 at 1024,
+  // smaller than on a phone but not absent, which is why the fix is not inside a media query.
+  for (const [w, h, phone] of [[375, 812, true], [414, 896, true], [1024, 800, false], [1400, 900, false]]) {
+    await page.setViewportSize({ width: w, height: h });
+    await page.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
+    await page.waitForSelector('.chat .chatf button', { timeout: 15000 });
+    await sleep(250);
+    await probe();              // first call grows the page
+    await sleep(150);
+    const m = await probe();    // ...second one measures it settled
+
+    // Only the phone widths pin the composer: above 701px .tabs is gone, the clearance media query
+    // does not apply, and the composer sticks at bottom:0. Both states are real; what must not
+    // happen is measuring a page too short to stick anything and calling it a pass.
+    check(`${w}x${h}: the page scrolls and the composer is in its sticky state (precondition)`,
+      m.scrollable === true && (phone ? m.composerStuck === true : m.composerGap === 0),
+      { scrollable: m.scrollable, composerGap: m.composerGap });
+
+    check(`${w}x${h}: the terminal FAB does not overlap the Send button`,
+      m.fab && m.send && overlap(m.fab, m.send) === null,
+      { overlap: m.fab && m.send ? overlap(m.fab, m.send) : 'a box is missing', fab: m.fab, send: m.send });
+    check(`${w}x${h}: a tap at the Send button's centre reaches the Send button`,
+      m.hitIsSend === true, m.hitClass);
+    // Which nav is the ONLY navigation at this width. Asserted in both directions, because a
+    // media-query change that hid both would otherwise read as a pass on the half it still had.
+    check(`${w}x${h}: the ${phone ? 'tab bar is' : 'pill-nav header is'} the rendered navigation`,
+      phone ? (m.tabsShown === true && m.hdrShown === false)
+            : (m.hdrShown === true && m.tabsShown === false),
+      { tabsShown: m.tabsShown, hdrShown: m.hdrShown });
+  }
+  await page.setViewportSize({ width: 900, height: 800 });
 }

@@ -1959,6 +1959,22 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 @media(max-width:700px){
 .uiapp .chat .chatf{bottom:calc(env(safe-area-inset-bottom,0px) + max(var(--kb,0px),70px))}
 .uiapp .jump{bottom:calc(70px + max(var(--kb,0px),70px))}}
+/* THE THIRD FIXED ELEMENT. The clearance above moved the composer and the jump button and did not
+   consider .termfab, which pageChrome() also puts into the /ui shell and which was not there
+   before. Measured in Chromium AND WebKit at 375x812 and 414x896: the FAB covered 46 of the Send
+   button's 56 px of width and its full 34 px of height, and document.elementFromPoint() at the
+   button's own centre returned the FAB. Tapping Send opened the terminal. It is not phone-only —
+   at 1024 the overlap was still 12x26 (re-review, R1).
+   The fix is layout, not another offset: the FAB sits at most 60px in from the VIEWPORT's right
+   edge (right:14px + 46px wide), and the composer's own right edge is already inset from that edge
+   by body padding, so reserving 60px inside the composer clears it at every width by construction
+   — no arithmetic per breakpoint, nothing to re-derive if the FAB moves closer to the edge. It is
+   deliberately NOT inside the media query above: the desktop overlap is smaller, not absent.
+   Not hiding the FAB on /ui instead: the terminal is an ACTION and was never a nav tab (see the
+   FAB's own comment), so the tab bar does not replace it, and hiding it would make the terminal
+   unreachable from the app. Asserted on GEOMETRY, not markup, by the "layout" mode of
+   docs/qa/probes/probes.mjs — eleven greps over the served HTML could not see this and did not. */
+.uiapp .chat .chatf{padding-right:60px}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet

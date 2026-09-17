@@ -363,7 +363,7 @@ does, or it grows back into the bundle `lite.mjs` was written to delete. Five ga
 | Gate | Where | What it holds | Measured now |
 |---|---|---|---|
 | client-asset ceiling | preflight 5b | every `.mjs`/`.css` under `app/`, gzip -9, summed | 45,494 B of 76,800 B |
-| **served-document ceiling** | `e2e-infra.sh` | the real `GET /ui` response, gzipped | **~16,100 B of 20,480 B** |
+| **served-document ceiling** | `e2e-infra.sh` | the real `GET /ui` response, at gzip -9 | **~16,750 B of 20,480 B** |
 | vendored-module hashes | preflight 5b | `app/vendor/SHA256SUMS`, checked with `sha256sum -c` | 4 modules pinned |
 | chat-view XSS gate | preflight 5c | `scripts/chat-view-check.mjs` over the renderer | 91 assertions |
 | capability honesty gate | preflight 5d | `scripts/capability-check.mjs` over the panel | 170 assertions |
@@ -380,7 +380,11 @@ exists to police and precisely the one the static gate is blind to. Splitting th
 measured rather than assumed — proved able to fail by planting ~40 KB of extra rules in the `CSS`
 constant, which takes the response to 27,054 B gzipped and turns the assertion red. (The figure
 is written approximate because it is not byte-stable: gzip output varies by a few bytes between
-runs, and four consecutive runs measured 16,099–16,105. The ceiling is what is exact.)
+runs. The ceiling is what is exact, and it is an integer compared with `-le`, so that variance
+cannot flip it against ~3,700 B of headroom. The check re-compresses at `-9` to match 5b's
+convention; `send()` ships `gzipSync` at zlib's default, which measures about 0.6 % more on the
+wire — so the label says "at gzip -9" rather than "as served", which would be describing something
+adjacent to what it measures.)
 
 The served-document ceiling lives in `e2e-infra.sh` rather than preflight because it needs a
 running dashboard to `GET`, and preflight is a static gate that must not boot a server. That makes
@@ -422,16 +426,23 @@ agent can do" is the summary that undoes it. Field by field, with the gaps it de
   it, which is what the gate asserts, but which one matches the CLI is unmeasured.
 - **Prerender *activation*.** Chrome reports `PrerenderingDisabledByDevTools` whenever CDP is
   attached, so automation can only see the prerender request, never the activation.
-- **The tab bar's geometry on a real phone.** `e2e-infra.sh` asserts both navs are *served* with
-  the right links; that the composer clears the fixed bar, and that the `max()` collapses
-  correctly when the keyboard is up, is arithmetic against the bar's documented 59 px + safe-area
-  height and has not been seen on a device. Same gap as the on-screen keyboard above, and the
-  same answer: a physical phone.
+- **The chrome's geometry with a keyboard up, and on a real device.** This was previously listed
+  here as unverified *in full*, and the defect was inside the caveat: the terminal FAB covered the
+  Send button at every phone width, in both engines, and eleven grep-over-markup assertions could
+  not see it. The geometry that can be measured now is — `docs/qa/probes/probes.mjs`'s `layout`
+  mode reads `getBoundingClientRect()` and `elementFromPoint()` at four viewports in Chromium and
+  WebKit, and asserts its own sticky-state precondition first, because its first version passed at
+  all four against the broken code. What remains unverified is narrower and honest: the
+  keyboard-up half (Playwright raises no keyboard in any engine, so the `max()` collapse is still
+  reasoned from `resizes-content` semantics) and a physical device.
 
 The scripted browser evidence that *does* exist, including the WebKit runs, is in
 `docs/qa/probes/` — SKIP-gated on a Playwright install, with the install command in its README
-and in the skip output. HTTP/2 against a live host is not in that set; it is the `MOWS_HOST`
-assertion below.
+and in the skip output. **A skip is not a result**: that SKIP was once believed rather than
+checked, on a box where Playwright was in fact installed at the exact path the loader searches,
+and the cost of believing it was a High-severity layout defect shipping. If a probe skips, find
+out why before treating the run as evidence of anything. HTTP/2 against a live host is not in that
+set; it is the `MOWS_HOST` assertion below.
 
 **What was specified and never built** is a different list and is kept with the spec, not here:
 see the ADDENDUM at the end of
@@ -536,13 +547,19 @@ identifier and blocks the publish, which is why the suite reads it from the envi
 one gate against the silent risk was, for the whole branch, guarded by a maintainer remembering
 to type a variable — it ran exactly once, by hand, in Task 10.
 
-`.github/workflows/e2e-infra.yml` now passes `MOWS_HOST: ${{ vars.MOWS_HOST }}` — a repository
-**variable**, which is not a file and never enters the tree. Set it once in the repo settings and
-the nightly job covers the assertion; leave it unset, which is every fork and every clone, and it
-expands to the empty string and the check SKIPs loudly exactly as before. That closes the gap for
-whoever sets it and closes nothing for anyone who does not, which is the honest description: the
-tension between "assert it in CI" and "never commit the domain" is not resolved, only made
-one setting away from resolved.
+`.github/workflows/e2e-infra.yml` passes `MOWS_HOST: ${{ secrets.MOWS_HOST }}`. A **secret**, not
+a repository variable, and the distinction is the whole point: GitHub masks `secrets.*` in Actions
+logs and does **not** mask `vars.*`, so the first version of this line would have published the
+hostname into a public log the moment anyone set it — routing around the very gate that keeps it
+out of the tree. Belt and braces, because a mask is not a plan: `e2e-infra.sh` no longer
+interpolates the host into its echo or its `chk` label either, so the assertion carries the same
+meaning without naming the host anywhere. Set the secret once and the nightly job covers the
+check; leave it unset — every fork, every clone — and it expands to the empty string and the check
+SKIPs loudly exactly as before.
+
+That closes the gap for whoever sets it and closes nothing for anyone who does not, which is the
+honest description: the tension between "assert it in CI" and "never commit the domain" is not
+resolved, only reduced to one repository setting.
 
 #### Known and unguarded — read before raising a budget or adding a caller
 

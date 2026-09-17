@@ -556,7 +556,19 @@ fm_body(){ printf 'name: %s\nmows:\n  profile: default\n  workdir: %s\n  task: t
 # ...and the divergence in the other direction: an opening delimiter and a mows: line with NO
 # closing delimiter is not frontmatter at all to the validator, and must not be swept in.
 { printf -- '---\n'; fm_body fm-noclose; } > "$A/fm-noclose.md"
-for shape in opensp opentab crlf; do
+# R3: two more shapes that went the same silent way -- a QUOTED top-level key and a space before
+# the colon are both ordinary YAML that PyYAML reads as a `mows` key, and a bare /^mows:/ matched
+# neither.
+{ printf -- '---\n'; printf 'name: fm-quoted\n"mows":\n'; printf '  profile: default\n  workdir: %s\n  task: t\n  budget: { usd_per_run: 1, max_turns: 2 }\n' "$T/work"; printf -- '---\nbody\n'; } > "$A/fm-quoted.md"
+{ printf -- '---\n'; printf 'name: fm-spacecolon\nmows :\n'; printf '  profile: default\n  workdir: %s\n  task: t\n  budget: { usd_per_run: 1, max_turns: 2 }\n' "$T/work"; printf -- '---\nbody\n'; } > "$A/fm-spacecolon.md"
+# ...and the three the pattern must keep REFUSING. Widening a regex trades a false negative for a
+# false positive unless you say where the new edge is, so the edge is asserted, not assumed:
+# a DIFFERENT key that merely starts with the same letters, a nested `mows:` under another key,
+# and the literal text "mows:" inside a quoted string VALUE.
+{ printf -- '---\nname: fm-mowsy\nmowsy: 1\n---\nbody\n'; } > "$A/fm-mowsy.md"
+{ printf -- '---\nname: fm-nested\nouter:\n  mows: 1\n---\nbody\n'; } > "$A/fm-nested.md"
+{ printf -- '---\nname: fm-quotedval\ndesc: "mows: not a key"\n---\nbody\n'; } > "$A/fm-quotedval.md"
+for shape in opensp opentab crlf quoted spacecolon; do
   chk "discovery: '$shape' frontmatter reaches \`list\` (the filter does not drop it)" \
     "mows-agent list | grep -qE '^fm-$shape '"
   chk "discovery: '$shape' — and the validator reads a mows: block out of the same file" \
@@ -570,6 +582,12 @@ chk "discovery: no closing delimiter is not frontmatter, and \`lint --all\` does
   '! mows-agent lint --all 2>&1 | grep -q "^== fm-noclose$"'
 chk "discovery: 'noclose' — and the validator reads no frontmatter out of it either" \
   '! mows-agent-meta json "$A/fm-noclose.md" 2>/dev/null | jq -e "has(\"mows\")" >/dev/null 2>&1'
+for shape in mowsy nested quotedval; do
+  chk "discovery: '$shape' is NOT a mows agent, and \`lint --all\` does not sweep it in" \
+    "! mows-agent lint --all 2>&1 | grep -q '^== fm-$shape\$'"
+  chk "discovery: '$shape' — and the validator reads no top-level mows key out of it either" \
+    "! mows-agent-meta json \"\$A/fm-$shape.md\" 2>/dev/null | jq -e 'has(\"mows\")' >/dev/null 2>&1"
+done
 rm -f "$A"/fm-*.md
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"

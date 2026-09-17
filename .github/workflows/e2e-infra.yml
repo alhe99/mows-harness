@@ -55,12 +55,18 @@ jobs:
       # maintainer typing the variable by hand -- a gate against a silent risk, itself guarded by
       # somebody remembering (final review, M5).
       #
-      # `vars.MOWS_HOST` is a repository VARIABLE, not a file: preflight's forbidden-string gate
-      # treats a real domain as a leaked identifier, so the hostname cannot live in this tree and
-      # the suite reads it from the environment for exactly that reason. Unset -- which is every
-      # fork, every clone and this repo until somebody sets it -- expands to the empty string and
-      # the assertion SKIPs loudly, precisely as it does today. Nothing about that tension is
-      # solved by this line; it is documented in docs/architecture.md, and this is the hook.
+      # `secrets.MOWS_HOST`, NOT `vars.MOWS_HOST`. preflight's forbidden-string gate treats a real
+      # domain as a leaked identifier, so the hostname cannot live in this tree and the suite reads
+      # it from the environment for exactly that reason -- and a repository VARIABLE is not masked
+      # in Actions logs, so the first version of this line would have published the hostname into a
+      # public log the moment anyone set it, routing around the gate it exists to respect
+      # (re-review, R4). GitHub masks `secrets.*`. Belt and braces: e2e-infra.sh no longer prints
+      # the host into its echo or its chk label either, so the assertion is safe even where the
+      # mask does not reach.
+      # Unset -- every fork, every clone, and this repo until somebody sets it -- expands to the
+      # empty string and the assertion SKIPs loudly, precisely as before. The tension between
+      # "assert it in CI" and "never commit the domain" is not solved by this line, only reduced to
+      # one repository setting; it is written up in docs/architecture.md.
       - run: ./scripts/e2e-infra
         env:
-          MOWS_HOST: ${{ vars.MOWS_HOST }}
+          MOWS_HOST: ${{ secrets.MOWS_HOST }}

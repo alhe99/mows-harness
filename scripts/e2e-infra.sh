@@ -223,9 +223,14 @@ chk "dashboard: ...and an unrecognised /ui path falls back to /agents, not to th
 # on top of the gated total, no-cache, never 304-able because the nonce changes per response, and
 # growing every time somebody styles an unrelated page (final review, M2). Measured here because
 # this is the only place in the repo where a real GET /ui exists.
+# "at gzip -9", not "as served": this re-compresses the body locally at -9, matching preflight
+# 5b's convention, while send() ships gzipSync at zlib's default level. Measured, so the label is
+# not guessing: 16,105 B here against 16,198 B actually on the wire, a 93 B / 0.6% gap. Immaterial
+# against 4,375 B of headroom, but a label describing something adjacent to what it measures is
+# this branch's own recurring defect and is not worth committing twice (re-review, M2 note).
 UIGZ=$(curl -s http://127.0.0.1:3005/ui | gzip -9 -c | wc -c)
-echo "  served GET /ui: ${UIGZ}B gzipped of 20480B ceiling"
-chk "dashboard: served /ui document <= 20480B gzipped (spec D3, the half 5b cannot see)" \
+echo "  the /ui document at gzip -9: ${UIGZ}B of 20480B ceiling"
+chk "dashboard: /ui document <= 20480B at gzip -9 (spec D3, the half 5b cannot see)" \
   '[ -n "$UIGZ" ] && [ "$UIGZ" -le 20480 ]'
 # The server-rendered pages must NOT prerender /ui links. Today no /ui href matches the
 # href_matches allowlist anyway, so the BEHAVIOUR would be right even with the exclusion removed —
@@ -424,8 +429,14 @@ echo "### the two resource facts a browser depends on and nothing else here meas
 MOWS_HOST="${MOWS_HOST:-}"
 if [ -n "$MOWS_HOST" ]; then
   HV=$(curl -s --max-time 15 -o /dev/null -w '%{http_version}' "https://$MOWS_HOST/" 2>/dev/null)
-  echo "  negotiated HTTP version on $MOWS_HOST: ${HV:-<none>}"
-  chk "http2 negotiated on $MOWS_HOST (spec §3)" '[ "$HV" = 2 ]'
+  # THE HOSTNAME IS NOT PRINTED, and that is not tidiness. preflight.sh treats a real domain as a
+  # leaked identifier and this repo scans its own history for them, which is the entire reason the
+  # host is read from the environment instead of living in a file. This echo and this label used to
+  # interpolate it -- so the moment the check ran in CI it wrote the domain into a log, routing
+  # around the gate (re-review, R4). The workflow supplies it from secrets.MOWS_HOST, which GitHub
+  # masks; that mask is a second line of defence, not the reason this line is safe.
+  echo "  negotiated HTTP version on the configured live host: ${HV:-<none>}"
+  chk "http2 negotiated on the live host (spec §3)" '[ "$HV" = 2 ]'
 else
   echo "SKIP: http2 check — set MOWS_HOST to the live host to run it (spec §3, load-bearing)"
 fi
