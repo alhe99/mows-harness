@@ -154,15 +154,50 @@ export function renderPartial(text) {
 // function rather than a copy of its rules, which is how the rules and their gate stay in step.
 export function reconcile(list, pendingUsers, salvage) {
   const turns = Array.isArray(list) ? list : [];
-  // The user's own messages first, matched as a MULTISET and not a set. Asking the same question
-  // twice is two messages; membership-matching would call the second one saved because the first
-  // one was, and delete it — the same class of mistake as the "is the last entry an assistant
-  // turn?" version of the reply rule that re-review R5 threw out.
-  const pool = turns.filter(t => t && t.role === 'user').map(t => String(t.text ?? ''));
-  const missingUsers = [];
+  const txt = t => String(t && t.text != null ? t.text : '');
+  // The user's own messages first, matched by COUNT AGAINST A BASELINE rather than by membership.
+  //
+  // Membership ("is this text anywhere in the transcript?") calls a repeated question saved because
+  // an EARLIER one was, and deletes it. Round 1's comment claimed to have fixed that and the code
+  // did not: it consumed matches from a pool, which handles two pendings in flight at once and not
+  // the case the comment actually described — ask "status?", have it saved, ask "status?" again,
+  // and the second is absorbed by the first one's record (review F1). A comment that describes a
+  // guarantee the code does not provide is worse than no comment, because the next reader stops
+  // checking.
+  //
+  // `baseline` is how many user turns already carried this exact text when the message was sent,
+  // counting only transcript-backed ones. A pending is saved only once the refetched count EXCEEDS
+  // that. No clock is involved: a client `at` and a server `at` cannot be compared safely, and
+  // ordering by them would be a guess dressed as a rule.
+  //
+  // Pendings sharing one text are resolved in send order, and by construction share one baseline —
+  // a later message is only given a higher baseline once the earlier one's record has actually
+  // landed, at which point it is no longer pending. So `count - baseline` is exactly how many of
+  // them the transcript now accounts for.
+  const countOf = s => turns.reduce((n, t) => n + (t && t.role === 'user' && txt(t) === s ? 1 : 0), 0);
+  const groups = new Map();
   for (const p of pendingUsers || []) {
-    const at = pool.indexOf(String(p && p.text != null ? p.text : ''));
-    if (at === -1) missingUsers.push(p); else pool.splice(at, 1);
+    const s = txt(p);
+    if (!groups.has(s)) groups.set(s, []);
+    groups.get(s).push(p);
+  }
+  const saved = new Set();
+  for (const [s, ps] of groups) {
+    // Missing baseline (an older pending, or a direct caller that did not supply one) means 0,
+    // which is the round-1 behaviour: safe in the flattering direction only for the first copy.
+    const base = Math.min(...ps.map(p => Number(p && p.baseline) || 0));
+    const accounted = Math.max(0, Math.min(ps.length, countOf(s) - base));
+    for (let i = 0; i < accounted; i++) saved.add(ps[i]);
+  }
+  // A pending already reported to the operator is not shown again and not re-reported. Round 1
+  // kept it pending forever, so it was re-appended BELOW every later question and its reply, and
+  // the alert re-fired each turn describing a failure several turns old (review F2). The transcript
+  // is authoritative from the second turn onward; the message has been named once, and the text has
+  // been handed back to the composer.
+  const missingUsers = [], retired = [];
+  for (const p of pendingUsers || []) {
+    if (saved.has(p)) continue;
+    (p && p.reported ? retired : missingUsers).push(p);
   }
   let out = missingUsers.length ? [...turns, ...missingUsers] : turns;
   // ...then the reply, appended AFTER the question it answers rather than before it.
@@ -182,7 +217,7 @@ export function reconcile(list, pendingUsers, salvage) {
       salvagedReply = true;
     }
   }
-  return { turns: out, missingUsers, salvagedReply };
+  return { turns: out, missingUsers, retired, salvagedReply };
 }
 
 export function Chat({ name, runs }) {
@@ -200,6 +235,11 @@ export function Chat({ name, runs }) {
   const chatable = (runs || []).some(r => r.state === 'done');
 
   useEffect(() => {
+    // Pendings belong to the agent they were typed at. Today `Chat` unmounts when `name`
+    // changes, because AgentDetail blanks its data while refetching — but that is a loading
+    // state, not a contract, and the ordinary optimisation of keeping the old data on screen
+    // would leak one agent's lost message into another's transcript and warning (review F2).
+    pendingRef.current = [];
     getJSON(`/api/agents/${name}/chat`).then(d => setTurns(d.turns)).catch(() => {});
     connect(['agents', `chat:${name}`]);
     const offA = subscribe('chat', d => {
@@ -251,28 +291,41 @@ export function Chat({ name, runs }) {
           const mine = turnRef.current === endedTurn;
           const r = reconcile(list, pendingRef.current, mine ? salvage : '');
           setTurns(r.turns);
-          pendingRef.current = r.missingUsers;
+          // Anything still missing is now marked reported, so the next turn shows it neither again
+          // nor silently — reconcile retires it instead of re-appending it under a later exchange.
+          pendingRef.current = r.missingUsers.map(q => ({ ...q, reported: true }));
           if (r.missingUsers.length) {
-            setErr('Your message is not in the saved transcript — the turn ended before the agent recorded it, so it probably never ran. It is still shown above, and it will be gone if you reload.');
             // Hand the text back as well as saying so. Only when the composer is empty (the
             // operator may already be typing something else) and only when no reply arrived at
             // all — after a real reply a retry would be a duplicate question, not a recovery.
             const lost = r.missingUsers[r.missingUsers.length - 1];
-            if (!salvage && taRef.current && !taRef.current.value) taRef.current.value = String(lost && lost.text || '');
+            const handedBack = !salvage && taRef.current && !taRef.current.value;
+            if (handedBack) taRef.current.value = String(lost && lost.text || '');
+            // The sentence has to match what actually happens next, or it becomes the "label that
+            // lies" shape in the very code written to stop one: the message is shown until the
+            // transcript next reloads, and then it is gone.
+            setErr('Your message was not saved — the turn ended before the agent recorded it, so it probably never ran. It is shown below until the transcript reloads' +
+              (handedBack ? '; the text is back in the composer.' : ' — copy it before sending anything else.'));
           } else if (r.salvagedReply) {
             setErr('Reply shown above, but it is not in the saved transcript yet.');
           }
           settle();
         })
         .catch(() => {
-          // The refetch failed outright, so the transcript will not arrive at all. Same rule:
-          // settle what is on screen rather than blanking it or leaving a bubble pulsing
-          // "in progress" forever. Reconciling against the CURRENT turns is what makes this safe
-          // to run here: the pending message is already in that list, so it matches itself and is
-          // not appended twice.
-          if (turnRef.current === endedTurn && salvage) setTurns(t => reconcile(t, pendingRef.current, salvage).turns);
+          // The refetch failed outright, so the transcript never arrives and NOTHING can be
+          // concluded about what was saved. Settle what is on screen rather than blanking it or
+          // leaving a bubble pulsing "in progress" forever, and leave every pending PENDING: a
+          // failed fetch is not evidence that a message is missing, and it is not evidence that it
+          // is present either. Hence `[]` here — only the reply is salvaged; the pendings are
+          // already in `t` and must not be resolved against a list that proves nothing.
+          if (turnRef.current === endedTurn && salvage) setTurns(t => reconcile(t, [], salvage).turns);
           settle();
-          setErr('Reply received, but reloading the transcript failed. Reload to confirm it was saved.');
+          // Round 1 said "Reply received" on this branch unconditionally, including when no reply
+          // had arrived at all — which is exactly the turn-died-early case this round is about
+          // (review F11). Say only what is known.
+          setErr(salvage
+            ? 'Reply received, but reloading the transcript failed. Reload to confirm it was saved.'
+            : 'The turn ended and reloading the transcript failed, so this view may be out of date. Reload to see what was saved.');
         });
     });
     return () => { offA(); offB(); };
@@ -301,7 +354,14 @@ export function Chat({ name, runs }) {
     const msg = taRef.current.value.trim(); if (!msg) return;
     taRef.current.value = '';
     // Kept by reference so the optimistic bubble can be withdrawn again if the POST never lands.
-    const pending = { at: new Date().toISOString(), role: 'user', text: msg };
+    // How many TRANSCRIPT-BACKED user turns already carry this exact text. Our own optimistic
+    // copies are subtracted: they sit in `turns` and are not in the transcript, and counting them
+    // would raise the bar so far that a genuinely saved message read as lost. reconcile treats the
+    // message as saved only once the refetched count exceeds this, which is what makes a REPEATED
+    // question distinguishable from the earlier one that was saved (review F1).
+    const sameText = t => t && t.role === 'user' && String(t.text ?? '') === msg;
+    const baseline = turns.filter(sameText).length - pendingRef.current.filter(sameText).length;
+    const pending = { at: new Date().toISOString(), role: 'user', text: msg, baseline: Math.max(0, baseline) };
     // Also recorded OUTSIDE the turns list, so the refetch that replaces that list wholesale can
     // be asked whether it actually contains this message (see reconcile above).
     pendingRef.current = [...pendingRef.current, pending];

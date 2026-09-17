@@ -570,4 +570,61 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
     again.missingUsers.length === 0 && again.turns.filter(t => t.role === 'user').length === 1, again);
 }
 
+// ---- the cross-turn repeat, which round 1's fixtures could not have caught (review F1) --------
+//
+// Every fixture above uses a text that appears nowhere else in the transcript, so all of them stay
+// green while a repeated question is silently deleted. These use a transcript that ALREADY CONTAINS
+// the text being sent — the only shape that can tell membership-matching apart from counting.
+{
+  // Asked once, saved. Asked again, and the turn dies before anything is recorded: the transcript
+  // still holds exactly one "status?", and the pending was sent when it held one, so it is NOT
+  // accounted for. Round 1 declared it saved and dropped it with no warning.
+  const repeat = reconcile([U('status?'), A('all green')], [{ ...U('status?'), baseline: 1 }], '');
+  check('reconcile: a REPEATED question is not absorbed by the earlier one that was saved',
+    repeat.missingUsers.length === 1 && texts(repeat) === 'user:status?|assistant:all green|user:status?', repeat);
+  // ...and the happy path for that same repeat: the transcript comes back with two, so it IS saved.
+  const repeatOk = reconcile([U('status?'), A('all green'), U('status?')], [{ ...U('status?'), baseline: 1 }], '');
+  check('reconcile: ...and once the transcript does carry the second one, it is not re-added',
+    repeatOk.missingUsers.length === 0 && repeatOk.turns.length === 3, repeatOk);
+  // Two sent back to back while the first is still pending share one baseline, and the transcript
+  // accounts for exactly one of them.
+  const both = reconcile([U('ping'), A('pong'), U('ping')],
+    [{ ...U('ping'), baseline: 1 }, { ...U('ping'), baseline: 1 }], '');
+  check('reconcile: two identical messages in flight, one recorded — exactly one is reported lost',
+    both.missingUsers.length === 1, both);
+  // The baseline is a floor, not an equality: a transcript that gained two while one was pending
+  // still accounts for that one.
+  const grew = reconcile([U('q'), U('q'), U('q')], [{ ...U('q'), baseline: 1 }], '');
+  check('reconcile: a transcript that gained more copies than expected still accounts for the pending',
+    grew.missingUsers.length === 0, grew);
+  // No baseline at all (a direct caller, or a pending from before this rule) means 0, which is the
+  // round-1 behaviour rather than a crash.
+  const noBase = reconcile([A('hi')], [U('fresh')], '');
+  check('reconcile: a pending with no baseline still works, it is not required',
+    noBase.missingUsers.length === 1, noBase);
+}
+
+// ---- a lost message is named ONCE, not on every turn afterwards (review F2) --------------------
+//
+// Round 1 kept it pending forever, so it was re-appended below every later question AND its reply,
+// and the alert re-fired each turn describing a failure several turns old.
+{
+  const lost = { ...U('lost one'), baseline: 0 };
+  const first = reconcile([U('prev'), A('prev reply')], [lost], '');
+  check('reconcile: a lost message is shown and reported the first time',
+    first.missingUsers.length === 1 && texts(first).endsWith('user:lost one'), first);
+  // The caller marks what it reported; the next turn must retire it rather than re-append it.
+  const reported = first.missingUsers.map(q => ({ ...q, reported: true }));
+  const second = reconcile([U('prev'), A('prev reply'), U('next'), A('next reply')], reported, '');
+  check('reconcile: on the NEXT turn it is retired, not re-appended below a later exchange',
+    second.missingUsers.length === 0 && !texts(second).includes('lost one'), second);
+  check('reconcile: ...and the caller can see it was retired rather than saved',
+    second.retired.length === 1 && second.retired[0].text === 'lost one', second.retired);
+  // A reported pending that DOES turn up in the transcript counts as saved, not as retired — the
+  // two states are different and the caller says different things about them.
+  const landed = reconcile([U('lost one')], reported, '');
+  check('reconcile: a reported message that turns up in the transcript is saved, not retired',
+    landed.retired.length === 0 && landed.missingUsers.length === 0, landed);
+}
+
 process.exit(failed ? 1 : 0);
