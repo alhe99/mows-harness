@@ -212,6 +212,40 @@ chk "lint: ...and the comma-string form of that same declaration agrees with it"
 # all three would pass with can_write hard-wired true.
 chk "lint: a genuinely read-only agent still warns (the control for the two above)" \
   'mows-agent lint prro 2>&1 | grep -q "nothing to merge"'
+# ---- an ABSENT tools: key inherits everything, including Bash (Task 9 round 2, review F4) -----
+# as_list(None) is [] for an absent key and for `tools: null` alike, so `set(tools or [])` was
+# empty and can_write said "read-only" about an agent that inherits the shell. Two agents with
+# identical capability got opposite verdicts, and the flattering one went to the file that says
+# the least. The consequence is not cosmetic: it SUPPRESSED the warning below, which is about an
+# untrusted external trigger on an agent that can run shell commands.
+#
+# Asserted through both consumers of can_write, because they fail in opposite directions: the
+# webhook warning fails OPEN (silence about a real risk) and merge.policy: pr fails CLOSED (a
+# spurious error). A fix that only moved one of them would look right from the other.
+mkagent "$A/inheritwh.md" "$(printf '%s\n  triggers: [{type: webhook}]' "$MOWS_BLOCK_OK")"
+sed -i '/^tools: \[Read, Grep\]$/d' "$A/inheritwh.md"
+sed -i 's/^disallowedTools: .*/disallowedTools: [Write, Edit]/' "$A/inheritwh.md"
+chk "lint: an agent with NO tools: key inherits Bash, so a webhook on it WARNs" \
+  'mows-agent lint inheritwh 2>&1 | grep -q "webhook trigger"'
+# ...and the control that keeps that honest: the same file with an explicit, genuinely read-only
+# list must stay silent, or the assertion above would pass with the warning hard-wired on.
+mkagent "$A/explicitwh.md" "$(printf '%s\n  triggers: [{type: webhook}]' "$MOWS_BLOCK_OK")"
+sed -i 's/^disallowedTools: .*/disallowedTools: [Write, Edit]/' "$A/explicitwh.md"
+chk "lint: ...while an explicit read-only list on the same trigger stays silent" \
+  '! mows-agent lint explicitwh 2>&1 | grep -q "webhook trigger"'
+# The other consumer, in the direction that fails closed: an inheriting agent has something to
+# merge, so merge.policy: pr must not be refused for having nothing to write.
+mkagent "$A/inheritpr.md" "$(printf '%s\n  merge: {policy: pr}' "$MOWS_BLOCK_OK")"
+sed -i '/^tools: \[Read, Grep\]$/d' "$A/inheritpr.md"
+sed -i 's/^disallowedTools: .*/disallowedTools: [Write, Edit]/' "$A/inheritpr.md"
+chk "lint: an inheriting agent is not told it has nothing to merge" \
+  '! mows-agent lint inheritpr 2>&1 | grep -q "nothing to merge"'
+# `tools: null` is the same state written out longhand, and must read the same way.
+mkagent "$A/nulltools.md" "$(printf '%s\n  triggers: [{type: webhook}]' "$MOWS_BLOCK_OK")"
+sed -i 's/^tools: \[Read, Grep\]$/tools: null/' "$A/nulltools.md"
+sed -i 's/^disallowedTools: .*/disallowedTools: [Write, Edit]/' "$A/nulltools.md"
+chk "lint: an explicit tools: null reads as inheritance, exactly as an absent key does" \
+  'mows-agent lint nulltools 2>&1 | grep -q "webhook trigger"'
 mkagent "$A/trifecta.md" "$(printf '%s\n  triggers: [{type: webhook}]' "$MOWS_BLOCK_OK")"; sed -i 's/^disallowedTools: .*/disallowedTools: [WebFetch]/' "$A/trifecta.md"
 chk "lint: webhook + write tools WARNs"   'mows-agent lint trifecta 2>&1 | grep -q "WARN: webhook trigger"'
 chk "lint: WARN alone still exits 0"      'mows-agent lint trifecta'

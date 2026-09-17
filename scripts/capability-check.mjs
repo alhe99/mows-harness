@@ -882,7 +882,7 @@ check('the comma-separated string form of tools: is understood',
     'Read, Bash', ' Read , Bash ', 'Bash', '', ', ,',
     ['Read', 'Bash'], ['Read', 'Bash '], [' Read ', ' Bash '], [], [''], ['  '],
     ['Read', { Bash: null }], ['Read', ['Bash']], [null], [3], [true],
-    42, true, { a: 1 }, null,
+    42, true, { a: 1 }, null, undefined,
   ];
   // sys.dont_write_bytecode: importing a file with no .py extension still drops a __pycache__ into
   // agents/bin, which preflight's junk-file gate rejects (it caught exactly that during Task 9).
@@ -907,27 +907,50 @@ print(json.dumps([m.as_list(v) for v in json.loads(sys.stdin.read())]))
   // sweep, which can only reason about lines that were printed.
   check('[agreement] the validator\'s own as_list is callable from here', py !== null, pyErr);
 
+  // THREE STATES, not two. Round 1 collapsed "unreadable" and "inherits everything" into one null
+  // and let a single carve-out cover both, which absorbed the `tools: null` row without naming it
+  // (review F4) — and that row is not a gap, it is a DISAGREEMENT: the panel reads *no restriction
+  // at all* and the validator reads *the empty list*, which are opposite meanings.
   const jsParse = v => {
-    // What this module makes of the same value, expressed as the validator expresses it: the list
-    // of names, or null for "I could not read this".
     const c = agentCapability({ tools: v }, {});
-    return c.malformedTools ? null : c.effective;
+    if (c.malformedTools) return { kind: 'unreadable' };
+    if (c.inherits) return { kind: 'inherits' };
+    return { kind: 'list', names: c.effective };
   };
   const rows = TABLE.map((v, i) => ({ v, js: jsParse(v), py: py ? py[i] : undefined }));
-  const disagree = rows.filter(r => {
-    if (r.py === undefined) return true;
-    // Refused by the panel: the validator must at least not read a TOOL out of it.
-    if (r.js === null) return !(r.py === null || r.py.length === 0);
-    // Read by the panel: the validator must read exactly the same names.
-    return JSON.stringify(r.js) !== JSON.stringify(r.py);
-  });
-  check('[agreement] the validator and this panel read every tools: shape the same way, or both refuse it',
-    disagree.length === 0, disagree.slice(0, 4));
-  // ...and the table has to reach BOTH branches, or the rule above is true of nothing.
-  const refused = rows.filter(r => r.js === null).length, read = rows.filter(r => Array.isArray(r.js)).length;
-  console.log(`  agreement: ${rows.length} tools: shapes — ${read} read by both, ${refused} refused by the panel`);
-  check('[agreement] the table exercises both the readable and the refused branch',
-    refused > 3 && read > 3, { refused, read });
+  const missing = rows.filter(r => r.py === undefined);
+
+  // (1) the agreement proper.
+  const differ = rows.filter(r => r.js.kind === 'list' && !missing.includes(r)
+    && JSON.stringify(r.js.names) !== JSON.stringify(r.py));
+  check('[agreement] where the panel reads a tools: list, the validator reads exactly the same names',
+    differ.length === 0 && missing.length === 0, { differ: differ.slice(0, 4), missing: missing.length });
+
+  // (2) THE CARVE-OUT, now bounded to what it was always described as: a value that names ZERO
+  // tools. `tools: ''`, `', ,'`, `['']`, `['  ']`. The panel calls these unreadable and rounds
+  // toward unrestricted; the validator calls them the empty list. Neither reads a TOOL out of
+  // them, which is the property that matters, and nobody has measured what the CLI does with an
+  // empty string — so this is a documented gap and not a licence to differ anywhere else.
+  const leaks = rows.filter(r => r.js.kind === 'unreadable' && !missing.includes(r)
+    && !(r.py === null || r.py.length === 0));
+  check('[agreement] where the panel refuses a tools: value, the validator reads no tool out of it',
+    leaks.length === 0 && missing.length === 0, leaks.slice(0, 4));
+
+  // (3) THE ONE REAL DIVERGENCE, asserted by name rather than absorbed. `tools: null` and an absent
+  // key mean "inherits every tool the main thread has, Bash included". `as_list` returns [] for
+  // both. That collapse is what made the validator call an inheriting agent read-only and go quiet
+  // about a webhook trigger on it — fixed in mows-agent-meta's can_write, which now models
+  // inheritance explicitly, and gated in scripts/e2e-agents.sh through BOTH consumers of that flag.
+  // What remains here is the parse-level difference, which is real and is written down.
+  const inh = rows.filter(r => r.js.kind === 'inherits');
+  check('[agreement] tools: null is where the two parses MEAN different things, and it is named here',
+    inh.length > 0 && inh.every(r => Array.isArray(r.py) && r.py.length === 0), inh);
+
+  // ...and the table has to reach all three states, or the rules above are true of nothing.
+  const n = k => rows.filter(r => r.js.kind === k).length;
+  console.log(`  agreement: ${rows.length} tools: shapes — ${n('list')} read as a list, ${n('unreadable')} refused, ${n('inherits')} read as inheritance`);
+  check('[agreement] the table exercises all three states, not just the easy one',
+    n('list') > 3 && n('unreadable') > 3 && n('inherits') > 0, { list: n('list'), unreadable: n('unreadable'), inherits: n('inherits') });
 }
 
 process.exit(failed ? 1 : 0);

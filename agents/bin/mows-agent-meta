@@ -136,7 +136,29 @@ def lint(path):
     # "Read-only" from disallowedTools alone is a lie if the agent also has Bash or Task:
     # a shell writes fine through redirection, and Task can hand a subagent its own tools —
     # neither is stopped by disallowing Write/Edit on the parent (SETUP.md's safety posture).
-    can_write = not ({"Write", "Edit"} <= set(dis or [])) or bool(WRITE_CAPABLE_TOOLS & set(tools or []))
+    #
+    # AN ABSENT `tools:` KEY INHERITS EVERYTHING, INCLUDING Bash (Task 9 fix round 2, review F4).
+    # `as_list(None)` returns [] for an absent key and for `tools: null` alike, so `set(tools or [])`
+    # was empty and this line reported precisely the lie the comment above warns about:
+    #
+    #   no tools: key, disallowedTools: [Write, Edit]   -> can_write False -> "read-only"
+    #   tools: [Bash],  disallowedTools: [Write, Edit]  -> can_write True
+    #
+    # Two agents with identical capability, opposite verdicts, and the flattering one goes to the
+    # agent whose file says the least. It suppressed the webhook warning below — an untrusted
+    # external trigger on an agent that can run shell commands, which is the single combination that
+    # warning exists to catch — and it wrongly errored on `merge.policy: pr` (that one fails closed).
+    # infra/dashboard/capability.mjs has always read an absent key as `inherits`; this is the same
+    # ruling, one layer down, in the program that decides whether the file is ACCEPTED.
+    #
+    # An UNREADABLE tools: value (as_list -> None) inherits here too. It is already a lint error two
+    # lines above, so this only decides what the warnings say about a file that is being rejected —
+    # and saying "it may hold every tool" about a file nobody could parse is the same direction
+    # capability.mjs rounds in, for the same reason.
+    inherits_tools = fm.get("tools") is None or tools is None
+    can_write = (not ({"Write", "Edit"} <= set(dis or []))
+                 or inherits_tools
+                 or bool(WRITE_CAPABLE_TOOLS & set(tools or [])))
 
     # ---- mows namespace ----
     mows = fm.get("mows")
