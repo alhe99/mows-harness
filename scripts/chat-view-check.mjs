@@ -179,6 +179,14 @@ function liveBits(htmlStr) {
       if (nm === 'srcdoc') { bad.push('srcdoc'); continue; }
       if (!URL_ATTR.test(nm)) continue;
       const v = decodeEntities(val).replace(/[\u0000-\u0020]+/g, '');
+      // PROTOCOL-RELATIVE AND UNC-ISH DESTINATIONS HAVE NO SCHEME AT ALL, and the head split below
+      // therefore yields an empty string for them, so the scheme rule never sees them (Task 9
+      // review, F5). `//evil.example` is off-site navigation on click, from a dashboard whose whole
+      // subject is this box; safeHref refuses it (review L1) and a named fixture covers that — but
+      // the FUZZ pass emits both shapes in SCHEMES and would have stayed green if the refusal
+      // regressed, which made 2 of its 16 generated scheme shapes decorative. Checked before the
+      // split, because after it there is nothing left to look at.
+      if (/^[/\\]{2}/.test(v)) { bad.push('url:' + val); continue; }
       const head = v.split(/[/?#]/, 1)[0];
       const colon = head.indexOf(':');
       const scheme = colon === -1 ? '' : head.slice(0, colon);
@@ -223,6 +231,16 @@ check('[detector] does not flag a percent-mangled pseudo-scheme, which is a rela
 check('[detector] still flags an entity-encoded scheme, which does decode to a real one',
   liveBits('<a href="&#106;avascript&#58;alert(1)">r</a>').length > 0,
   liveBits('<a href="&#106;avascript&#58;alert(1)">r</a>'));
+// ...and the no-scheme-at-all case, which is off-site navigation rather than script execution but
+// is still not something an agent's reply gets to do to this dashboard (review F5).
+check('[detector] flags a protocol-relative destination, which has no scheme to test',
+  liveBits('<a href="//evil.example">x</a>').length > 0, liveBits('<a href="//evil.example">x</a>'));
+check('[detector] flags a UNC-ish backslash destination too',
+  liveBits('<a href="\\\\evil.example">x</a>').length > 0, liveBits('<a href="\\\\evil.example">x</a>'));
+// A single leading slash is an ordinary same-origin path and must stay unflagged, or the detector
+// cries wolf on every relative link the renderer emits.
+check('[detector] does not flag an ordinary same-origin path',
+  liveBits('<a href="/ui/agents/x">x</a>').length === 0, liveBits('<a href="/ui/agents/x">x</a>'));
 
 // ---- the premise the C1 fix rests on ------------------------------------------------------
 // The fix (a Tokenizer.tag override that clears lexer.state.inRawBlock) is worth exactly as much
@@ -291,8 +309,14 @@ const HOSTILE = {
   // Found by the fuzz pass below rather than by anyone's imagination (seed 35, case 9593). An
   // angle-bracket reference destination with a LEADING SPACE: safeHref trims it and reads a
   // mailto, marked's cleanUrl encodeURIs it and emits "%20mailto:…", and the two disagree about
-  // what the scheme is. Inert either way (see liveBits), and kept so the disagreement is pinned.
-  'a reference destination whose leading space survives into the href': '[r]\n\n[r]: < mailto:a@b.c>',
+  // what the scheme is.
+  //
+  // Labelled [marked, not our guard] because it is inert UNGUARDED too, so it cannot tell
+  // guard-present from guard-removed and is not guard coverage (Task 9 review, F6) -- exactly the
+  // property that got the tab- and NUL-smuggled fixtures demoted out of this map. Without the
+  // prefix its PASS line reads like the 24 that do discriminate. It goes red under mutation D4,
+  // which is the detector rule it pins.
+  '[marked, not our guard] a reference destination whose leading space survives into the href': '[r]\n\n[r]: < mailto:a@b.c>',
   // (no self-closing "<code/>" fixture: the flip regex requires whitespace or > after the tag
   // name, so it never flips and such a fixture could not fail either way.)
 };

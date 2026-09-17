@@ -2193,9 +2193,36 @@ addEventListener('touchend',function(){
 })()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
 </body></html>`;
 }
+// The directives that cost NOTHING on a page full of inline styles and inline scripts, applied to
+// every HTML response this server makes (Task 9 review, F7).
+//
+// uiCsp below is the strict policy, and it is scoped to /ui because the server-rendered pages carry
+// dozens of inline style="" attributes and several inline <script> blocks, and CSP3 ignores
+// 'unsafe-inline' the moment a nonce is present — so a script-src/style-src there would break those
+// pages rather than harden them. That argument covers script-src and style-src. It does NOT cover
+// these four, which say nothing about inline anything:
+//
+//   base-uri 'none'        an injected <base> re-points every relative URL on the page
+//   object-src 'none'      <object>/<embed>, which nothing here uses
+//   form-action 'self'     every form on these pages posts to /a/… or /droid/…, all same-origin
+//   frame-ancestors 'self' clickjacking. /app is the persistent terminal launcher, which is the
+//                          page on this site where that is actually interesting. 'self' and not
+//                          'none': the dashboard embeds /vnc/ and the device stream in iframes, and
+//                          while no dashboard PAGE is framed today, matching Caddy's own site-wide
+//                          posture cannot break a same-origin embed if one appears.
+//
+// Deliberately absent: frame-src, which WOULD break those iframes, and img-src, which would break
+// the account avatars and the device stage.
+const BASE_CSP = "base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'self'";
 function send(req, res, status, html, type = 'text/html; charset=utf-8', extra = null) {
   const buf = Buffer.from(html);
-  const h = { 'content-type': type, 'cache-control': 'no-cache', ...(extra || {}) };
+  const h = { 'content-type': type, 'cache-control': 'no-cache' };
+  // HTML only: a CSP on the /healthz JSON would be noise. `extra` is applied last so /ui's strict
+  // policy REPLACES this baseline rather than being appended to it — two Content-Security-Policy
+  // headers are enforced as an intersection, and an intersection is far harder to reason about
+  // than one policy that says everything.
+  if (/^text\/html/.test(type)) h['content-security-policy'] = BASE_CSP;
+  Object.assign(h, extra || {});
   if (buf.length > 1024 && /gzip/.test(req.headers['accept-encoding'] || '')) {
     const gz = gzipSync(buf); h['content-encoding'] = 'gzip'; h['content-length'] = gz.length;
     res.writeHead(status, h); res.end(gz);

@@ -206,6 +206,50 @@ chk "ui: the nonce in the header is the one the document actually carries" \
 chk "ui: the nonce is minted per response, not once per process" \
   '[ -n "$CSPN" ] && [ -n "$CSPN2" ] && [ "$CSPN" != "$CSPN2" ]'
 
+# ---- and now the DOCUMENT, which none of the five above looks at (Task 9 review, F3) ----------
+# A CSP breaks an application silently. One inline style="" attribute added to a view, or a second
+# inline <script>, and /ui renders unstyled or does not boot at all in production -- with all five
+# assertions above green, preflight ALL CLEAN and both mutation sweeps clean, because nothing in
+# this repo runs a browser. scripts/csp-admits.mjs decides, by CSP's own rules, whether the served
+# markup survives the header it was served with. It is not a browser and does not claim to be: it
+# cannot say the page LOOKS right, only that nothing in it would be refused.
+node /r/scripts/csp-admits.mjs http://127.0.0.1:3005/ui > /tmp/ui-admits.json 2>/tmp/ui-admits.err || true
+echo "  /ui admissibility: $(jq -c "{nonced,wrongNonce,styleAttrs,eventAttrs,offOrigin,refused:(.refused|length)}" /tmp/ui-admits.json 2>/dev/null || head -2 /tmp/ui-admits.err)"
+chk "ui: nothing in the served document is refused by the policy it was served with" \
+  'jq -e ".refused == []" /tmp/ui-admits.json'
+chk "ui: the document carries no inline style attribute, which style-src-attr would refuse" \
+  'jq -e ".styleAttrs == 0" /tmp/ui-admits.json'
+chk "ui: the document carries no inline event handler, which script-src-attr would refuse" \
+  'jq -e ".eventAttrs == 0" /tmp/ui-admits.json'
+# The nonce-match assertion above reads the FIRST nonce in the document, which is the inline
+# <style>. The import map and the module script were unchecked, and a wrong nonce on either leaves
+# the SPA dead with that assertion green -- the exact failure its own comment says it prevents
+# (review F9). All three are counted here.
+chk "ui: all three nonced elements carry the header's nonce, not just the first one" \
+  'jq -e ".nonced == 3 and .wrongNonce == 0" /tmp/ui-admits.json'
+chk "ui: every subresource the document names is same-origin, which is all self permits" \
+  'jq -e ".offOrigin == 0" /tmp/ui-admits.json'
+
+# ---- the server-rendered pages get the directives inline styles cannot object to (review F7) ---
+# uiCsp is scoped to /ui because those pages are full of inline styles and inline scripts, and CSP3
+# ignores 'unsafe-inline' once a nonce is present. That argument covers script-src and style-src
+# and nothing else: base-uri, object-src, form-action and frame-ancestors say nothing about inline
+# anything and were simply not taken. /app is the persistent terminal launcher, which is the page
+# here where clickjacking is actually interesting.
+BCSP=$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ | tr -d "\r" | grep -i "^content-security-policy:" | cut -d: -f2-)
+echo "  server-page CSP: ${BCSP:-<none>}"
+chk "dashboard: the server-rendered pages carry a policy at all" '[ -n "$BCSP" ]'
+chk "dashboard: it closes base-uri, object-src, form-action and frame-ancestors" \
+  'grep -q "base-uri" <<<"$BCSP" && grep -q "object-src" <<<"$BCSP" && grep -q "form-action" <<<"$BCSP" && grep -q "frame-ancestors" <<<"$BCSP"'
+# ...and says NOTHING about scripts, styles or frames: naming script-src or style-src there would
+# break every one of those pages, and frame-src would break the /vnc and device-stage iframes.
+chk "dashboard: and names no script-src, style-src or frame-src, which would break those pages" \
+  '! grep -qE "script-src|style-src|frame-src" <<<"$BCSP"'
+# Two Content-Security-Policy headers are enforced as an INTERSECTION, which is far harder to
+# reason about than one policy that says everything. /ui must replace the baseline, not join it.
+chk "dashboard: the strict /ui policy replaces the baseline rather than being sent beside it" \
+  '[ "$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ui | tr -d "\r" | grep -ci "^content-security-policy:")" = 1 ]'
+
 SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"
 chk "webhook: good HMAC -> 202"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
 chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Hub-Signature-256: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
@@ -265,6 +309,26 @@ caddy start --config /tmp/Caddyfile.test --adapter caddyfile >/tmp/caddy.log 2>&
 sleep 3
 chk "caddy listening :80" 'curl -s -o /dev/null http://127.0.0.1:80/'
 chk "caddy: /wh/* bypasses the auth gate" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1/wh/nobody)" = 404 ]'
+# The site-wide `header` block in the Caddyfile sets its OWN Content-Security-Policy, and Caddy's
+# plain `header` directive is a Set. Two CSP headers are enforced as an intersection, so the day
+# someone adds a `default-src` or a `script-src` to that snippet, /ui breaks for everyone and no
+# test in this repo would notice (Task 9 review, F8). Pinned two ways: Caddy's header does reach the
+# client on a proxied response, and the snippet contains only the directive that cannot narrow /ui.
+# The apex, not a PWA static: `@pwa` is handled BEFORE `import gauth` in the Caddyfile, so those
+# paths skip the header block entirely (measured -- the first version of this assertion used
+# /manifest.webmanifest and went red for exactly that reason). The apex 302 never reaches the
+# dashboard at all, so any policy on it is unambiguously Caddy's own.
+CADCSP=$(curl -s -D - -o /dev/null http://127.0.0.1/ | tr -d "\r" | grep -i "^content-security-policy:" | cut -d: -f2-)
+echo "  caddy-added CSP on the apex: ${CADCSP:-<none>}"
+chk "caddy: its own CSP reaches the client, on a response the dashboard never saw" \
+  'grep -q "frame-ancestors" <<<"$CADCSP"'
+# ...and the corollary, which is worth pinning because it is easy to assume otherwise: the PWA
+# statics get NO security headers from Caddy, because they are answered before the block that sets
+# them. They are served by the dashboard, which sends its own on HTML and nothing on a manifest.
+chk "caddy: the PWA statics bypass that header block, so its CSP is not site-wide" \
+  '[ "$(curl -s -D - -o /dev/null http://127.0.0.1/manifest.webmanifest | tr -d "\r" | grep -ci "^content-security-policy:")" = 0 ]'
+chk "caddy: the site-wide policy is frame-ancestors only, so it cannot narrow /ui" \
+  'grep -i "Content-Security-Policy" rendered/Caddyfile | grep -q "frame-ancestors" && ! grep -i "Content-Security-Policy" rendered/Caddyfile | grep -qE "default-src|script-src|style-src|connect-src"'
 
 echo "### THE ACTUAL CLAIM: everything is gated behind Google sign-in"
 LOC=$(curl -s -o /dev/null -w '%{redirect_url}' http://127.0.0.1/)

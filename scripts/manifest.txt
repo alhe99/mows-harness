@@ -220,3 +220,4 @@ scripts/capability-check.mjs
 scripts/capability-coverage.mjs
 scripts/fixtures/inherited-tools.json
 docs/qa/journeys/agent-chat.md
+scripts/csp-admits.mjs
