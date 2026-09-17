@@ -212,3 +212,7 @@ infra/dashboard/app/views/runs.mjs
 scripts/stream-replay-check.mjs
 scripts/chat-view-check.mjs
 scripts/chat-view-coverage.mjs
+infra/dashboard/capability.mjs
+infra/dashboard/app/views/capability.mjs
+scripts/capability-check.mjs
+scripts/capability-coverage.mjs

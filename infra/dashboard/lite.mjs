@@ -29,6 +29,7 @@ import net from 'node:net';
 import os from 'node:os';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { wireChatStream } from './chat-stream.mjs';
+import { agentCapability } from './capability.mjs';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -1899,6 +1900,13 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}
+/* Task 8, the capability panel. .cap-warn is a left rule rather than a filled banner on purpose:
+   an agent with Bash is the COMMON case here, and a red box on every agent page teaches the
+   operator to ignore it. It still reads first because it is placed first — the order is the
+   point, and .cap p keeps the tool list from drifting above it on a narrow screen. */
+.cap{margin:10px 0}.cap p{margin:6px 0}
+.cap-warn{border-left:3px solid var(--warn);padding-left:10px}
+.policy{margin:6px 0 0 18px}.policy li{margin:4px 0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2994,6 +3002,40 @@ async function agentChat(name) {
   } catch {}
   return out.slice(-CHAT_MAX);
 }
+// ---------- an agent's declared policy: its frontmatter, read by the ONE parser ----------
+// Shelling out to mows-agent-meta rather than parsing YAML here is the point: that script is the
+// validator the CLI already runs (`mows-agent run` refuses a file it lints red), it is the
+// authority on what every mows.* field means, and a second parser in this file would be free to
+// disagree with it about a file that had already been admitted.
+//
+// The agent file is looked up across EVERY profile dir, not just ~/.claude/agents: an agent whose
+// `mows.profile` is `work` lives under ~/.claude-work/agents, and there is no way to read the
+// profile without first finding the file. Same discovery rule as mows-agent's own profiles_json
+// (the default .claude plus every .claude-<suffix>), so the dashboard and the runner look in the
+// same places.
+async function agentFile(name) { // -> absolute path, or null if not found / ambiguous
+  let entries = [];
+  try { entries = await fsp.readdir(TMUX_HOME); } catch { return null; }
+  const dirs = entries.filter(d => d === '.claude' || d.startsWith('.claude-'));
+  const hits = [];
+  for (const d of dirs) {
+    const f = `${TMUX_HOME}/${d}/agents/${name}.md`;
+    // Resolve before de-duplicating: ~/.claude-work/agents symlinked to ~/.claude/agents is a
+    // legitimate setup and finds the same physical file twice — one agent, not an ambiguity.
+    // mows-agent's agent_file() dedupes exactly this way and dies on what is left.
+    try { const r = await fsp.realpath(f); if (!hits.includes(r)) hits.push(r); } catch {}
+  }
+  // Genuinely two files: mows-agent refuses to run such an agent at all, so this page must not
+  // pick one and present its policy as the truth. null becomes an honest "unknown" on the panel.
+  return hits.length === 1 ? hits[0] : null;
+}
+async function agentFrontmatter(name) {
+  const f = await agentFile(name);
+  if (!f) return null;
+  const out = await runAs([], `${TMUX_HOME}/.local/bin/mows-agent-meta`, ['json', f], 10000);
+  try { return JSON.parse(out); } catch { return null; } // '' on any error, including a timeout
+}
+
 // ---------- /api/*: JSON for the SPA (spec §1) ----------
 // These are the existing view functions with the HTML rendering removed — deliberately not new
 // logic, so the server-rendered pages and the app cannot disagree about what is true.
@@ -3025,9 +3067,18 @@ async function apiView(req, res, rest) {
   if (!a) { res.writeHead(404); return res.end(); }
   if (!kind) {
     const timers = await agentTimers(name);
+    // capability is null — NOT an empty capability — whenever the agent file could not be read or
+    // did not parse. The view renders that as "unknown"; an empty object would render as a very
+    // confident "no tools, no budget, no triggers", which is the exact failure this task exists to
+    // prevent. A run record can outlive its agent file (retention_days keeps the record, the file
+    // can be deleted), so this is a reachable state, not a theoretical one.
+    const fm = await agentFrontmatter(name);
+    const capability = fm
+      ? agentCapability(fm, { webhookArmed: !!agentsConfig()[webhookKey(name)] })
+      : null;
     return sendJson(req, res, 200, {
       name, recs: a.recs, events: a.events, total: a.total, cost7d: a.cost7d,
-      timers, timer: summarizeTimers(timers),
+      timers, timer: summarizeTimers(timers), capability,
     });
   }
   if (kind === 'chat') return sendJson(req, res, 200, { turns: await agentChat(name) });
@@ -3196,10 +3247,15 @@ function agentsConfig() { // KEY=value lines only; values may be quoted. Read pe
   try { for (const l of readFileSync(AGENTS_CFG, 'utf8').split('\n')) { const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) out[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, '$2'); } } catch {}
   return out;
 }
+// The one place the agent name -> config key mapping is written down. AGENT_RE's header explains
+// why that mapping has to stay injective; the capability panel reads the same key to tell the
+// operator whether a POST to /wh/<name> can start this agent, and two spellings of it could drift
+// into the panel reporting a trigger armed against a key this route never consults.
+const webhookKey = name => 'WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_');
 async function webhookView(req, res, name) {
   if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
-  const secret = agentsConfig()['WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_')];
+  const secret = agentsConfig()[webhookKey(name)];
   if (!secret) { res.writeHead(404); return res.end(); } // same response as a bad name: no agent enumeration
   const chunks = []; let n = 0;
   for await (const c of req) { n += c.length; if (n > 1e6) { res.writeHead(413); return res.end(); } chunks.push(c); }

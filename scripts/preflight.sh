@@ -159,6 +159,31 @@ else
   bad "scripts/chat-view-check.mjs is missing — the chat view's XSS gate did NOT run"
 fi
 
+# 5d. The capability panel's honesty gate (Task 8). Wired here for the same reason 5c is: ci.yml
+# runs this script and nothing else, so a gate that is not called from here is a gate that only
+# runs when a human remembers to type the command. It FAILS rather than skips when it cannot run —
+# a panel that claims an agent is narrower than it is fails silently by construction, which is
+# exactly the shape of bug a gate that skips itself will never catch.
+#
+# It needs node >= 22.15 (checked in 5c, which runs first and has already failed the build if not)
+# and python3 with PyYAML, because its last section runs the real mows-agent-meta over the real
+# example agent file rather than a fixture of its own.
+if [ -f scripts/capability-check.mjs ]; then
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    bad "python3 with PyYAML not found — scripts/capability-check.mjs (the capability panel's honesty gate) did NOT run"
+  else
+    CAPOUT=$(node scripts/capability-check.mjs 2>&1) && CAPRC=0 || CAPRC=$?
+    if [ "$CAPRC" -ne 0 ]; then
+      printf '%s\n' "$CAPOUT" | grep '^FAIL' || printf '%s\n' "$CAPOUT" | tail -5
+      bad "capability-check: the capability panel's honesty gate failed (see above)"
+    else
+      note "capability-check: $(printf '%s\n' "$CAPOUT" | grep -c '^PASS' || true) assertions pass"
+    fi
+  fi
+else
+  bad "scripts/capability-check.mjs is missing — the capability panel's honesty gate did NOT run"
+fi
+
 # 6. gitleaks if available (CI always runs it)
 if command -v gitleaks >/dev/null; then gitleaks detect --source . --no-banner || bad "gitleaks"; fi
 

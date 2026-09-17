@@ -29,6 +29,19 @@ mkdir -p "$DH/.config/mows-agents"
   # same secret VALUE as harness-reviewer's, deliberately — see the a_b case below, which
   # depends on one signature being valid against both keys so the only variable is the name.
   echo 'WEBHOOK_SECRET_A_B=s3cret'; } > "$DH/.config/mows-agents/config"
+# Fixture for the capability panel (Task 8). The dashboard reads an agent's declared policy by
+# shelling out to mows-agent-meta AS the tmux user, so all four of these have to be real: the OS
+# account runuser switches to, the validator on its PATH, a genuine agent file to parse, and
+# python3+PyYAML for the validator itself (installed by scripts/e2e-infra's apt line). The agent
+# file is the repo's own example, NOT a fixture written here — a hand-written copy could drift
+# into disagreeing with the file the repo actually ships.
+useradd -M -d "$DH" -s /usr/sbin/nologin "$DEMO" 2>/dev/null || true
+mkdir -p "$DH/.local/bin" "$DH/.claude/agents"
+install -m755 /r/agents/bin/mows-agent-meta "$DH/.local/bin/mows-agent-meta"
+install -m644 /r/agents/examples/harness-reviewer.md "$DH/.claude/agents/harness-reviewer.md"
+# ...and the opposite fixture: an agent with state but no agent file anywhere (see the assertion
+# that reads it, further down).
+mkdir -p "$DH/.local/state/mows-agents/ghost"
 # The dashboard's own systemctl calls (webhook trigger, run-now) need a real init system to
 # succeed against, which this bare `docker run` container never boots (no PID 1 systemd) —
 # confirmed directly: `systemctl start foo.service` here always fails with "System has not
@@ -68,6 +81,36 @@ mkdir -p "$DH/.local/state/mows-agents/harness-reviewer"
 chk "api: /api/agents is json"          'curl -s http://127.0.0.1:3005/api/agents | jq -e ".agents | type == \"array\""'
 chk "api: agent detail is json"         'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".name == \"harness-reviewer\""'
 chk "api: chat is json"                 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer/chat | jq -e ".turns | type == \"array\""'
+# The capability panel (Task 8), end to end: the fixture agent above has
+# tools: [Read, Glob, Grep, Bash] and disallowedTools: [Write, Edit, WebFetch, NotebookEdit], so
+# Write must be absent from `effective` AND hasBroad must be true. That pair is the whole point —
+# the deny list looks restrictive and is not, and a panel computed from it would say "read-only"
+# about an agent that can write any file this account can reach.
+chk "cap: computed, not the deny list"  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.effective | index(\"Write\") == null"'
+chk "cap: Bash counts as broad"         'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.hasBroad == true"'
+chk "cap: policy is present"            'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.workdir | length > 0"'
+# Not just "Write is absent" — a capability object that was empty for any reason would pass that.
+chk "cap: effective is the allow list"  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.effective == [\"Read\",\"Glob\",\"Grep\",\"Bash\"]"'
+chk "cap: the no-op deny list is named" 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.denyNoop | length == 4"'
+chk "cap: budget reaches the response"  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.budget.usd_per_run == 1.5"'
+# A WEBHOOK_SECRET_HARNESS_REVIEWER is configured above, so /wh/harness-reviewer can start this
+# agent — a capability its triggers list (one cron entry) does not mention. The panel says so.
+chk "cap: an armed webhook is disclosed" 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.webhookArmed == true"'
+# ...and saying so must never mean shipping the secret itself.
+chk "cap: the webhook secret never leaves the box" '! curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | grep -q s3cret'
+# An agent with run records but no readable agent file. capability must be null — the view turns
+# that into an explicit "unknown", where an empty object would render as a confident "no tools,
+# no budget, no triggers". This is reachable in production: retention_days outlives the file.
+# (Its state dir is created with the other fixtures above, before the dashboard starts: agentsIndex
+# caches for 3s, so a directory created here would 404 for the first three seconds of its life and
+# this assertion would fail for a reason that has nothing to do with what it is testing.)
+# has("capability") is not redundant: jq yields null for an ABSENT key too, so ".capability == null"
+# alone stays green if the field is dropped from the response entirely — the assertion would then
+# be passing for a reason that has nothing to do with the honest-unknown path it is meant to prove.
+chk "cap: no agent file -> null, not an empty capability" \
+  'curl -s http://127.0.0.1:3005/api/agents/ghost | jq -e "has(\"capability\") and .capability == null"'
+chk "cap: the panel module is actually served to the browser" \
+  'curl -s http://127.0.0.1:3005/ui/ | grep -q "views/capability"'
 chk "api: unknown agent -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/nope)" = 404 ]'
 chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/BAD_NAME)" = 404 ]'
 chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'

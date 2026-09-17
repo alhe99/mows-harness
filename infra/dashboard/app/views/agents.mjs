@@ -2,6 +2,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { html, Pill, usd, rel } from '../ui.mjs';
 import { getJSON, connect, subscribe } from '../store.mjs';
 import { Chat } from './chat.mjs';
+import { CapabilityPanel } from './capability.mjs';
 
 export function AgentsList() {
   const [rows, setRows] = useState(null);
@@ -36,6 +37,7 @@ export function AgentDetail({ name }) {
   return html`<div>
     <h1><a href="/ui/agents">← agents</a> <span class="muted">· ${name}</span></h1>
     <p><${Pill} state=${d.recs?.[0]?.state} /> <span class="muted">7d ${usd(d.cost7d)} · ${d.total} runs · Next: ${d.timer?.label || '—'}</span></p>
+    <${CapabilityPanel} capability=${d.capability} />
     <h2>Chat</h2><${Chat} name=${name} runs=${d.recs} />
     <h2>Runs</h2>
     <ul class="runs">${(d.recs || []).map(r => html`<li key=${r.run_id}>
