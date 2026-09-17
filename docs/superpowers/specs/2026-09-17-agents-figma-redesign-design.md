@@ -101,8 +101,12 @@ These are not styling. They must land first, in one task.
 if (!/\.(mjs|css)$/.test(e.name)) continue;
 ```
 
-Fonts and SVG icons cannot be served from `app/` at all today. Extend the filter and the
-content-type map to `.woff2` (`font/woff2`) and `.svg` (`image/svg+xml`).
+Fonts cannot be served from `app/` at all today. Replace the regex with a `UI_ASSET_TYPES`
+map and add `woff2` (`font/woff2`).
+
+**Built:** no `svg` entry. The comp's glyphs turned out to be lucide icons that `ICO` already
+inlines as `currentColor` SVG at the same stroke ratio (2/24 = 1.33333/16), so the redesign
+ships no icon files and `app/` gains no new route surface.
 
 **2. The preflight ceiling measures the same two extensions** (`scripts/preflight.sh:124`):
 
@@ -110,14 +114,18 @@ content-type map to `.woff2` (`font/woff2`) and `.svg` (`image/svg+xml`).
 find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' \)
 ```
 
-Adding fonts without touching this means ~60 KB of new client assets land **without being
+Adding fonts without touching this means ~78 KB of new client assets land **without being
 counted**, and the gate keeps reporting a comfortable number. That is form 3 from this
 branch's own catalogue of hollow checks — *a check whose label lies about what it tests*.
 
-Extend the `find` to `.woff2` and `.svg` in the same commit that extends the loader, and
-raise the ceiling deliberately and visibly: current 45,494 B + fonts. Pick the new number
-from the measured total, state it in the commit message, and keep the headroom margin the
-76,800 B ceiling was chosen to give. **A silent ceiling raise is worse than a failing gate.**
+**Built:** the two lists are no longer independent copies. Preflight parses `UI_ASSET_TYPES`
+out of `lite.mjs` and asserts the agreement, so adding an extension to one and not the other
+fails the gate by name. Verified able to fail by adding a `png` entry and watching it go red.
+
+The ceiling is 158720 B, derived not picked: 76800 (the original CODE budget, unchanged) +
+81920 (80 KiB for the two faces, measured at 79709 B). A round number just above the total
+would have cut the code budget from 31 KB to 22 KB. **A silent ceiling raise is worse than a
+failing gate.**
 
 ## Ruling: the chrome changes everywhere
 
@@ -161,10 +169,15 @@ finding from Task 9. Do not "fix" it.
   CSP does not govern — the existing `--kb` keyboard handler is the pattern to copy.
 - **No build step.** Preact + htm, vendored ESM, hand-written CSS. No Tailwind — the
   reference code is Tailwind only because that is what `get_design_context` emits.
-- **Icons ship as committed SVG files**, sized by an explicit width AND height on a fixed
-  container. Never hand-author an `<svg>` path.
-- Preflight's forbidden-strings check will reject `192.168.1.104` in any tracked file. The
-  header's host line comes from `req.headers.host` at runtime, as it already does.
+- **Never hand-author an `<svg>` path.** In the event no icon file was needed: four glyphs
+  came from `ICO`, and `send` — the one it lacked — was added using the Figma export's path
+  data verbatim, keeping its native `viewBox 0 0 16 16` rather than being redrawn on the
+  24-grid. The three CSS-mask icons use `ICO`'s own path data as `data:` URIs.
+- Preflight's forbidden-strings check rejects any IPv4-looking literal in a tracked file, and
+  the comp's header copy contains the live host as one. The header's host line comes from
+  `req.headers.host` at runtime, as it already does — never from markup.
+  (This section previously spelled that address out to warn about it, and preflight failed the
+  commit that tracked the file. The check works.)
 
 ## Icon inventory
 

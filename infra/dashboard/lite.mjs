@@ -1941,6 +1941,106 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 @keyframes pulse{50%{opacity:.35}}
 .mb pre{white-space:pre-wrap;word-break:break-word}
 .jump{position:sticky;bottom:70px;align-self:center}
+
+/* ---------- agents section, Figma 44:5 (design doc: docs/superpowers/specs/2026-09-17-*) ----------
+   Scoping rules for this whole block, and why:
+   - the two-column layout and the message restyle are scoped to .ag2 / .chat, NOT to bare .m,
+     because the SERVER-rendered /agents/<name> shares the .m/.mh/.mb markup and emits no avatar
+     span. A bare .m override would leave that page with a flex row and nothing to put in it.
+   - body.uiapp carries the comp's own metrics (1024 content + 32 gutter = 1088). The other pages
+     keep the 1024/48 reading column they already had; matching the comp is an /ui statement, not
+     a site-wide one.
+   - icons are CSS masks over data: URIs, so they take currentColor and hover with their button.
+     The path data is ICO's, already in this file — nothing new was drawn. */
+:root{
+--ico-restart:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-3-6.7'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E");
+--ico-activity:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-4l-3 9L9 3l-3 9H2'/%3E%3C/svg%3E");
+--ico-send:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.33333' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.69 14.46a.5.5 0 0 0 .62-.02L14.65 1.77a.33.33 0 0 0-.42-.42L1.56 5.68a.33.33 0 0 0-.02.63l5.29 2.12a2 2 0 0 1 1.13 1.13z'/%3E%3Cpath d='M14.57 1.43 7.28 8.72'/%3E%3C/svg%3E")}
+@media(min-width:701px){body.uiapp{max-width:1088px;padding:32px}}
+.agwrap{display:flex;flex-direction:column;gap:12px}
+.agback{font:12px var(--mono);color:var(--dim)}
+.agback:hover{color:var(--fg2)}
+.ag2{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
+.agchat{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.agh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.agav{width:32px;height:32px;border-radius:8px;background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok);display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--mono);flex-shrink:0}
+.agav::before{content:'>_'}
+.agti{min-width:0;flex:1}
+.agti h1{font:600 16px/1.4 var(--sans);padding:0;display:flex;align-items:center;gap:8px;letter-spacing:-.01em}
+.agti h1::before{display:none}
+.agdot{width:8px;height:8px;border-radius:50%;background:var(--ok-lt);box-shadow:0 0 0 3px rgba(0,188,125,.2);flex-shrink:0}
+.agsub{font:12px/1.25 var(--mono);color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agctl{display:flex;gap:8px;margin:0}
+.cbtn{width:32px;height:32px;min-height:32px;padding:0;border-radius:8px;background:var(--card2);border:1px solid var(--bd3);color:var(--mut);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cbtn::before{content:'';width:14px;height:14px;background:currentColor;-webkit-mask:var(--ico-restart) center/14px no-repeat;mask:var(--ico-restart) center/14px no-repeat}
+.cbtn:hover{background:var(--pop);border-color:var(--ring);color:var(--fg2)}
+/* transcript: SPA only (see scoping note above) */
+.chat{gap:0;flex:1;min-height:0}
+.agchat{height:min(78vh,812px)}
+.chat .chatbox{padding:20px;gap:20px;max-height:none;flex:1;min-height:0}
+.chat .chatf{position:static}
+.chat .m{background:none;border:0;border-radius:0;padding:0;margin:0;display:flex;gap:12px;align-items:flex-start;opacity:1}
+.chat .m.me{flex-direction:row-reverse}
+.chat .mav{width:32px;height:32px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font:700 11px/1 var(--mono)}
+.chat .m.claude .mav{background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok)}
+.chat .m.claude .mav::before{content:'>_'}
+.chat .m.me .mav{background:var(--pop);border:1px solid var(--bd2);color:var(--mut)}
+.chat .m.me .mav::before{content:'U'}
+.chat .mc{min-width:0;flex:1;display:flex;flex-direction:column;gap:6px}
+.chat .m.me .mc{align-items:flex-end}
+.chat .mh{padding:0;font:700 10px/1 var(--mono);letter-spacing:.08em;color:var(--dim);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chat .m.me .mh{justify-content:flex-end}
+.chat .m.claude .mh b{color:var(--ok)}
+.chat .m.me .mb{background:var(--card2);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;max-width:560px}
+.chat .m.claude .mb{max-width:100%;color:var(--fg2)}
+.chat .mb pre{background:rgba(9,9,11,.6);border:1px solid var(--bd);border-radius:8px;padding:12px 14px;font:12px var(--mono);color:var(--ok);overflow-x:auto}
+.chat .mb code{font:12px var(--mono);background:var(--pop);border-radius:4px;padding:1px 5px;color:var(--fg2)}
+.chat .mb pre code{background:none;padding:0;color:inherit}
+/* system divider: a run-lifecycle event, interleaved into the transcript */
+.sysdiv{display:flex;align-items:center;gap:12px}
+.sysl{flex:1;height:1px;background:var(--bd)}
+.sysb{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--bd);border-radius:999px;padding:5px 12px;font:11px var(--mono);color:var(--mut);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.sysi{width:14px;height:14px;flex-shrink:0;background:currentColor;-webkit-mask:var(--ico-activity) center/14px no-repeat;mask:var(--ico-activity) center/14px no-repeat}
+/* composer: inside the card, not floating under it */
+.chat .chatf{border-top:1px solid var(--bd);padding:16px 20px;margin:0;gap:12px;align-items:center;background:var(--card2)}
+.chat .chatf textarea{border-radius:12px;padding:12px 14px;min-height:46px;background:var(--bg);border-color:var(--bd3);resize:none;font:13px var(--sans)}
+.chat .chatf textarea::placeholder{color:var(--dimmer)}
+.sendb{width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;background:var(--fg);color:var(--bg);border:0;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sendb::before{content:'';width:16px;height:16px;background:currentColor;-webkit-mask:var(--ico-send) center/16px no-repeat;mask:var(--ico-send) center/16px no-repeat}
+.sendb:hover{background:var(--fg2)}
+.sendb:disabled{background:var(--pop);color:var(--dim);cursor:default}
+.sendb:disabled::before{display:none}
+.chint{font:11px var(--mono);color:var(--dimmer);text-align:center;padding:0 20px 14px;margin:0}
+/* right column */
+.agside{display:flex;flex-direction:column;gap:16px;min-width:0}
+.agside .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:20px;margin:0}
+.cl{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:0 0 16px}
+.agside .cap h2{display:none}
+.agside .cap{font-size:12px}
+.agside .cap p{margin:8px 0}
+.tgrid{display:flex;flex-direction:column;gap:12px}
+.trow{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.tk{font:12px var(--mono);color:var(--dim);flex-shrink:0}
+.tv{font:12px var(--mono);color:var(--fg2);text-align:right;min-width:0;word-break:break-word}
+.rruns{list-style:none;display:flex;flex-direction:column;gap:14px;margin:0;padding:0}
+.rruns li{display:flex;align-items:center;gap:10px;margin:0}
+.rruns .pill{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 7px;border-radius:4px;flex-shrink:0}
+.rruns a{font:12px var(--mono);color:var(--fg2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rcost{font:12px var(--mono);color:var(--fg2);font-variant-numeric:tabular-nums;flex-shrink:0}
+.agside .agev{padding:14px 20px}
+.agev summary{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer}
+.agev .events{margin-top:12px}
+/* Reflow. The comp is a 1024 content column; below it the columns narrow, then stack. The cards
+   go UNDER the chat and not over it because the chat is why this page exists — a phone opening
+   an agent should land on the transcript, not scroll three cards to reach it. Source order
+   already puts .agchat first, so the single-column case needs no reordering. */
+@media(max-width:1087px){.ag2{grid-template-columns:minmax(0,1fr) 300px;gap:16px}}
+@media(max-width:860px){.ag2{grid-template-columns:minmax(0,1fr)}
+.agchat{height:calc(100dvh - 190px)}
+.chatbox{padding:16px;gap:16px}
+.chat .chatf{padding:12px 16px}
+.agh{padding:14px 16px}
+.agside .card{padding:16px}}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}

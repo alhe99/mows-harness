@@ -169,6 +169,11 @@ export function agentCapability(fm, opts = {}) {
     denied: [...denied],
     policy: {
       profile: m.profile || null, workdir: m.workdir || null, budget: m.budget || null,
+      // The agent's declared model, for the chat header's "<model> · $<spent>" line (design
+      // 44:5). A string or null — never a default, because "which model actually ran" is a CLI
+      // precedence question this page cannot answer, and the same rule the turn-cap
+      // disagreement follows applies here: report what the file says, invent nothing.
+      model: typeof fm?.model === 'string' ? fm.model : null,
       // Stated rather than silently ignored (review F2). `plan` is lint-accepted and would make the
       // authority list above wrong; `bypassPermissions` is refused by the linter. The panel cannot
       // verify that the CLI honours any of them, and says so rather than implying it checked.

@@ -29,20 +29,95 @@ export function AgentsList() {
   </div>`;
 }
 
+// A telemetry row renders NOTHING when its value is absent, rather than an em-dash placeholder.
+// capability is null whenever the agent file could not be read or parsed (see capability.mjs),
+// and a card of confident "—"s is exactly the misreading that module exists to prevent: an
+// absent row says "not stated", a dash says "stated as nothing".
+const Row = ({ k, v }) => v == null || v === '' ? null
+  : html`<div class="trow"><span class="tk">${k}</span><span class="tv">${v}</span></div>`;
+
+// A run id is YYYYMMDD-HHMMSS-PID. The comp renders it "17:32-2473" — short enough for a 320px
+// column, and the form used here. But that shape is only unambiguous WITHIN A DAY: two runs at
+// 17:32 a week apart print identically, and this list holds the last twenty runs, not the last
+// day's. So the date comes back as soon as it is doing work — today's runs read exactly as the
+// comp, older ones carry "09-16" in front. The full id stays in the title either way.
+// Anything that does not match the pattern is returned untouched rather than sliced blindly.
+const RUN_ID = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)\d\d-(\d{1,4})/;
+function runLabel(id, now = new Date()) {
+  const m = RUN_ID.exec(id);
+  if (!m) return id;
+  const [, y, mo, d, hh, mm, pid] = m;
+  const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  return `${y + mo + d === today ? '' : `${mo}-${d} `}${hh}:${mm}-${pid}`;
+}
+
+function Telemetry({ policy }) {
+  if (!policy) return html`<p class="muted">Its agent file could not be read, so nothing here is known.</p>`;
+  const b = policy.budget || {};
+  // Budget and Daily Cap are each built from two fields that can independently be missing, so
+  // they are assembled rather than templated: a literal `$${x} / ${y} turns` prints "$undefined"
+  // the moment one half is absent, which is the flattering-when-wrong failure this file avoids.
+  const budget = [b.usd_per_run != null && `$${(+b.usd_per_run).toFixed(2)}`,
+                  b.max_turns != null && `${b.max_turns} turns`].filter(Boolean).join(' / ');
+  const daily = b.usd_per_day != null ? `$${(+b.usd_per_day).toFixed(2)} per day` : null;
+  return html`<div class="tgrid">
+    <${Row} k="Profile" v=${policy.profile} />
+    <${Row} k="Target" v=${policy.workdir} />
+    <${Row} k="Trigger" v=${policy.triggerTypes?.join(', ')} />
+    <${Row} k="Budget" v=${budget} />
+    <${Row} k="Daily Cap" v=${daily} />
+  </div>`;
+}
+
 export function AgentDetail({ name }) {
   const [d, setD] = useState(null);
   useEffect(() => { setD(null); getJSON(`/api/agents/${name}`).then(setD).catch(() => setD(false)); }, [name]);
   if (d === false) return html`<p class="muted">No such agent.</p>`;
   if (!d) return html`<p class="muted">Loading…</p>`;
-  return html`<div>
-    <h1><a href="/ui/agents">← agents</a> <span class="muted">· ${name}</span></h1>
-    <p><${Pill} state=${d.recs?.[0]?.state} /> <span class="muted">7d ${usd(d.cost7d)} · ${d.total} runs · Next: ${d.timer?.label || '—'}</span></p>
-    <${CapabilityPanel} capability=${d.capability} />
-    <h2>Chat</h2><${Chat} name=${name} runs=${d.recs} />
-    <h2>Runs</h2>
-    <ul class="runs">${(d.recs || []).map(r => html`<li key=${r.run_id}>
-      <a href="/ui/agents/${name}/${r.run_id}">${r.run_id}</a> <${Pill} state=${r.state} />
-      <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`)}</ul>
-    <h2>Events</h2><pre class="events">${(d.events || []).join('\n') || 'none'}</pre>
+  const live = d.recs?.[0]?.state === 'working';
+  const model = d.capability?.policy?.model;
+  return html`<div class="agwrap">
+    <a class="agback" href="/ui/agents">← agents</a>
+    <div class="ag2">
+      <section class="agchat">
+        <header class="agh">
+          <span class="agav" aria-hidden="true"></span>
+          <div class="agti">
+            <h1>${name}${live && html` <span class="agdot" title="running"></span>`}</h1>
+            <p class="agsub">${[model, `${usd(d.cost7d)} spent`].filter(Boolean).join(' · ')}</p>
+          </div>
+          <form class="agctl" method="post" action="/a/agent-run">
+            <input type="hidden" name="name" value=${name} />
+            <input type="hidden" name="back" value=${`/ui/agents/${name}`} />
+            <button class="cbtn" title="Run now" aria-label="Run now"></button>
+          </form>
+        </header>
+        ${/* The comp's hint line names four tools. It is passed ONLY when the agent file gave a
+              genuine explicit list: `effective` is null whenever the agent inherits, and printing
+              a short confident list for the file that is actually least restricted is the exact
+              inversion capability.mjs exists to prevent. Inheriting agents get no hint line —
+              the Capabilities card beside it already says what they can reach, at length. */ ''}
+        <${Chat} name=${name} runs=${d.recs} events=${d.events}
+          tools=${d.capability?.effective?.length ? d.capability.effective.join(', ') : null} />
+      </section>
+      <aside class="agside">
+        <div class="card"><h2 class="cl">Agent Telemetry</h2>
+          <${Telemetry} policy=${d.capability?.policy} /></div>
+        <div class="card"><h2 class="cl">Capabilities</h2>
+          <${CapabilityPanel} capability=${d.capability} /></div>
+        <div class="card"><h2 class="cl">Recent Runs</h2>
+          ${(d.recs || []).length
+            ? html`<ul class="rruns">${d.recs.map(r => html`<li key=${r.run_id}>
+                <${Pill} state=${r.state} />
+                <a href="/ui/agents/${name}/${r.run_id}" title=${r.run_id}>${runLabel(r.run_id)}</a>
+                <span class="rcost">${usd(r.cost_usd)}</span></li>`)}</ul>`
+            : html`<p class="muted">Never run.</p>`}</div>
+        ${/* The comp has no events surface, but this view had one and dropping it would lose
+              the only place the raw unit log is readable. Collapsed rather than deleted: shut,
+              it costs the design one hairline; open, nothing regressed. */ ''}
+        <details class="card agev"><summary>Events</summary>
+          <pre class="events">${(d.events || []).join('\n') || 'none'}</pre></details>
+      </aside>
+    </div>
   </div>`;
 }

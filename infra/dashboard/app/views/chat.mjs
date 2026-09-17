@@ -227,7 +227,35 @@ export function reconcile(list, pendingUsers, salvage) {
   return { turns: out, missingUsers, retired, salvagedReply };
 }
 
-export function Chat({ name, runs }) {
+// events.log lines are "<ISO8601> <text>". Only some of them earn a divider in the transcript:
+// the log records one line per chat turn ("chat turn (streamed): $0.02"), and that cost is
+// already printed on the message it belongs to, so rendering all of them would interrupt every
+// single message with a restatement of itself. What survives the filter is the run lifecycle and
+// the failures — which is exactly what the comp's one divider shows.
+const EV_RE = /^(\d{4}-\d\d-\d\dT[\d:]+(?:[+-][\d:]+|Z))\s+(.+)$/;
+const systemEvents = events => (events || [])
+  .map(l => EV_RE.exec(l))
+  .filter(m => m && !/^chat turn\b/.test(m[2]))
+  .map(m => ({ at: m[1], text: m[2] }));
+
+// Turns keep the ORDER THE SERVER GAVE THEM — they are not re-sorted. Sorting a merged list by
+// timestamp would put the reconcile logic's optimistic pendings (stamped client-side, at a clock
+// this server does not share) at the mercy of clock skew, and message order is the one thing
+// this view has already been fixed twice to get right. System events are interleaved around that
+// fixed order instead: each one is emitted before the first turn it does not precede.
+function feed(turns, events) {
+  const left = systemEvents(events);
+  const out = [];
+  for (const turn of turns) {
+    const ts = Date.parse(turn.at || 0);
+    while (left.length && Date.parse(left[0].at) <= ts) out.push({ sys: left.shift() });
+    out.push({ turn });
+  }
+  for (const sys of left) out.push({ sys });
+  return out;
+}
+
+export function Chat({ name, runs, events, tools }) {
   const [turns, setTurns] = useState([]);
   const [live, setLive] = useState('');
   const [busy, setBusy] = useState(false);
@@ -396,21 +424,34 @@ export function Chat({ name, runs }) {
   if (!chatable) return html`<p class="muted">Chat resumes a finished run's session. Run this agent once first.</p>`;
   return html`<div class="chat">
     <div class="chatbox" ref=${boxRef} onScroll=${onScroll}>
-      ${turns.map((t, i) => html`<div class="m ${t.role === 'user' ? 'me' : 'claude'}" key=${i}>
-        <div class="mh"><b>${t.role === 'user' ? 'you' : name}</b>
-          <span class="muted">${(t.at || '').slice(11, 19)}${t.cost_usd ? ' · ' + usd(t.cost_usd) : ''}</span></div>
-        <div class="mb" dangerouslySetInnerHTML=${{ __html: renderPartial(t.text || '') }} /></div>`)}
+      ${feed(turns, events).map((row, i) => row.sys
+        ? html`<div class="sysdiv" key=${'s' + i}><span class="sysl"></span>
+            <span class="sysb"><i class="sysi" aria-hidden="true"></i>${row.sys.text}
+              <span class="muted">${row.sys.at.slice(11, 19)}</span></span>
+            <span class="sysl"></span></div>`
+        : html`<div class="m ${row.turn.role === 'user' ? 'me' : 'claude'}" key=${i}>
+            <span class="mav" aria-hidden="true"></span>
+            <div class="mc">
+              <div class="mh"><b>${row.turn.role === 'user' ? 'you' : name}</b>
+                <span class="muted">${(row.turn.at || '').slice(11, 19)}${row.turn.cost_usd ? ' · ' + usd(row.turn.cost_usd) : ''}</span></div>
+              <div class="mb" dangerouslySetInnerHTML=${{ __html: renderPartial(row.turn.text || '') }} /></div></div>`)}
       ${live && html`<div class="m claude streaming">
-        <div class="mh"><b>${name}</b> <span class="muted">…</span></div>
-        <div class="mb" dangerouslySetInnerHTML=${{ __html: renderPartial(live) }} /></div>`}
+        <span class="mav" aria-hidden="true"></span>
+        <div class="mc">
+          <div class="mh"><b>${name}</b> <span class="muted">…</span></div>
+          <div class="mb" dangerouslySetInnerHTML=${{ __html: renderPartial(live) }} /></div></div>`}
       ${busy && !live && html`<p class="muted">Thinking…</p>`}
     </div>
     ${!atBottom && html`<button class="jump" onClick=${() => setAtBottom(true)}>Jump to latest</button>`}
     ${err && html`<p class="cherr" role="alert">${err}</p>`}
     <form class="chatf" onSubmit=${send}>
-      <textarea ref=${taRef} rows="2" placeholder=${`Ask ${name} about its last run…`}
+      <textarea ref=${taRef} rows="2" placeholder=${`Ask ${name} to analyze or run commands…`}
         onKeyDown=${e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) send(e); }} required></textarea>
-      <button disabled=${busy}>${busy ? '…' : 'Send'}</button>
+      ${/* The label is an aria-label, not a text node: the comp's send control is a 40px circle
+            and "Send" does not fit in one. The busy state keeps a visible "…" because a disabled
+            control with no text and no icon is indistinguishable from a rendering failure. */ ''}
+      <button class="sendb" disabled=${busy} aria-label=${busy ? 'Sending' : 'Send'}>${busy ? '…' : ''}</button>
     </form>
+    ${tools && html`<p class="chint">${name} has access to ${tools}. Use /help for commands.</p>`}
   </div>`;
 }
