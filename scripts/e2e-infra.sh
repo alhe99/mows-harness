@@ -171,6 +171,17 @@ chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/history | g
 # stays on '/': the window-target gate lives in the base page script, served on every page.
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
+# The server-rendered pages must NOT prerender /ui links. Today no /ui href matches the
+# href_matches allowlist anyway, so the BEHAVIOUR would be right even with the exclusion removed —
+# which is exactly why the exclusion is written down and pinned here rather than left implicit.
+# That allowlist is a list people widen (it already grew /agents, /agents?* and /agents/* once),
+# and the first broader pattern added would silently re-enable prerendering of an app route. A
+# prerender runs the page's scripts, so that means a whole second copy of the SPA and a second
+# EventSource on /stream, against a cap of SSE_MAX=8, for a tap that may never come.
+# Asserted against the SERVED html, not the source. Proved able to fail: deleting a[href^='/ui']
+# from the selector and re-serving the page turns this red.
+chk "dashboard: speculation rules exclude /ui" \
+  'curl -s http://127.0.0.1:3005/ | grep -o "<script type=\"speculationrules\">[^<]*" | grep -q "a\[href\^='"'"'/ui'"'"'\]"'
 
 # ---- the SPA's Content-Security-Policy -------------------------------------------------------
 # Defence BEHIND the escaping in views/chat.mjs, never instead of it. This branch shipped a stored

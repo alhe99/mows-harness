@@ -10,16 +10,31 @@
 // "resume in terminal" affordance — this dashboard only drives ONE tmux
 // server, see TMUX_USER: the first non-agent login found).
 // Routes: /            paginated session list (filter: acct, q, page)
+//         /history /system /device /agents   the other server-rendered tabs
 //         /s/<a>/<sid> paginated transcript (newest page first)
 //         /healthz     index stats
 //         /manifest.webmanifest /sw.js /icon-*.png   PWA (installable app)
-// ponytail: no client JS by design — pagination/filtering are plain links, so
-// the app works identically on 2G, with JS disabled, and in text browsers.
-// (sole exception: a one-line service-worker registration; pure enhancement.)
-// The app-shell feel comes from the platform, not a framework: CSS view transitions pin
-// the tab bar across navigations, a speculationrules block prerenders dashboard links on
-// hover/touch (never /term*, ?fresh=1, ?reclaim=1 — those have side effects), bfcache
-// makes back/forward instant (headers are no-cache, never no-store).
+//         /ui /ui/*    the client-rendered app (see uiShellHtml below)
+//         /ui/assets/* content-hashed modules from ./app/, immutable-cached
+//         /api/*       JSON for the app · /stream  one multiplexed SSE per tab
+// ponytail: the server-rendered routes above have no client JS by design —
+// pagination/filtering are plain links, so they work identically on 2G, with
+// JS disabled, and in text browsers. (Sole exception: a one-line service-worker
+// registration; pure enhancement.) Their app-shell feel comes from the platform,
+// not a framework: CSS view transitions pin the tab bar across navigations, a
+// speculationrules block prerenders dashboard links on hover/touch (never /term*,
+// ?fresh=1, ?reclaim=1 — those have side effects, and never /ui*, which owns its
+// own navigation), bfcache makes back/forward instant (no-cache, never no-store).
+//
+// /ui IS client-rendered, and that is the one place the "zero client JS" rule above
+// does not hold (2026-09-16). It exists because a streaming chat transcript and a
+// live run list are state a page reload destroys. It is still zero-DEPENDENCY: four
+// vendored ESM modules under ./app/vendor/ pinned by SHA256SUMS, no npm install, no
+// bundler, no build step, and preflight caps the whole client at 76,800 B gzipped.
+// DEPLOY NOTE: this file is no longer self-contained. It imports ./chat-stream.mjs
+// and ./capability.mjs at load, and serves ./app/ at runtime — install all of them
+// together or the unit will not start (missing sibling) or /ui will answer 200 with
+// a blank page (missing app/). See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
 import { promises as fsp, readdirSync, existsSync, readFileSync, statfsSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
@@ -2090,7 +2105,7 @@ ${pnav}
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
-<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun]"}}]},"eagerness":"moderate"}]}</script>
+<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun],a[href^='/ui']"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
 ${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
@@ -2652,7 +2667,10 @@ document.addEventListener('keydown',function(e){
 `;
 
 // ---------- views ----------
-// one transcript row — shared by /history's day-grouped list and /'s "today" strip.
+// one transcript row — /history's day-grouped list, and nothing else. It WAS shared with a
+// "today" strip on '/', which the 2026-08-29 fleet reskin deleted (homeView's own header: "no
+// system stats, no today list"). listView() is the only caller; an assertion that curls '/'
+// looking for anything this function emits is looking at the wrong page (see 3b0c26c).
 function sessionRowHtml(e, title, liveBySid, back) {
   const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
   const isLive = liveBySid.has(sid8);
@@ -3351,7 +3369,9 @@ const uiAssetUrlFor = rel => {
 // there would BREAK those pages rather than harden them. The SPA is the surface that renders
 // agent replies — the stored-XSS path this branch actually shipped and fixed — and it was
 // measured to contain no inline style attribute at all (`grep -rn 'style=' infra/dashboard/app/`
-// is empty), so it takes a strict policy with two nonces and no exceptions.
+// is empty), so it takes a strict policy with no exceptions: ONE nonce, minted per response and
+// named by both script-src and style-src (not two independent values — an attacker who can read
+// one out of the markup can read the other, so separate values would buy nothing).
 //
 // What each directive is holding up, so nobody loosens one without knowing what they are paying:
 //   default-src 'none'   nothing loads unless a directive below says so; that is what makes the

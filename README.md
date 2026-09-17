@@ -11,7 +11,7 @@ dashboard + web terminal that work from any device — phone included.
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Platform: Ubuntu 24.04 + systemd](https://img.shields.io/badge/platform-Ubuntu%2024.04%20%2B%20systemd-E95420?logo=ubuntu&logoColor=white)
 ![Node 20+](https://img.shields.io/badge/node-20%2B-339933?logo=nodedotjs&logoColor=white)
-![Dashboard: one file, zero dependencies](https://img.shields.io/badge/dashboard-1%20file%2C%200%20deps-00d492)
+![Dashboard: no build step, zero dependencies](https://img.shields.io/badge/dashboard-no%20build%20step%2C%200%20deps-00d492)
 ![Installable PWA](https://img.shields.io/badge/mobile-installable%20PWA-9f9fa9)
 
 </div>
@@ -36,7 +36,7 @@ you leave running, `--all` for the full web cockpit.
 - **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, monitor OS patch health, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, the **mows control** dashboard (Sessions / History /
-  System / Device), a themeable browser terminal (the phone view)
+  System / Device / Agents, plus the `/ui` app), a themeable browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command; per-session
   git worktrees so parallel sessions never fight over one checkout
 - **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
@@ -252,8 +252,11 @@ cd mows-harness
 ```
 
 Expect the last line to be `preflight: ALL CLEAN`. That gate checks manifest completeness,
-scans for leaked secrets/identity, shellchecks every script, and runs a sandboxed install
-dry-run. **If it fails, stop** — do not install from a repo that fails its own gate.
+scans for leaked secrets/identity, shellchecks every script, runs a sandboxed install dry-run,
+and runs the dashboard's own gates inline — the `/ui` client-asset ceiling and vendored-module
+hashes, the chat renderer's XSS assertions, and the capability panel's honesty assertions. Each
+one **fails** rather than skips when it cannot run. **If it fails, stop** — do not install from
+a repo that fails its own gate.
 
 There is also a full end-to-end test, if you want proof before touching your own box:
 
@@ -266,6 +269,23 @@ Part 2 as that user — preflight, install, every verification command below, th
 recipe, `--infra` rendering with real values — then asserts idempotency (a second install
 backs up and restores cleanly) and blast radius (nothing written outside `$HOME`). All checks
 must pass.
+
+Two more suites exist and neither is wired into `preflight.sh`, on purpose:
+
+```bash
+MOWS_HOST=<your dashboard host> ./scripts/e2e-infra   # the layer-3 auth chain, for real; ~5 min
+./docs/qa/probes/run.sh all webkit                    # real-browser probes for /ui
+```
+
+`e2e-infra` stands Caddy + oauth2-proxy + the dashboard up in a container. `MOWS_HOST` is
+optional and additive: with it the suite also runs the HTTP/2 assertion against your live host,
+which a container with no DNS and no certificate cannot prove; without it that one check SKIPs
+and says so. `docs/qa/probes/` is the scripted form of `docs/qa/journeys/agent-chat.md` and is
+where the **WebKit** evidence for `/ui` comes from — streaming, scroll anchoring, mid-turn SSE
+reconnect, and the CSP refusing an injected handler. It needs a Playwright install that this
+repo deliberately does not own; without one every probe SKIPs and prints the install command.
+See [`docs/qa/probes/README.md`](docs/qa/probes/README.md), which also lists what these probes
+**cannot** tell you — a real on-screen keyboard among them.
 
 ## Step 2 — install the layers you chose
 
@@ -349,7 +369,11 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    `{{...}}` placeholder survives in anything root will execute.
 5. **Install and enable, in order** — caddy → oauth2-proxy → dashboard → web terminal →
    transcript prune timer (`claude-transcript-prune.timer`). The sudoers file goes in via
-   `visudo -cf` validation, mode `0440`.
+   `visudo -cf` validation, mode `0440`. The dashboard step is **four artifacts** — `lite.mjs`,
+   `chat-stream.mjs`, `capability.mjs` and the whole `app/` tree — plus a unit restart;
+   `./install.sh --infra` prints the exact lines, and "Deploying this change" in
+   [`docs/architecture.md`](docs/architecture.md) says what each way of splitting them looks
+   like when it goes wrong.
 6. **`sudo loginctl enable-linger <user>`** — `claude-rc`'s ad-hoc listeners use user-scope
    systemd and will fail fast without it.
 7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
@@ -410,7 +434,7 @@ flowchart TB
     subgraph Layer3["Layer 3: infra (public VPS surface)"]
         CADDY["Caddy :443<br/>TLS + reverse proxy"]
         OAUTH["oauth2-proxy :4180<br/>Google-gated auth"]
-        DASH["dashboard (lite.mjs) :3005"]
+        DASH["dashboard (lite.mjs + /ui app) :3005"]
         TERM["ttyd /term :7681"]
         WATCH["qa-watch: Xvfb + Chrome + noVNC<br/>:6080 / :9222, on-demand"]
     end
@@ -447,9 +471,17 @@ flowchart TB
   alive and clean: unit/wedge recovery, memory-capture verification, idle-session reaping,
   orphaned-MCP reaping, usage-limit auto-continue, OS patch-health monitoring, boot logging.
 - **`infra/`** — templates for the public surface: Caddy (TLS + reverse proxy), oauth2-proxy
-  (Google-gated auth), the zero-dependency **mows control** dashboard — a PWA-installable
-  single file (`lite.mjs`) serving the Sessions / History / System / Device views above, with
-  live SSE updates and a pane-content session classifier — a `ttyd` web terminal with 12
+  (Google-gated auth), the zero-dependency **mows control** dashboard — PWA-installable,
+  no build step, Node stdlib only: `lite.mjs` (plus `chat-stream.mjs` and `capability.mjs`,
+  which it imports) serves the server-rendered Sessions / History / System / Device / Agents
+  views above with live SSE updates and a pane-content session classifier, **and** the
+  client-rendered app at `/ui`: `/ui/agents`, `/ui/agents/<name>` (capability panel + streaming
+  chat) and `/ui/agents/<name>/<run_id>`, built on `GET /api/*`, one multiplexed `GET /stream`
+  per tab, and the four vendored ESM modules under `infra/dashboard/app/` (45 KB gzipped
+  against a 76,800 B preflight ceiling — no npm install, no bundler). The server-rendered
+  `/agents` twin still ships beside `/ui/agents` and is retired only after the replacement has
+  run on a box for a week. **Deploying it is four artifacts and a restart, not one `install`** —
+  see [`docs/architecture.md`](docs/architecture.md) — a `ttyd` web terminal with 12
   switchable color themes, an on-demand browser-QA watch stack, the containerized Android
   emulator console, firewall templates, and scoped sudoers.
 - **`fleet/`** — several Claude identities on one box: named *profiles* under one account
