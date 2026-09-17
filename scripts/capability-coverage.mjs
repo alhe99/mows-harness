@@ -173,20 +173,9 @@ const MUTATIONS = [
     find: '      <li>under <b>permissionMode: ${p.permissionMode || \'not set\'}</b>, as written in its file.\n        This page reports what it read; it cannot check what the CLI does with it.</li>\n',
     repl: '' },
   { id: 'V25', file: 'view', desc: 'the "what this page cannot see" disclosure removed',
-    // NOTE the escaped \${' '}: this find is a TEMPLATE LITERAL, so an unescaped one would be
-    // interpolated to a bare space here and the target would never match the file.
-    find: `    <p class="muted">What this page cannot see: the profile's permission rules, any\${' '}
-      <code>PreToolUse</code> hook (<code>agents/SETUP.md</code> makes a write-deny hook a
-      precondition for a shell-capable agent), and any MCP server <code>mows-agent</code> passes in.
-      Each can remove authority listed above. The CLI also grants fewer tools than a file lists —
-      with <code>Bash</code> present, <code>Glob</code> and <code>Grep</code> did not appear in the
-      tool set of any run measured on this box.</p>
-`, repl: '' },
+    find: '    <p class="muted">What this page cannot see: the profile\'s permission rules, any${\' \'}\n      <code>PreToolUse</code> hook (<code>agents/SETUP.md</code> makes a write-deny hook a\n      precondition for a shell-capable agent), and any MCP server <code>mows-agent</code> passes in.\n      Each can remove authority listed above. The CLI also decides the final tool set, and in every\n      run measured on this box it granted a subset of what the file declared — <code>Glob</code>${\' \'}\n      and <code>Grep</code> reached only the one agent that named them without <code>Bash</code>.\n      A file\'s <code>disallowedTools</code> IS honoured: denying one tool removed exactly that tool\n      and nothing else (measured).</p>\n', repl: '' },
   { id: 'V26', file: 'view', desc: 'a permissionMode: plan agent gets the warning unqualified',
     find: '      ${planned && html`<p>Its file sets', repl: '      ${false && html`<p>Its file sets' },
-  { id: 'V27', file: 'view', desc: 'the quiet panel stops saying what its silence covers',
-    find: '    ${!auth.length && html`<p class="muted">No tool it holds confers shell access, subagents, file',
-    repl: '    ${false && html`<p class="muted">No tool it holds confers shell access, subagents, file' },
   { id: 'V28', file: 'view', desc: 'a declared-but-inert webhook trigger is not mentioned',
     find: '    ${p.webhookDeclaredInert && html', repl: '    ${false && html' },
   { id: 'V29', file: 'view', desc: 'the miscased-tool sentence removed',
@@ -199,6 +188,59 @@ const MUTATIONS = [
     find: "  network: ['This agent can reach the network.',", repl: "  network: ['This agent has some tools.'," },
   { id: 'V33', file: 'view', desc: 'the authority list stops naming the tools that confer each kind',
     find: "${' '}<span class=\"muted\">(${a.tools.join(', ')})</span>", repl: '' },
+
+  { id: 'C31', file: 'model', desc: 'the second turn limit is never read, so a disagreement cannot be seen',
+    find: '      maxTurnsDeclared: (Number.isInteger(fm?.maxTurns) && fm.maxTurns > 0) ? fm.maxTurns : null,',
+    repl: '      maxTurnsDeclared: null,' },
+  { id: 'C32', file: 'model', desc: 'the turn limits are never compared',
+    find: '      turnCapDisagreement: Number.isInteger(fm?.maxTurns) && Number.isInteger(m.budget?.max_turns)\n        && fm.maxTurns !== m.budget.max_turns,',
+    repl: '      turnCapDisagreement: false,' },
+  { id: 'C33', file: 'model', desc: 'agreeing turn limits reported as a disagreement (cries wolf)',
+    find: '      turnCapDisagreement: Number.isInteger(fm?.maxTurns) && Number.isInteger(m.budget?.max_turns)\n        && fm.maxTurns !== m.budget.max_turns,',
+    repl: '      turnCapDisagreement: Number.isInteger(fm?.maxTurns),' },
+  { id: 'C34', file: 'model', desc: 'a malformed maxTurns accepted as a declared figure',
+    find: '      maxTurnsDeclared: (Number.isInteger(fm?.maxTurns) && fm.maxTurns > 0) ? fm.maxTurns : null,',
+    repl: '      maxTurnsDeclared: fm?.maxTurns ?? null,' },
+  { id: 'V36', file: 'view', desc: 'the turn-limit disagreement is computed but never shown',
+    find: '${p.turnCapDisagreement\n          ? html` Its file also sets', repl: '${false\n          ? html` Its file also sets' },
+
+  { id: 'C35', file: 'model', desc: 'a lone mows turn figure reported as a disagreement',
+    find: '      turnCapDisagreement: Number.isInteger(fm?.maxTurns) && Number.isInteger(m.budget?.max_turns)\n        && fm.maxTurns !== m.budget.max_turns,',
+    repl: '      turnCapDisagreement: Number.isInteger(m.budget?.max_turns),' },
+  // --- the fourth member of the quiet-state class, and its generalisation ----------------------
+  { id: 'C36', file: 'model', desc: 'mcp__ tools no longer collected — the silence the lead found',
+    find: '    mcpTools: inherits ? null : effective.filter(t => MCP_RE.test(t)),',
+    repl: '    mcpTools: inherits ? null : [],' },
+  { id: 'C37', file: 'model', desc: 'unclassified tools no longer reported',
+    find: '    unclassifiedTools: inherits ? null\n      : effective.filter(t => !AUTH_TOOLS.includes(t) && !BENIGN_TOOLS.has(t) && !MCP_RE.test(t)),',
+    repl: '    unclassifiedTools: inherits ? null : [],' },
+  { id: 'C38', file: 'model', desc: 'the benign list dropped, so read-only tools are flagged unknown (cries wolf)',
+    find: "const BENIGN_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'NotebookRead', 'BashOutput', 'ExitPlanMode']);",
+    repl: 'const BENIGN_TOOLS = new Set([]);' },
+  { id: 'C39', file: 'model', desc: 'mcp__ tools double-counted as unclassified as well',
+    find: '      : effective.filter(t => !AUTH_TOOLS.includes(t) && !BENIGN_TOOLS.has(t) && !MCP_RE.test(t)),',
+    repl: '      : effective.filter(t => !AUTH_TOOLS.includes(t) && !BENIGN_TOOLS.has(t)),' },
+  { id: 'C40', file: 'model', desc: 'an authority tool also reported as unclassified',
+    find: '      : effective.filter(t => !AUTH_TOOLS.includes(t) && !BENIGN_TOOLS.has(t) && !MCP_RE.test(t)),',
+    repl: '      : effective.filter(t => !BENIGN_TOOLS.has(t) && !MCP_RE.test(t)),' },
+  { id: 'V37', file: 'view', desc: 'the MCP unknown-reach warning removed',
+    find: '    ${!!c.mcpTools?.length && html', repl: '    ${false && html' },
+  { id: 'V38', file: 'view', desc: 'the unclassified-tools warning removed',
+    find: '    ${!!c.unclassifiedTools?.length && html', repl: '    ${false && html' },
+  { id: 'V39', file: 'view', desc: 'the inherit path stops warning about tools it cannot name',
+    find: '    ${c.inherits && html`<p class="cap-warn">Inheriting also brings every tool',
+    repl: '    ${false && html`<p class="cap-warn">Inheriting also brings every tool' },
+  { id: 'V40', file: 'view', desc: 'the reassuring sentence shown regardless of what is unknown (the round-1 quiet state)',
+    find: '  const quiet = !auth.length && !c.inherits && !c.malformedTools && !c.malformedDenied\n    && !c.miscasedTools.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;',
+    repl: '  const quiet = !auth.length;' },
+  { id: 'V41', file: 'view', desc: 'the reassuring sentence never shown at all',
+    find: '    ${quiet && html`<p class="muted">No tool it holds confers shell access',
+    repl: '    ${false && html`<p class="muted">No tool it holds confers shell access' },
+  { id: 'V42', file: 'view', desc: 'the measured disallowedTools finding dropped from the disclosure',
+    find: `      A file's <code>disallowedTools</code> IS honoured: denying one tool removed exactly that tool
+      and nothing else (measured).`, repl: '' },
+  { id: 'V43', file: 'view', desc: 'the corrected subset finding dropped from the disclosure',
+    find: '      run measured on this box it granted a subset of what the file declared', repl: '      run measured on this box things happened' },
 
   // --- the check's OWN tree walker ------------------------------------------------------------
   // A walker that quietly stopped walking would carry every text and prop assertion green — the

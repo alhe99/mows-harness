@@ -195,6 +195,62 @@ const kinds = c => (c.authorities || []).map(a => a.kind).join(',');
   check('SlashCommand is treated as reaching beyond the tool list',
     c.hasBroad === true && kinds(c) === 'command', c);
 }
+// ---- the fourth member of the quiet-state class: a tool whose reach is UNKNOWABLE --------------
+// `tools: [Read, mcp__figma__get_screenshot]` rendered a panel identical to a genuinely read-only
+// agent's. An MCP tool reaches whatever its server reaches, which is not knowable from its name.
+{
+  const c = cap({ tools: ['Read', 'mcp__figma__get_screenshot'] });
+  check('an mcp__ tool is collected as unknown-reach', c.mcpTools.join() === 'mcp__figma__get_screenshot', c.mcpTools);
+  check('...and is NOT silently counted as unclassified as well', c.unclassifiedTools.length === 0, c.unclassifiedTools);
+  check('...and does not fabricate a known authority', c.authorities.length === 0 && c.hasBroad === false, c);
+  const t = flat(CapabilityPanel({ capability: c }));
+  check('the panel says its MCP reach is unknown', /reach through MCP is unknown/.test(t), t);
+  check('...and refuses to guess in either direction', /will not guess in either direction/.test(t), t);
+  check('...and does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
+}
+// The same rule, generalised: a tool this page has no classification for. The measurement that
+// forced it — an inheriting agent was granted 27 tools and AUTHORITIES names 8 — means a fixed
+// allowlist of dangerous names is permanently behind the real tool surface.
+{
+  const c = cap({ tools: ['Read', 'CronCreate', 'RemoteTrigger'] });
+  check('tools outside both the authority and benign lists are reported as unclassified',
+    c.unclassifiedTools.join() === 'CronCreate,RemoteTrigger', c.unclassifiedTools);
+  const t = flat(CapabilityPanel({ capability: c }));
+  check('the panel names them and calls their reach unknown',
+    /cannot classify CronCreate, RemoteTrigger/.test(t) && /rather than as harmless/.test(t), t);
+  check('...and does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
+  check('a read-only tool is not reported as unclassified',
+    cap({ tools: ['Read', 'Glob', 'Grep'] }).unclassifiedTools.length === 0, cap({ tools: ['Read', 'Glob', 'Grep'] }));
+  check('an authority tool is not ALSO reported as unclassified',
+    cap({ tools: ['Bash', 'Write'] }).unclassifiedTools.length === 0, cap({ tools: ['Bash', 'Write'] }));
+}
+// ---- the audit: the quiet state is reachable ONLY through the one path that is honest ----------
+// Enumerated rather than spot-checked. Each entry is a way an agent could hold real authority; the
+// panel must stay noisy for all of them, and may be quiet only for the last.
+{
+  const paths = {
+    'missing tools: key (round 1)': { mows: {} },
+    'deny list on the inherit path (round 2, F3)': { disallowedTools: ['Bash', 'Task'] },
+    'inherit + every KNOWN authority denied': { disallowedTools: ['Bash', 'Task', 'SlashCommand', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch'] },
+    'a populated list of writing and network tools (F5)': { tools: ['Read', 'Write', 'Edit', 'WebFetch'] },
+    'an mcp__ tool (round 2, the lead)': { tools: ['Read', 'mcp__db__query'] },
+    'a tool this page has no name for': { tools: ['Read', 'CronCreate'] },
+    'an unparseable tools: field': { tools: 42 },
+    'an unparseable disallowedTools': { tools: ['Read'], disallowedTools: 42 },
+    'a miscased authority tool': { tools: ['Read', 'bash'] },
+  };
+  let leaked = null;
+  for (const [label, fm] of Object.entries(paths)) {
+    const t = flat(CapabilityPanel({ capability: cap(fm) }));
+    if (/read the rest of this panel/.test(t)) leaked = { label, t };
+  }
+  check('[audit] no path that hides real authority reaches the reassuring quiet state',
+    leaked === null, leaked);
+  // ...and the honest quiet state is still reachable, or the assertion above would be vacuous.
+  const t = flat(CapabilityPanel({ capability: cap({ tools: ['Read', 'Glob', 'Grep'], mows: { profile: 'x' } }) }));
+  check('[audit] a genuinely read-only agent still gets the quiet panel',
+    /read the rest of this panel/.test(t), t);
+}
 // ---- the inherit case: the file that looks most restricted is the least ----------------------
 {
   const c = cap({ mows: { profile: 'default' } }); // no tools: key at all
@@ -315,8 +371,13 @@ check('the comma-separated string form of tools: is understood',
     /permissionMode: default/.test(joined), joined);
   check('the panel says it cannot see the permission rules or a PreToolUse hook',
     /cannot see/.test(joined) && /PreToolUse/.test(joined), joined);
-  check('the panel discloses that the CLI grants fewer tools than the file lists',
-    /grants fewer tools than a file lists/.test(joined), joined);
+  check('the panel discloses that the CLI, not the file, decides the final tool set',
+    /granted a subset of what the file declared/.test(joined), joined);
+  // Measured this round: denying one tool removed exactly that tool from an inheriting agent's
+  // granted set and nothing else. The inherit path derives authority FROM the deny list, so the
+  // panel says on what basis it is entitled to.
+  check('the panel says disallowedTools was measured to be honoured',
+    /disallowedTools IS honoured/.test(joined), joined);
   check('the workdir is named as a starting directory, not a boundary',
     /not a boundary it is held to/.test(joined), joined);
   check('the profile is not presented as an identity boundary',
@@ -365,6 +426,7 @@ check('the comma-separated string form of tools: is understood',
     'malformed deny list': [cap({ tools: ['Read'], disallowedTools: 42 }), null],
     'miscased tool': [cap({ tools: ['Read', 'bash'] }), null],
     'explicit empty tool list': [cap({ tools: [] }), null],
+    'disagreeing turn limits': [cap({ tools: ['Read'], maxTurns: 100, mows: { budget: { usd_per_run: 1, max_turns: 5 } } }), null],
     'unknown capability': [null, null],
   };
   let offenders = null;
@@ -423,6 +485,25 @@ check('the comma-separated string form of tools: is understood',
   check('a missing profile renders "runs as unknown"', /runs as unknown/.test(joined), joined);
   check('a missing workdir renders "in unknown"', /in unknown/.test(joined), joined);
   check('a missing permissionMode renders "not set"', /permissionMode: not set/.test(joined), joined);
+}
+// Two turn limits, validated independently by mows-agent-meta and reconciled by nothing.
+{
+  const agree = cap({ tools: ['Read'], maxTurns: 40, mows: { budget: { usd_per_run: 1, max_turns: 40 } } });
+  check('turn limits that agree are not reported as a disagreement',
+    agree.policy.turnCapDisagreement === false, agree.policy);
+  check('...and the panel says nothing about it',
+    !/Claude namespace/.test(flat(CapabilityPanel({ capability: agree }))), flat(CapabilityPanel({ capability: agree })));
+  const clash = cap({ tools: ['Read'], maxTurns: 100, mows: { budget: { usd_per_run: 1, max_turns: 5 } } });
+  check('two turn limits that disagree are reported', clash.policy.turnCapDisagreement === true, clash.policy);
+  check('the Claude-namespace figure is carried so the panel can name it',
+    clash.policy.maxTurnsDeclared === 100, clash.policy);
+  const t = flat(CapabilityPanel({ capability: clash }));
+  check('the panel names both figures and picks neither',
+    /maxTurns: 100/.test(t) && /5 turns per run/.test(t) && /not something this page\s*can determine/.test(t), t);
+  check('a file with only the mows figure is not a disagreement',
+    cap({ tools: ['Read'], mows: { budget: { max_turns: 5 } } }).policy.turnCapDisagreement === false, true);
+  check('a malformed maxTurns is not reported as a declared figure',
+    cap({ tools: ['Read'], maxTurns: 'abc', mows: { budget: { max_turns: 5 } } }).policy.maxTurnsDeclared === null, true);
 }
 { // A capability with no daily cap must not invent one.
   const joined = flat(CapabilityPanel({ capability: cap({ tools: ['Read'], mows: { budget: { usd_per_run: 1, max_turns: 2 } } }) }));

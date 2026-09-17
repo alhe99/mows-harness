@@ -98,6 +98,20 @@ chk "cap: policy is present"            'curl -s http://127.0.0.1:3005/api/agent
 chk "cap: effective is the allow list"  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.effective == [\"Read\",\"Glob\",\"Grep\",\"Bash\"]"'
 chk "cap: the no-op deny list is named" 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.denyNoop | length == 4"'
 chk "cap: budget reaches the response"  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.budget.usd_per_run == 1.5"'
+# The panel no longer answers "is it broad?" with one boolean — it names the KINDS of authority an
+# agent holds, because several narrow-sounding tools add up and a boolean cannot say what they add
+# up to. That shape has to survive the HTTP boundary intact, not just exist in the model: the
+# assertions above would all still pass if `authorities` were dropped from the response entirely.
+chk "cap: authorities name the kind and the tools that confer it" \
+  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.authorities == [{\"kind\":\"shell\",\"beyondList\":true,\"tools\":[\"Bash\"]}]"'
+# permissionMode is read but never verified, and the panel says so; it must at least reach the page.
+chk "cap: permissionMode crosses the wire" \
+  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.permissionMode == \"default\""'
+# The residue fields: a tool this page cannot classify, and an MCP tool whose reach is unknowable.
+# Both are empty for this fixture, and both must be PRESENT and empty rather than absent — absent
+# and empty are the same to jq, which is the trap the ghost assertion below also had to dodge.
+chk "cap: the unknown-reach fields are present, not merely falsy" \
+  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e "(.capability | has(\"mcpTools\") and has(\"unclassifiedTools\")) and .capability.mcpTools == [] and .capability.unclassifiedTools == []"'
 # A WEBHOOK_SECRET_HARNESS_REVIEWER is configured above, so /wh/harness-reviewer can start this
 # agent — a capability its triggers list (one cron entry) does not mention. The panel says so.
 chk "cap: an armed webhook is disclosed" 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.webhookArmed == true"'

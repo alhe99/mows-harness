@@ -38,6 +38,18 @@ export const AUTHORITIES = [
   { kind: 'network', beyondList: false, tools: ['WebFetch', 'WebSearch'] },
 ];
 const AUTH_TOOLS = AUTHORITIES.flatMap(a => a.tools);
+// Tools whose reach this page is willing to vouch for as read-only or purely internal. It exists
+// only so that the "unclassified" report below is not a list of every tool in Claude Code — and it
+// is deliberately SHORT. Anything absent from both this set and AUTHORITIES is reported as unknown,
+// which errs toward saying "I cannot tell you" rather than toward silence.
+//
+// The measurement that forced this: an inheriting agent on this box was granted 27 tools, of which
+// AUTHORITIES names 8. The other 19 included CronCreate, ScheduleWakeup, RemoteTrigger, SendMessage,
+// EnterWorktree and Workflow — none of them plausibly read-only, none of them nameable in advance.
+// A fixed allowlist of dangerous names can only ever be behind a tool surface that grows, so the
+// panel must report the residue instead of treating "not on my list" as "harmless".
+const BENIGN_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'NotebookRead', 'BashOutput', 'ExitPlanMode']);
+const MCP_RE = /^mcp__/;
 // The beyond-the-list tools, which is what the brief's `broad` field means. This is a SUPERSET of
 // mows-agent-meta's WRITE_CAPABLE_TOOLS ({Bash, Task}), not a copy of it, and
 // scripts/capability-check.mjs parses that set out of the validator and asserts the containment
@@ -93,6 +105,18 @@ export function agentCapability(fm, opts = {}) {
     inherits,
     malformedTools,
     malformedDenied,
+    // Tools whose reach this page cannot state. `mcp__*` is split out because it is the case with a
+    // name: an MCP tool reaches whatever its server reaches — the network, the filesystem, a
+    // production database — and nothing about that is knowable from the tool name, so `unknown` is
+    // the only honest answer rather than a guess in either direction.
+    //
+    // These two fields exist because of the quiet-state audit: `tools: [Read, mcp__figma__x]`
+    // produced a panel identical to a genuinely read-only agent's. Reporting the residue closes
+    // that whole family at once — including tools that do not exist yet — rather than adding a
+    // classification per tool name as each one is noticed.
+    mcpTools: inherits ? null : effective.filter(t => MCP_RE.test(t)),
+    unclassifiedTools: inherits ? null
+      : effective.filter(t => !AUTH_TOOLS.includes(t) && !BENIGN_TOOLS.has(t) && !MCP_RE.test(t)),
     // Tool names that differ from a known tool ONLY in case. BROAD_TOOLS is case-sensitive and
     // neither mows-agent-meta nor Claude Code validates tool names, so `tools: [read, bash]` lists
     // two tools that do not exist AND silences the shell warning (review F10). Only exact-except-
@@ -111,6 +135,17 @@ export function agentCapability(fm, opts = {}) {
       // authority list above wrong; `bypassPermissions` is refused by the linter. The panel cannot
       // verify that the CLI honours any of them, and says so rather than implying it checked.
       permissionMode: typeof fm?.permissionMode === 'string' ? fm.permissionMode : null,
+      // An agent file carries TWO turn limits and nothing reconciles them: `maxTurns` in the Claude
+      // namespace, which the CLI reads out of the .md itself, and `mows.budget.max_turns`, which
+      // mows-agent reads with jq and passes as `--max-turns` (agents/bin/mows-agent:214). The
+      // validator range-checks each and cross-checks neither, so `maxTurns: 100` beside
+      // `max_turns: 5` lints clean — and the panel used to report the mows figure alone as though
+      // it were the cap. Which one binds is a CLI precedence question this page cannot answer, so
+      // it reports the disagreement rather than picking a winner. Found while working out what the
+      // measured "declared != granted" finding implies for the panel's other frontmatter fields.
+      maxTurnsDeclared: (Number.isInteger(fm?.maxTurns) && fm.maxTurns > 0) ? fm.maxTurns : null,
+      turnCapDisagreement: Number.isInteger(fm?.maxTurns) && Number.isInteger(m.budget?.max_turns)
+        && fm.maxTurns !== m.budget.max_turns,
       triggers: rawTrig,
       // Flattened here rather than in the view: a trigger entry is raw YAML and need not be an
       // object at all, and a view that reached into `.type` on each would print "undefined".
