@@ -206,7 +206,7 @@ const kinds = c => (c.authorities || []).map(a => a.kind).join(',');
   const t = flat(CapabilityPanel({ capability: c }));
   check('the panel says its MCP reach is unknown', /reach through MCP is unknown/.test(t), t);
   check('...and refuses to guess in either direction', /will not guess in either direction/.test(t), t);
-  check('...and does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
+  check('an mcp__ tool does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
 }
 // The same rule, generalised: a tool this page has no classification for. The measurement that
 // forced it — an inheriting agent was granted 27 tools and AUTHORITIES names 8 — means a fixed
@@ -218,7 +218,7 @@ const kinds = c => (c.authorities || []).map(a => a.kind).join(',');
   const t = flat(CapabilityPanel({ capability: c }));
   check('the panel names them and calls their reach unknown',
     /cannot classify CronCreate, RemoteTrigger/.test(t) && /rather than as harmless/.test(t), t);
-  check('...and does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
+  check('an unclassified tool does NOT print the reassuring sentence', !/read the rest of this panel/.test(t), t);
   check('a read-only tool is not reported as unclassified',
     cap({ tools: ['Read', 'Glob', 'Grep'] }).unclassifiedTools.length === 0, cap({ tools: ['Read', 'Glob', 'Grep'] }));
   check('an authority tool is not ALSO reported as unclassified',
@@ -238,6 +238,9 @@ const kinds = c => (c.authorities || []).map(a => a.kind).join(',');
     'an unparseable tools: field': { tools: 42 },
     'an unparseable disallowedTools': { tools: ['Read'], disallowedTools: 42 },
     'a miscased authority tool': { tools: ['Read', 'bash'] },
+    // R2: an empty or comma-only tools STRING collapses to [] and rendered "grants: none".
+    'an empty tools string': { tools: '' },
+    'a comma-only tools string': { tools: ', ,' },
   };
   let leaked = null;
   for (const [label, fm] of Object.entries(paths)) {
@@ -250,6 +253,62 @@ const kinds = c => (c.authorities || []).map(a => a.kind).join(',');
   const t = flat(CapabilityPanel({ capability: cap({ tools: ['Read', 'Glob', 'Grep'], mows: { profile: 'x' } }) }));
   check('[audit] a genuinely read-only agent still gets the quiet panel',
     /read the rest of this panel/.test(t), t);
+
+  // DERIVED, not maintained by hand. `paths` above is nine-plus cases somebody thought of, and the
+  // re-review found two more by trying — so a hand-kept list is a spot-check wearing an
+  // enumeration's clothes. `quiet` is one boolean expression in the view, and every clause of it is
+  // a way to be non-quiet; reading the clauses OUT of the view and requiring a fixture for each is
+  // what makes completeness checkable. Add a clause to `quiet` without a fixture and this reddens.
+  const viewSrc = readFileSync(new URL('views/capability.mjs', APP).pathname, 'utf8');
+  const quietExpr = (viewSrc.match(/const quiet = ([\s\S]*?);\n/) || [])[1] || '';
+  const clauses = [...new Set([...quietExpr.matchAll(/c\.([A-Za-z]+)/g)].map(m => m[1]))].sort();
+  // One fixture per clause, each chosen so THAT clause alone is what makes it non-quiet.
+  const byClause = {
+    authorities: { tools: ['Read', 'Bash'] },
+    inherits: { mows: {} },
+    malformedTools: { tools: 42 },
+    malformedDenied: { tools: ['Read'], disallowedTools: 42 },
+    miscasedTools: { tools: ['Read', 'bash'] },
+    mcpTools: { tools: ['Read', 'mcp__x__y'] },
+    unclassifiedTools: { tools: ['Read', 'CronCreate'] },
+  };
+  check('[audit] the quiet condition was readable out of the view', clauses.length >= 6, { quietExpr, clauses });
+  const uncovered = clauses.filter(k => !(k in byClause));
+  check('[audit] every clause of `quiet` has a fixture that trips it', uncovered.length === 0,
+    { clauses, uncovered });
+  const notTripped = Object.entries(byClause)
+    .filter(([, fm]) => /read the rest of this panel/.test(flat(CapabilityPanel({ capability: cap(fm) }))))
+    .map(([k]) => k);
+  check('[audit] and each of those fixtures really does suppress the reassuring sentence',
+    notTripped.length === 0, notTripped);
+}
+// ---- R1: the deny list that is carrying the silence ------------------------------------------
+{
+  const c = cap({ tools: ['Read', 'Bash'], disallowedTools: ['Bash'] });
+  check('a deny entry that removed an authority tool is reported as load-bearing',
+    c.denyLoadBearing.join() === 'Bash', c.denyLoadBearing);
+  check('a deny entry that removed a non-authority tool is not load-bearing',
+    cap({ tools: ['Read', 'Glob'], disallowedTools: ['Glob'] }).denyLoadBearing.length === 0, true);
+  check('a no-op deny entry is not load-bearing',
+    cap(REVIEWER).denyLoadBearing.length === 0, cap(REVIEWER).denyLoadBearing);
+  const t = flat(CapabilityPanel({ capability: c }));
+  check('the quiet panel says the silence rests on the deny list',
+    /rests entirely on its/.test(t) && /removes Bash/.test(t), t);
+  check("...and does not say so when the deny list is not what made it quiet",
+    !/rests entirely on its/.test(flat(CapabilityPanel({ capability: cap({ tools: ['Read'] }) }))), true);
+}
+// ---- R2: an unreadable tools STRING is not a restriction --------------------------------------
+{
+  for (const [label, v] of Object.entries({ 'an empty string': '', 'a comma-only string': ', ,' })) {
+    const c = cap({ tools: v });
+    check(`${label} tools: value is flagged malformed, not read as "none"`, c.malformedTools === true, c);
+    check(`${label} rounds toward unrestricted`, c.inherits === true && c.hasBroad === true, c);
+  }
+  // ...and an EXPLICIT empty list still means what it says. Measured: the CLI granted such an agent
+  // zero tools (scripts/fixtures/inherited-tools.json's sibling probe, 2026-09-17), so this is the
+  // one branch where "grants: none" is a fact rather than an assumption.
+  check('an explicit empty list is still a real restriction, not malformed',
+    cap({ tools: [] }).malformedTools === false && cap({ tools: [] }).inherits === false, cap({ tools: [] }));
 }
 // ---- the inherit case: the file that looks most restricted is the least ----------------------
 {
@@ -376,8 +435,8 @@ check('the comma-separated string form of tools: is understood',
   // Measured this round: denying one tool removed exactly that tool from an inheriting agent's
   // granted set and nothing else. The inherit path derives authority FROM the deny list, so the
   // panel says on what basis it is entitled to.
-  check('the panel says disallowedTools was measured to be honoured',
-    /disallowedTools IS honoured/.test(joined), joined);
+  check('the panel says disallowedTools was measured to be honoured, scoped to its evidence',
+    /was honoured in every case measured here/.test(joined) && /three tools across both paths/.test(joined), joined);
   check('the workdir is named as a starting directory, not a boundary',
     /not a boundary it is held to/.test(joined), joined);
   check('the profile is not presented as an identity boundary',
@@ -426,6 +485,8 @@ check('the comma-separated string form of tools: is understood',
     'malformed deny list': [cap({ tools: ['Read'], disallowedTools: 42 }), null],
     'miscased tool': [cap({ tools: ['Read', 'bash'] }), null],
     'explicit empty tool list': [cap({ tools: [] }), null],
+    'quiet only because of a load-bearing deny list': [cap({ tools: ['Read', 'Bash', 'Write'], disallowedTools: ['Bash', 'Write'] }), null],
+    'mcp plus an unclassified tool': [cap({ tools: ['Read', 'mcp__x__y', 'CronCreate'] }), null],
     'disagreeing turn limits': [cap({ tools: ['Read'], maxTurns: 100, mows: { budget: { usd_per_run: 1, max_turns: 5 } } }), null],
     'unknown capability': [null, null],
   };
@@ -498,8 +559,9 @@ check('the comma-separated string form of tools: is understood',
   check('the Claude-namespace figure is carried so the panel can name it',
     clash.policy.maxTurnsDeclared === 100, clash.policy);
   const t = flat(CapabilityPanel({ capability: clash }));
-  check('the panel names both figures and picks neither',
-    /maxTurns: 100/.test(t) && /5 turns per run/.test(t) && /not something this page\s*can determine/.test(t), t);
+  check('the panel names both figures and says which one was measured to bind',
+    /maxTurns: 100/.test(t) && /5 turns per run/.test(t)
+    && /the mows figure is the one that binds/.test(t) && /took four turns/.test(t), t);
   check('a file with only the mows figure is not a disagreement',
     cap({ tools: ['Read'], mows: { budget: { max_turns: 5 } } }).policy.turnCapDisagreement === false, true);
   check('a malformed maxTurns is not reported as a declared figure',
@@ -577,6 +639,39 @@ check('the comma-separated string form of tools: is understood',
   // A hostile permissionMode must not be able to trip the `plan` branch by looking like it.
   check('a permissionMode that merely contains "plan" does not trip the plan qualifier',
     !/meant to stop it\s*acting/.test(flat(tree)), flat(tree));
+}
+
+// ---- the measured numbers the panel prints, pinned -------------------------------------------
+// The panel tells an operator "an inheriting agent was granted 27 tools, of which this page
+// classifies 8". Round 2 put that in prose with nothing behind it, the probe agents were deleted,
+// and the re-review could not adjudicate it (R4a) — a measured claim with no gate, which is the
+// exact shape check 5e exists to close, reintroduced one round later. The measurement now lives in
+// scripts/fixtures/inherited-tools.json (with its CLI version and date) and the arithmetic is
+// recomputed here from the shipped model's own sets, so the numbers in the copy cannot drift from
+// the evidence without this going red.
+{
+  let fx = null, err = null;
+  try { fx = JSON.parse(readFileSync(new URL('scripts/fixtures/inherited-tools.json', ROOT).pathname, 'utf8')); }
+  catch (e) { err = String(e.message || e); }
+  check('[pinned] the measured inherited tool set is in the tree', !!fx?.granted_tools?.length, err);
+  const granted = fx?.granted_tools || [];
+  const AUTH = AUTHORITIES.flatMap(a => a.tools);
+  // BENIGN_TOOLS is not exported (it is an implementation detail of the residue rule), so the
+  // classification is recomputed the only way a consumer can: a tool is classified iff the model
+  // reports it as neither unclassified nor mcp.
+  const c = agentCapability({ tools: granted });
+  const unclassified = (c.unclassifiedTools || []).length + (c.mcpTools || []).length;
+  check('[pinned] the inherited set is the size the panel claims', granted.length === 27, granted.length);
+  check('[pinned] the panel classifies exactly the number it prints',
+    granted.length - unclassified === 8, { granted: granted.length, unclassified });
+  check('[pinned] and AUTHORITIES itself matches 7 of them, not 8 — the comment now says so',
+    granted.filter(t => AUTH.includes(t)).length === 7, granted.filter(t => AUTH.includes(t)));
+  check('[pinned] the fixture records what it was measured against',
+    !!fx?.cli_version && !!fx?.measured_at, fx && { cli: fx.cli_version, at: fx.measured_at });
+  const panelText = flat(CapabilityPanel({ capability: agentCapability({ mows: {} }) }));
+  check('[pinned] the panel prints the numbers this fixture supports',
+    panelText.includes(`granted ${granted.length} tools`)
+    && panelText.includes(`classifies ${granted.length - unclassified}`), panelText);
 }
 
 // ---- one parser, not two ---------------------------------------------------------------------

@@ -218,3 +218,4 @@ infra/dashboard/capability.mjs
 infra/dashboard/app/views/capability.mjs
 scripts/capability-check.mjs
 scripts/capability-coverage.mjs
+scripts/fixtures/inherited-tools.json

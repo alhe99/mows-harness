@@ -222,6 +222,20 @@ for f in "${E2E[@]}"; do
   DUP=$(grep -oE "^chk[[:space:]]+\"[^\"]+\"" "$f" | sort | uniq -d)
   [ -z "$DUP" ] || bad "e2e lint: duplicate chk labels in $f: $DUP"
 done
+# (c2) the same lint, on the .mjs check files — where it matters MORE, not less. Scoping (c) to
+# the shell suites was a mistake: scripts/capability-coverage.mjs and chat-view-coverage.mjs
+# identify assertions BY LABEL and collect them into a Set, so two `check()` calls sharing a label
+# collapse into one entry and the second becomes invisible to the tool whose entire purpose is to
+# certify that every assertion can fail. That is not a reporting nuisance here, it is a hole in the
+# guarantee: capability-check.mjs shipped such a pair, the sweep reported 133 of 134 assertions,
+# and a deliberately vacuous `1 === 1` planted in the shadowed one was not named.
+for f in scripts/capability-check.mjs scripts/chat-view-check.mjs; do
+  [ -f "$f" ] || continue
+  # Only single-quoted literal labels, which is how every assertion in both files is written; a
+  # computed label would not be comparable across runs anyway.
+  DUP=$(grep -oE "check\('[^']+'" "$f" | sort | uniq -d)
+  [ -z "$DUP" ] || bad "assertion lint: duplicate check labels in $f (each hides another from the coverage sweep): $DUP"
+done
 # Deliberately NOT linted: a chk body that curls without -f and without a grep/jq/comparison.
 # It looks like the same class, but it flags `chk "oauth2-proxy listening :4180" 'curl -s -o
 # /dev/null …/ping'` and the caddy equivalent, which are correct — a pure reachability probe
@@ -245,6 +259,7 @@ if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs
 cd "$WORKDIR"|the directory it starts in, not a boundary it is held to
 User=$(id -un)|every agent on this box runs under the same OS login
 --permission-prompts none|it cannot see the profile's permission rules
+today_spend|the daily cap is checked before a run starts
 PATTERNS
 else
   bad "capability panel: could not check its claims against agents/bin/mows-agent (a file is missing)"

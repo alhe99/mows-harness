@@ -1907,6 +1907,12 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    authority list; it is unbulleted because each item already opens with a bold sentence. */
 .cap{margin:10px 0}.cap p{margin:6px 0}
 .cap-warn{border-left:3px solid var(--warn);padding-left:10px}
+/* Unknown reach is not the same statement as confirmed broad authority and must not look like it.
+   "I cannot classify this tool" rendered in .cap-warn carried the same weight as "it can read and
+   write any file this account can reach", which is the fastest way to teach an operator to scroll
+   past both (re-review, proportionality). Same left rule, muted colour: still a rule, visibly a
+   lesser one. */
+.cap-unknown{border-left:3px solid var(--dim);padding-left:10px;color:var(--mut)}
 .auth{margin:6px 0;padding:0;list-style:none}.auth li{margin:4px 0}
 .policy{margin:6px 0 0 18px}.policy li{margin:4px 0}
 `;

@@ -43,9 +43,11 @@ const AUTH_TOOLS = AUTHORITIES.flatMap(a => a.tools);
 // is deliberately SHORT. Anything absent from both this set and AUTHORITIES is reported as unknown,
 // which errs toward saying "I cannot tell you" rather than toward silence.
 //
-// The measurement that forced this: an inheriting agent on this box was granted 27 tools, of which
-// AUTHORITIES names 8. The other 19 included CronCreate, ScheduleWakeup, RemoteTrigger, SendMessage,
-// EnterWorktree and Workflow — none of them plausibly read-only, none of them nameable in advance.
+// The measurement that forced this, pinned in scripts/fixtures/inherited-tools.json so the numbers
+// are gated rather than asserted in a comment: an inheriting agent on this box was granted 27 tools,
+// of which AUTHORITIES matches 7 (SlashCommand was not among them) and BENIGN_TOOLS matches 1
+// (Read) — 8 classified, 19 not. The 19 included CronCreate, ScheduleWakeup, RemoteTrigger,
+// SendMessage, EnterWorktree and Workflow: none plausibly read-only, none nameable in advance.
 // A fixed allowlist of dangerous names can only ever be behind a tool surface that grows, so the
 // panel must report the residue instead of treating "not on my list" as "harmless".
 const BENIGN_TOOLS = new Set(['Read', 'Glob', 'Grep', 'TodoWrite', 'NotebookRead', 'BashOutput', 'ExitPlanMode']);
@@ -72,7 +74,14 @@ export function agentCapability(fm, opts = {}) {
   // A Claude Code file-based subagent with NO `tools:` key inherits every tool the main thread has
   // — including Bash. Reporting that as `effective: []` ("Tools: none") would invert the truth on
   // the one shape where being wrong is worst: the file that looks most restricted is the least.
-  const malformedTools = rawTools != null && tools === null;
+  // An empty or comma-only STRING is unreadable input, not a restriction: `asList` splits, trims and
+  // filters, so `''` and `', ,'` both collapse to `[]` and would otherwise render the panel's most
+  // reassuring output ("Tools its file grants: none") for a file nobody can read (re-review R2).
+  // This is the round-1 inversion — rounding an unreadable value toward RESTRICTED — surviving in
+  // the one branch where being wrong is most flattering. An explicit `tools: []` is a different
+  // thing and stays a real restriction; the CLI was measured granting such an agent zero tools.
+  const emptyToolString = typeof rawTools === 'string' && tools.length === 0;
+  const malformedTools = (rawTools != null && tools === null) || emptyToolString;
   // The same rule applied to the deny list, which round 1 did not do: `disallowedTools: 42` was
   // silently read as "no deny list", so the panel could not say it had failed to read something.
   const malformedDenied = rawDenied != null && deniedList === null;
@@ -128,6 +137,13 @@ export function agentCapability(fm, opts = {}) {
     // file assume it is doing safety work. Meaningless while inheriting (see above), so empty there
     // by construction.
     denyNoop: inherits ? [] : [...denied].filter(t => !tools.includes(t)),
+    // The mirror of denyNoop, and the reason it matters: deny entries that removed an AUTHORITY
+    // tool the allow list had granted. When an agent renders quiet only because of these, the
+    // panel's most reassuring output is resting entirely on the deny list being honoured — so it
+    // says so rather than presenting the silence as a property of the tool list (re-review R1).
+    // The panel already went to trouble to name a deny list that does nothing; this is the case
+    // where it does everything.
+    denyLoadBearing: inherits ? [] : [...denied].filter(t => tools.includes(t) && AUTH_TOOLS.includes(t)),
     denied: [...denied],
     policy: {
       profile: m.profile || null, workdir: m.workdir || null, budget: m.budget || null,

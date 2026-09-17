@@ -61,6 +61,12 @@ export function CapabilityPanel({ capability: c }) {
   const types = p.triggerTypes || [];
   const auth = c.authorities || [];
   const planned = p.permissionMode === 'plan';
+  // EVERY array field is read with `?.`, without exception. Not defensiveness for its own sake: a
+  // payload missing one of them throws and takes the whole agent page down, and round 2 shipped a
+  // version where the two newest fields were guarded and the two older ones were not — so the next
+  // field added would have copied whichever neighbour it landed beside. The rule is uniform because
+  // a rule with exceptions is not a rule anyone can follow (re-review R5).
+  //
   // The quiet state, computed rather than assumed. It is this panel's most reassuring output, so
   // every path that reaches it is a place a permissive agent could hide — four were found that way
   // (a missing `tools:` key, a deny list on the inherit path, a fully-populated list of writing and
@@ -68,7 +74,7 @@ export function CapabilityPanel({ capability: c }) {
   // reassuring sentence is allowed to appear, so a future path that reaches it has to come through
   // here and be named, instead of silently inheriting the sentence.
   const quiet = !auth.length && !c.inherits && !c.malformedTools && !c.malformedDenied
-    && !c.miscasedTools.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;
+    && !c.miscasedTools?.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;
   return html`<div class="cap">
     <h2>What this agent can do</h2>
     ${!!auth.length && html`<div class="cap-warn">
@@ -78,22 +84,26 @@ export function CapabilityPanel({ capability: c }) {
       ${planned && html`<p>Its file sets <code>permissionMode: plan</code>, which is meant to stop it
         acting on any of the above. This page cannot verify that the CLI honours it.</p>`}
     </div>`}
-    ${!!c.mcpTools?.length && html`<p class="cap-warn"><b>Its reach through MCP is unknown.</b>${' '}It
+    ${!!c.mcpTools?.length && html`<p class="cap-unknown"><b>Its reach through MCP is unknown.</b>${' '}It
       holds ${c.mcpTools.join(', ')}. What an MCP tool can do — reach the network, the filesystem, a
       production database — depends entirely on the server behind it, and none of that is knowable
       from the tool name. This page will not guess in either direction.</p>`}
-    ${!!c.unclassifiedTools?.length && html`<p class="cap-warn"><b>This page cannot classify ${c.unclassifiedTools.join(', ')}.</b>${' '}Its
+    ${!!c.unclassifiedTools?.length && html`<p class="cap-unknown"><b>This page cannot classify ${c.unclassifiedTools.join(', ')}.</b>${' '}Its
       list of known tools is fixed and the CLI's is
       not, so treat the reach of these as unknown rather than as harmless.</p>`}
     ${c.inherits && html`<p class="cap-warn">Inheriting also brings every tool this page has no name
       for. On this box an inheriting agent was granted 27 tools, of which this page classifies 8 —
       the rest included tools that create cron jobs, trigger other agents and send messages.</p>`}
     ${quiet && html`<p class="muted">No tool it holds confers shell access, subagents, file
-      writes or network reach, and this page recognises all of them. That is a statement about its
+      writes or network reach, and this page recognises all of them.${c.denyLoadBearing?.length
+        ? html` That rests entirely on its <code>disallowedTools</code>, which removes${' '}
+            ${c.denyLoadBearing.join(', ')} from the list its file grants — measured on this box,
+            a deny list is honoured, but the quiet above is the deny list's doing and not the tool
+            list's.` : ''} That is a statement about its
       tool list only — read the rest of this panel before treating it as harmless.</p>`}
     ${c.inherits
       ? html`<p class="muted">Tools: <b>every tool</b> — its file lists no <code>tools:</code>,
-          and a Claude Code agent without one inherits all of them${c.denied.length
+          and a Claude Code agent without one inherits all of them${c.denied?.length
             ? html`, minus ${c.denied.join(', ')}` : ''}.</p>`
       // `c.effective ? …` rather than `c.effective.join(…)`: the model only ever sends null here
       // together with inherits:true, but a panel that THROWS on an inconsistent payload takes the
@@ -106,11 +116,11 @@ export function CapabilityPanel({ capability: c }) {
     ${c.malformedDenied && html`<p class="cap-warn">Its <code>disallowedTools</code> field is not a
       list and could not be read, so nothing above accounts for it. Treated as empty, which
       over-states what this agent holds rather than under-stating it.</p>`}
-    ${!!c.miscasedTools.length && html`<p class="cap-warn">Its tool list names ${c.miscasedTools.join(', ')},
+    ${!!c.miscasedTools?.length && html`<p class="cap-warn">Its tool list names ${c.miscasedTools.join(', ')},
       which differs only in case from a real tool. Tool names are
       validated by nothing, so a name like that grants no tool AND hides the warning the real one
       would have raised.</p>`}
-    ${!!c.denyNoop.length && html`<p class="muted">Its <code>disallowedTools</code>${' '}names ${c.denyNoop.join(', ')},
+    ${!!c.denyNoop?.length && html`<p class="muted">Its <code>disallowedTools</code>${' '}names ${c.denyNoop.join(', ')},
       which removes nothing: the tool list above never granted them.</p>`}
     <p class="muted">What constrains it is its account, its budget, its triggers and the permission
       rules of its profile — not the tool list, and not the directory.</p>
@@ -129,9 +139,9 @@ export function CapabilityPanel({ capability: c }) {
           : ''}. A chat turn below is capped separately by mows-agent and is not covered by the
         per-run figure; it carries this same tool list (measured, not assumed).${p.turnCapDisagreement
           ? html` Its file also sets <b>maxTurns: ${p.maxTurnsDeclared}</b> in the Claude namespace,
-              which disagrees with the figure above; mows-agent passes the mows one as
-              ${' '}<code>--max-turns</code>, and which the CLI applies is not something this page
-              can determine.` : ''}</li>
+              which contradicts the figure above. Measured on this box, the mows figure is the one
+              that binds: a run with <code>maxTurns: 2</code> and${' '}<code>--max-turns 20</code>${' '}
+              took four turns. Nothing in the toolchain cross-checks the two.` : ''}</li>
       <li>${types.length} trigger(s) declared${types.length ? `: ${types.join(', ')}` : ''}</li>
     </ul>
     ${p.webhookArmed && html`<p class="cap-warn">A webhook secret is configured for it, so an HTTP
@@ -145,7 +155,7 @@ export function CapabilityPanel({ capability: c }) {
       Each can remove authority listed above. The CLI also decides the final tool set, and in every
       run measured on this box it granted a subset of what the file declared — <code>Glob</code>${' '}
       and <code>Grep</code> reached only the one agent that named them without <code>Bash</code>.
-      A file's <code>disallowedTools</code> IS honoured: denying one tool removed exactly that tool
-      and nothing else (measured).</p>
+      A file's <code>disallowedTools</code> was honoured in every case measured here: three tools
+      across both paths, each removing exactly itself and nothing else.</p>
   </div>`;
 }

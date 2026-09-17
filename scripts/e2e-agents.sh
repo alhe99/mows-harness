@@ -144,6 +144,14 @@ echo "### lint matrix"
 A="$HOME/.claude/agents"
 mkagent "$A/good.md" "$MOWS_BLOCK_OK"
 chk "lint: valid agent passes"            'mows-agent lint good'
+# The two turn limits in one agent file: `maxTurns` (which the CLI reads) and mows.budget.max_turns
+# (which mows-agent passes as --max-turns). Measured: the flag binds, so a disagreeing maxTurns is a
+# cap the operator believes in and does not have. Until now this validator range-checked each and
+# compared them never, and the dashboard's capability panel was the only place the contradiction
+# surfaced at all -- which meant an agent nobody opened there kept it forever.
+mkagent "$A/turnclash.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 5 }/' <<<"$MOWS_BLOCK_OK")"
+chk "lint: contradictory turn limits rejected" '! mows-agent lint turnclash && mows-agent lint turnclash 2>&1 | grep -q "disagree"'
+chk "lint: matching turn limits accepted"      'mows-agent lint good'
 chk "lint: json subcommand emits name"    '[ "$(mows-agent-meta json "$A/good.md" | jq -r .name)" = good ]'
 mkagent "$A/badname.md" "$MOWS_BLOCK_OK"; sed -i 's/^name: badname/name: other/' "$A/badname.md"
 chk "lint: name != stem is an error"      'mows-agent lint badname 2>&1 | grep -q "name must equal"'
@@ -293,7 +301,10 @@ echo '{"personal":{"five_hour_pct":60,"weekly_pct":5}}' > "$QUOTA_FILE"
 chk "quota: 60% used passes floor 30"         'mows-agent run floored'
 echo '{"personal":{"five_hour_pct":null,"weekly_pct":null,"source":"unknown"}}' > "$QUOTA_FILE"
 chk "quota: unknown never refuses"            'mows-agent run floored'
-mkagent "$HOME/.claude-work/agents/wk.md" "$(sed 's/profile: default/profile: work/; s/budget: .*/budget: { usd_per_run: 1, max_turns: 5, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
+# max_turns matches mkagent's own `maxTurns: 40`: mows-agent-meta now ERRORS when the two turn
+# limits in one file disagree, because only the mows one binds (measured) and the Claude-namespace
+# one silently does nothing. This fixture used to carry 5 against 40 and so tripped the new rule.
+mkagent "$HOME/.claude-work/agents/wk.md" "$(sed 's/profile: default/profile: work/; s/budget: .*/budget: { usd_per_run: 1, max_turns: 40, quota_floor: 30 }/' <<<"$MOWS_BLOCK_OK")"
 echo '{"personal":{"five_hour_pct":0},"work":{"five_hour_pct":95}}' > "$QUOTA_FILE"
 chk "quota: work profile reads .work"         'mows-agent run wk >/dev/null 2>&1; [ $? = 6 ]'
 chk "quota: work profile CLAUDE_CONFIG_DIR"   'echo "{}" > "$QUOTA_FILE"; mows-agent run wk && grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude-work" "$CLAUDE_ARGS_FILE"'

@@ -24,6 +24,7 @@ const FILES = {
   view: path.join(ROOT, 'infra/dashboard/app/views/capability.mjs'),
   check: path.join(ROOT, 'scripts/capability-check.mjs'),
   meta: path.join(ROOT, 'agents/bin/mows-agent-meta'),
+  fixture: path.join(ROOT, 'scripts/fixtures/inherited-tools.json'),
 };
 const CHECK = FILES.check;
 
@@ -135,7 +136,7 @@ const MUTATIONS = [
   { id: 'V9', file: 'view', desc: 'an inheriting agent described as having no tools',
     find: 'Tools: <b>every tool</b>', repl: 'Tools: <b>none</b>' },
   { id: 'V10', file: 'view', desc: 'the no-op deny list is not mentioned',
-    find: '    ${!!c.denyNoop.length && html', repl: '    ${false && html' },
+    find: '    ${!!c.denyNoop?.length && html', repl: '    ${false && html' },
   { id: 'V11', file: 'view', desc: 'every authority rendered with the shell sentence',
     find: "  shell: ['This agent can run shell commands.',", repl: "  shellUNUSED: ['x', 'y'],\n  shell: ['This agent can run shell commands.'," },
   // The two spacing mutations reproduce htm's newline trimming exactly rather than deleting the
@@ -173,13 +174,13 @@ const MUTATIONS = [
     find: '      <li>under <b>permissionMode: ${p.permissionMode || \'not set\'}</b>, as written in its file.\n        This page reports what it read; it cannot check what the CLI does with it.</li>\n',
     repl: '' },
   { id: 'V25', file: 'view', desc: 'the "what this page cannot see" disclosure removed',
-    find: '    <p class="muted">What this page cannot see: the profile\'s permission rules, any${\' \'}\n      <code>PreToolUse</code> hook (<code>agents/SETUP.md</code> makes a write-deny hook a\n      precondition for a shell-capable agent), and any MCP server <code>mows-agent</code> passes in.\n      Each can remove authority listed above. The CLI also decides the final tool set, and in every\n      run measured on this box it granted a subset of what the file declared — <code>Glob</code>${\' \'}\n      and <code>Grep</code> reached only the one agent that named them without <code>Bash</code>.\n      A file\'s <code>disallowedTools</code> IS honoured: denying one tool removed exactly that tool\n      and nothing else (measured).</p>\n', repl: '' },
+    find: '    <p class="muted">What this page cannot see: the profile\'s permission rules, any${\' \'}\n      <code>PreToolUse</code> hook (<code>agents/SETUP.md</code> makes a write-deny hook a\n      precondition for a shell-capable agent), and any MCP server <code>mows-agent</code> passes in.\n      Each can remove authority listed above. The CLI also decides the final tool set, and in every\n      run measured on this box it granted a subset of what the file declared — <code>Glob</code>${\' \'}\n      and <code>Grep</code> reached only the one agent that named them without <code>Bash</code>.\n      A file\'s <code>disallowedTools</code> was honoured in every case measured here: three tools\n      across both paths, each removing exactly itself and nothing else.</p>\n', repl: '' },
   { id: 'V26', file: 'view', desc: 'a permissionMode: plan agent gets the warning unqualified',
     find: '      ${planned && html`<p>Its file sets', repl: '      ${false && html`<p>Its file sets' },
   { id: 'V28', file: 'view', desc: 'a declared-but-inert webhook trigger is not mentioned',
     find: '    ${p.webhookDeclaredInert && html', repl: '    ${false && html' },
   { id: 'V29', file: 'view', desc: 'the miscased-tool sentence removed',
-    find: '    ${!!c.miscasedTools.length && html', repl: '    ${false && html' },
+    find: '    ${!!c.miscasedTools?.length && html', repl: '    ${false && html' },
   { id: 'V30', file: 'view', desc: 'the unreadable-deny-list sentence removed',
     find: '    ${c.malformedDenied && html', repl: '    ${false && html' },
   { id: 'V31', file: 'view', desc: 'the write authority described as something else entirely',
@@ -231,17 +232,42 @@ const MUTATIONS = [
     find: '    ${c.inherits && html`<p class="cap-warn">Inheriting also brings every tool',
     repl: '    ${false && html`<p class="cap-warn">Inheriting also brings every tool' },
   { id: 'V40', file: 'view', desc: 'the reassuring sentence shown regardless of what is unknown (the round-1 quiet state)',
-    find: '  const quiet = !auth.length && !c.inherits && !c.malformedTools && !c.malformedDenied\n    && !c.miscasedTools.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;',
+    find: '  const quiet = !auth.length && !c.inherits && !c.malformedTools && !c.malformedDenied\n    && !c.miscasedTools?.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;',
     repl: '  const quiet = !auth.length;' },
   { id: 'V41', file: 'view', desc: 'the reassuring sentence never shown at all',
     find: '    ${quiet && html`<p class="muted">No tool it holds confers shell access',
     repl: '    ${false && html`<p class="muted">No tool it holds confers shell access' },
   { id: 'V42', file: 'view', desc: 'the measured disallowedTools finding dropped from the disclosure',
-    find: `      A file's <code>disallowedTools</code> IS honoured: denying one tool removed exactly that tool
-      and nothing else (measured).`, repl: '' },
+    find: "      A file's <code>disallowedTools</code> was honoured in every case measured here: three tools\n      across both paths, each removing exactly itself and nothing else.", repl: '' },
   { id: 'V43', file: 'view', desc: 'the corrected subset finding dropped from the disclosure',
     find: '      run measured on this box it granted a subset of what the file declared', repl: '      run measured on this box things happened' },
 
+  // --- round 3: the deny list that carries the silence, and the pinned measurement -------------
+  { id: 'C41', file: 'model', desc: 'a load-bearing deny entry is never reported as one',
+    find: "    denyLoadBearing: inherits ? [] : [...denied].filter(t => tools.includes(t) && AUTH_TOOLS.includes(t)),",
+    repl: '    denyLoadBearing: [],' },
+  { id: 'C42', file: 'model', desc: 'every deny entry called load-bearing, including no-ops (cries wolf)',
+    find: "    denyLoadBearing: inherits ? [] : [...denied].filter(t => tools.includes(t) && AUTH_TOOLS.includes(t)),",
+    repl: '    denyLoadBearing: [...denied],' },
+  { id: 'C43', file: 'model', desc: 'a denied non-authority tool counted as load-bearing',
+    find: "    denyLoadBearing: inherits ? [] : [...denied].filter(t => tools.includes(t) && AUTH_TOOLS.includes(t)),",
+    repl: '    denyLoadBearing: inherits ? [] : [...denied].filter(t => tools.includes(t)),' },
+  { id: 'V46', file: 'view', desc: 'the deny-list disclosure loses its space (the htm newline-trim class again)',
+    find: "which removes${' '}\n            ${c.denyLoadBearing.join(', ')}",
+    repl: "which removes\n            ${c.denyLoadBearing.join(', ')}" },
+  { id: 'V44', file: 'view', desc: 'the quiet panel stops saying the deny list is what made it quiet',
+    find: '${c.denyLoadBearing?.length\n        ? html` That rests entirely on its', repl: '${false\n        ? html` That rests entirely on its' },
+  { id: 'V45', file: 'view', desc: 'the deny-list disclosure shown even when the deny list did nothing',
+    find: '${c.denyLoadBearing?.length\n        ? html` That rests entirely on its', repl: '${true\n        ? html` That rests entirely on its' },
+  { id: 'F1', file: 'fixture', desc: 'the pinned measurement disappears from the tree',
+    find: '"granted_tools"', repl: '"granted_tools_RENAMED"' },
+  { id: 'F2', file: 'fixture', desc: 'the pinned tool set is edited without the panel copy following',
+    find: '    "Bash",\n', repl: '' },
+  { id: 'F3', file: 'fixture', desc: 'the fixture stops recording what it was measured against',
+    find: '  "cli_version"', repl: '  "cli_version_REMOVED"' },
+  { id: 'K1', file: 'check', desc: 'the quiet-clause derivation stops reading the view',
+    find: "  const quietExpr = (viewSrc.match(/const quiet = ([\\s\\S]*?);\\n/) || [])[1] || '';",
+    repl: "  const quietExpr = 'c.authorities c.inherits c.malformedTools c.malformedDenied c.miscasedTools c.mcpTools c.unclassifiedTools c.somethingNobodyCovered';" },
   // --- the check's OWN tree walker ------------------------------------------------------------
   // A walker that quietly stopped walking would carry every text and prop assertion green — the
   // same failure mode chat-view-coverage.mjs guards with its D-series.
@@ -311,11 +337,26 @@ function sweep(mutations) {
   const backup = Object.fromEntries(Object.keys(FILES).map(k => [k, read(k)]));
   const restore = () => { for (const k of Object.keys(FILES)) write(k, backup[k]); };
   const baseline = runCheck();
-  const all = new Set(names(baseline, 'PASS'));
+  const passed = names(baseline, 'PASS');
+  const all = new Set(passed);
   if (names(baseline, 'FAIL').length) {
     restore();
     return { fatal: 'the check does not pass on an unmutated tree; fix that before reading coverage',
       baselineFailures: names(baseline, 'FAIL') };
+  }
+  // This tool identifies assertions BY LABEL, so two assertions sharing one collapse into a single
+  // Set entry and the second becomes invisible: it can be vacuous, or dead, and the sweep still
+  // prints "NEVER RED: (none)" and exits 0. That happened — 134 assertions ran, 133 were accounted
+  // for, and a planted `1 === 1` in the shadowed one went unreported (re-review R3).
+  //
+  // A tool built to catch "cannot see it, reports success" must not have that shape itself, so it
+  // refuses to report a number it cannot stand behind rather than quietly de-duplicating.
+  if (all.size !== passed.length) {
+    const seen = new Set(), dupes = [...new Set(passed.filter(n => seen.has(n) || (seen.add(n), false)))];
+    restore();
+    return { fatal: `the check has ${passed.length - all.size} duplicate assertion label(s); `
+      + 'each hides another assertion from this sweep. Rename them before reading coverage',
+      baselineFailures: dupes.map(d => 'duplicate label: ' + d) };
   }
   const everRed = new Set();
   const broken = [];
@@ -392,6 +433,21 @@ if (process.argv.includes('--self-test')) {
   // The fourth bucket, which chat-view-coverage.mjs does not have and this file needed: a mutation
   // that kills the check part-way leaves most assertions UNOBSERVED, and a three-bucket tool scores
   // that as "nothing noticed" while printing "all mutations applied".
+  // Probe 5: the duplicate-label guard. Plant a duplicate in the check and confirm the sweep refuses
+  // to report rather than silently de-duplicating — the failure that let a vacuous assertion hide.
+  {
+    const origCheck = read('check');
+    try {
+      write('check', origCheck.replace('process.exit(failed ? 1 : 0);',
+        "check('[walker] finds text in the tree', true);\nprocess.exit(failed ? 1 : 0);"));
+      const dup = sweep([]);
+      expect('a duplicate assertion label is refused, not de-duplicated',
+        !!dup.fatal && /duplicate assertion label/.test(dup.fatal), dup);
+    } finally {
+      write('check', origCheck);
+    }
+  }
+
   const cr = sweep([{ id: 'ZZ', file: 'view', desc: 'the panel throws part-way through the run',
     find: 'export function CapabilityPanel({ capability: c }) {',
     repl: "export function CapabilityPanel({ capability: c }) { if (c && c.inherits) throw new Error('boom');" }]);

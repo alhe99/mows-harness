@@ -140,6 +140,19 @@ def lint(path):
             E.append("mows.budget.usd_per_run must be a number > 0")
         if not (is_int(b.get("max_turns")) and b["max_turns"] > 0):
             E.append("mows.budget.max_turns must be a positive integer")
+        # An agent file carries TWO turn limits: `maxTurns` in the Claude namespace, which the CLI
+        # reads out of this file, and mows.budget.max_turns, which mows-agent passes as --max-turns.
+        # Until now this validator range-checked each and compared them never, so `maxTurns: 100`
+        # beside `max_turns: 5` passed clean and the contradiction surfaced only on the dashboard's
+        # capability panel -- which means an agent nobody opens in the dashboard keeps it forever.
+        # Measured on this box: the flag wins (a run with maxTurns: 2 and --max-turns 20 took four
+        # turns), so the Claude-namespace figure is the one that silently does nothing, and an
+        # operator who wrote it believes in a cap they do not have.
+        if is_int(fm.get("maxTurns")) and is_int(b.get("max_turns")) and fm["maxTurns"] != b["max_turns"]:
+            E.append(f"maxTurns ({fm['maxTurns']}) and mows.budget.max_turns ({b['max_turns']}) "
+                     "disagree; mows-agent passes the mows figure as --max-turns and it is the one "
+                     "that binds, so the maxTurns value would silently do nothing. Make them equal "
+                     "or drop maxTurns.")
         if "usd_per_day" in b and not (is_num(b["usd_per_day"]) and b["usd_per_day"] > 0):
             E.append("mows.budget.usd_per_day must be a number > 0")
         if "quota_floor" in b and not (is_int(b["quota_floor"]) and 0 <= b["quota_floor"] <= 100):
