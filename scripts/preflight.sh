@@ -234,7 +234,7 @@ done
 # one level removed. Each pattern below is the line in agents/bin/mows-agent that makes one panel
 # sentence true; if a pattern goes missing, the sentence it supports has to change with it.
 if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs ]; then
-  # pattern <TAB> the panel sentence it holds up
+  # <pattern in mows-agent> | <the panel sentence it holds up>
   while IFS='|' read -r pat claim; do
     [ -z "$pat" ] && continue
     grep -qF -- "$pat" agents/bin/mows-agent \

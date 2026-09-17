@@ -1902,10 +1902,12 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .cherr{color:var(--bad);font-size:13px;margin:0}
 /* Task 8, the capability panel. .cap-warn is a left rule rather than a filled banner on purpose:
    an agent with Bash is the COMMON case here, and a red box on every agent page teaches the
-   operator to ignore it. It still reads first because it is placed first — the order is the
-   point, and .cap p keeps the tool list from drifting above it on a narrow screen. */
+   operator to ignore it. It reads first because it is placed first — document order is the whole
+   mechanism, and it is asserted (warnAt < toolsAt) rather than left to CSS. .auth carries the one
+   authority list; it is unbulleted because each item already opens with a bold sentence. */
 .cap{margin:10px 0}.cap p{margin:6px 0}
 .cap-warn{border-left:3px solid var(--warn);padding-left:10px}
+.auth{margin:6px 0;padding:0;list-style:none}.auth li{margin:4px 0}
 .policy{margin:6px 0 0 18px}.policy li{margin:4px 0}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
