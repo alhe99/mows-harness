@@ -2016,6 +2016,13 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .agside .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:20px;margin:0}
 .cl{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:0 0 16px}
 .agside .cap h2{display:none}
+.cchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.cchip{font:11px var(--mono);color:var(--fg2);background:var(--card2);border:1px solid var(--bd3);border-radius:6px;padding:4px 8px}
+.capsum-warn{font:12px var(--sans);color:var(--warn);margin:0}
+.capsum-in{font:12px var(--sans);color:var(--warn);margin:0 0 8px}
+.capmore{margin-top:14px;border-top:1px solid var(--bd);padding-top:12px}
+.capmore summary{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer}
+.capmore[open] summary{margin-bottom:10px}
 .agside .cap{font-size:12px}
 .agside .cap p{margin:8px 0}
 .tgrid{display:flex;flex-direction:column;gap:12px}

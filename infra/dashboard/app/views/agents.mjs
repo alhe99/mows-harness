@@ -69,6 +69,30 @@ function Telemetry({ policy }) {
   </div>`;
 }
 
+// The comp's amber line, one per authority kind, keyed off `authorities` — which is ordered
+// strongest-first by capability.mjs, so the first entry IS the headline. Not a re-wording of the
+// panel's prose: same source field, shorter sentence, and the panel below says the rest.
+const AUTHORITY_LINE = {
+  shell: 'Shell execution granted.',
+  subagent: 'Can dispatch subagents with their own tools.',
+  command: 'Can run slash commands.',
+  write: 'Can write files.',
+  network: 'Can reach the network.',
+};
+function CapSummary({ capability: c }) {
+  // null capability and an inheriting agent are DIFFERENT unknowns and neither may render as a
+  // tidy chip row: one means the file was unreadable, the other that the list is not a bound at
+  // all. Both defer to the panel rather than inventing a summary of something unknown.
+  if (!c) return html`<p class="muted">Its agent file could not be read.</p>`;
+  const head = c.authorities?.[0];
+  return html`<div>
+    ${c.inherits
+      ? html`<p class="capsum-in">Inherits every tool — its file lists none.</p>`
+      : html`<div class="cchips">${(c.effective || []).map(t => html`<span class="cchip" key=${t}>${t}</span>`)}</div>`}
+    ${head && html`<p class="capsum-warn">${AUTHORITY_LINE[head.kind] || `Holds ${head.kind} authority.`}</p>`}
+  </div>`;
+}
+
 export function AgentDetail({ name }) {
   const [d, setD] = useState(null);
   useEffect(() => { setD(null); getJSON(`/api/agents/${name}`).then(setD).catch(() => setD(false)); }, [name]);
@@ -103,8 +127,17 @@ export function AgentDetail({ name }) {
       <aside class="agside">
         <div class="card"><h2 class="cl">Agent Telemetry</h2>
           <${Telemetry} policy=${d.capability?.policy} /></div>
+        ${/* The comp's Capabilities card is chips plus one amber line. Ours is the full honest
+              panel, which runs ~1000px and pushed Recent Runs off the fold entirely. The answer
+              is NOT to trim the panel: it is the safety surface, and shortening it to fit a
+              mockup is precisely the trade this whole module refuses. So the comp's summary is
+              surfaced — chips and the strongest authority, both computed from the SAME
+              structured fields the panel renders, never re-worded prose — and the full report
+              sits one disclosure below it, losing nothing. */ ''}
         <div class="card"><h2 class="cl">Capabilities</h2>
-          <${CapabilityPanel} capability=${d.capability} /></div>
+          <${CapSummary} capability=${d.capability} />
+          <details class="capmore"><summary>Full capability report</summary>
+            <${CapabilityPanel} capability=${d.capability} /></details></div>
         <div class="card"><h2 class="cl">Recent Runs</h2>
           ${(d.recs || []).length
             ? html`<ul class="rruns">${d.recs.map(r => html`<li key=${r.run_id}>
