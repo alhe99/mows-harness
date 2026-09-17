@@ -221,3 +221,8 @@ scripts/capability-coverage.mjs
 scripts/fixtures/inherited-tools.json
 docs/qa/journeys/agent-chat.md
 scripts/csp-admits.mjs
+docs/qa/probes/README.md
+docs/qa/probes/fixture.sh
+docs/qa/probes/probes.mjs
+docs/qa/probes/proxy.mjs
+docs/qa/probes/run.sh

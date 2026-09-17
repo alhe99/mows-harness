@@ -556,12 +556,12 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
   // The happy path: cmd_chat appended the user record before spawning, so the transcript has it.
   // Nothing is added and nothing is reported — a fix that cried wolf on every successful turn
   // would be worse than the bug.
-  const ok = reconcile([U('hello'), A('hi')], [U('hello')], '');
+  const ok = reconcile([U('hello'), A('hi')], [{ ...U('hello'), baseline: 0 }], '');
   check('reconcile: a message the transcript already has is not re-added',
     texts(ok) === 'user:hello|assistant:hi' && ok.missingUsers.length === 0, ok);
 
   // The defect: the turn ended before the agent recorded anything.
-  const lost = reconcile([U('older'), A('older reply')], [U('what did the last run find?')], '');
+  const lost = reconcile([U('older'), A('older reply')], [{ ...U('what did the last run find?'), baseline: 0 }], '');
   check('reconcile: a message the transcript does NOT have is put back',
     texts(lost) === 'user:older|assistant:older reply|user:what did the last run find?', lost);
   check('reconcile: ...and is REPORTED missing, so the caller can say so',
@@ -569,12 +569,12 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
 
   // Multiset, not set. Asking the same thing twice is two messages; membership-matching would call
   // the second one saved because the first one was, and delete it.
-  const twice = reconcile([U('ping')], [U('ping'), U('ping')], '');
+  const twice = reconcile([U('ping')], [{ ...U('ping'), baseline: 0 }, { ...U('ping'), baseline: 0 }], '');
   check('reconcile: the same question asked twice is two messages, not one',
     twice.missingUsers.length === 1 && texts(twice) === 'user:ping|user:ping', twice);
 
   // Order: the question comes before the reply it produced, not after it.
-  const both = reconcile([], [U('q')], 'the answer');
+  const both = reconcile([], [{ ...U('q'), baseline: 0 }], 'the answer');
   check('reconcile: a salvaged reply is appended AFTER the question it answers',
     texts(both) === 'user:q|assistant:the answer', both);
 
@@ -589,7 +589,7 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
     reconcile([U('q')], [], '').salvagedReply === false, reconcile([U('q')], [], ''));
   // The catch path reconciles against the CURRENT turns, which already contain the pending
   // message. It must match itself rather than being appended a second time.
-  const again = reconcile([U('q'), A('partial')], [U('q')], 'partial and then some');
+  const again = reconcile([U('q'), A('partial')], [{ ...U('q'), baseline: 0 }], 'partial and then some');
   check('reconcile: run against a list that already holds the pending message, it adds no duplicate',
     again.missingUsers.length === 0 && again.turns.filter(t => t.role === 'user').length === 1, again);
 }
@@ -621,11 +621,14 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
   const grew = reconcile([U('q'), U('q'), U('q')], [{ ...U('q'), baseline: 1 }], '');
   check('reconcile: a transcript that gained more copies than expected still accounts for the pending',
     grew.missingUsers.length === 0, grew);
-  // No baseline at all (a direct caller, or a pending from before this rule) means 0, which is the
-  // round-1 behaviour rather than a crash.
-  const noBase = reconcile([A('hi')], [U('fresh')], '');
-  check('reconcile: a pending with no baseline still works, it is not required',
+  // A caller that omits the baseline has a bug. It must not crash, and it must not quietly get the
+  // round-1 semantics back: the transcript here ALREADY holds the text, which under the old
+  // default meant "saved" and meant the message was deleted with nothing said.
+  const noBase = reconcile([U('fresh'), A('hi')], [U('fresh')], '');
+  check('reconcile: a pending with no baseline is REPORTED, never silently declared saved',
     noBase.missingUsers.length === 1, noBase);
+  check('reconcile: ...and it is still shown, not dropped',
+    noBase.turns.filter(t => t.role === 'user' && t.text === 'fresh').length === 2, noBase);
 }
 
 // ---- a lost message is named ONCE, not on every turn afterwards (review F2) --------------------

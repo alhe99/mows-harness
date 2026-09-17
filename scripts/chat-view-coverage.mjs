@@ -110,7 +110,8 @@ const MUTATIONS = [
     find: "    if (!(newest && String(newest.text || '').includes(salvage))) {",
     repl: '    if (!newest) {' },
   { id: 'R7', file: 'view', desc: 'a pending message never matches the transcript, so a saved one is shown twice',
-    find: '    const accounted = Math.max(0, Math.min(ps.length, countOf(s) - base));',
+    find: `    const accounted = bases.includes(null) ? 0
+      : Math.max(0, Math.min(ps.length, countOf(s) - Math.min(...bases)));`,
     repl: '    const accounted = 0;' },
   { id: 'R8', file: 'view', desc: 'the reply is salvaged unconditionally, duplicating one the transcript has',
     find: "    if (!(newest && String(newest.text || '').includes(salvage))) {",
@@ -121,14 +122,18 @@ const MUTATIONS = [
   // the earlier one's record. R11 ignores the baseline, which is the same defect reached from the
   // other side. R12 keeps a reported pending pending, which is review F2.
   { id: 'R10', file: 'view', desc: 'user messages matched by membership again, absorbing a repeat (F1)',
-    find: '    const accounted = Math.max(0, Math.min(ps.length, countOf(s) - base));',
+    find: `    const accounted = bases.includes(null) ? 0
+      : Math.max(0, Math.min(ps.length, countOf(s) - Math.min(...bases)));`,
     repl: '    const accounted = Math.min(ps.length, countOf(s));' },
   { id: 'R11', file: 'view', desc: 'the baseline is read but never applied',
-    find: '    const base = Math.min(...ps.map(p => Number(p && p.baseline) || 0));',
-    repl: '    const base = 0 * Math.min(...ps.map(p => Number(p && p.baseline) || 0));' },
+    find: '      : Math.max(0, Math.min(ps.length, countOf(s) - Math.min(...bases)));',
+    repl: '      : Math.max(0, Math.min(ps.length, countOf(s) - 0 * Math.min(...bases)));' },
   { id: 'R12', file: 'view', desc: 'a reported message stays pending forever, re-appended every turn (F2)',
     find: "    (p && p.reported ? retired : missingUsers).push(p);",
     repl: '    missingUsers.push(p);' },
+  { id: 'R13', file: 'view', desc: 'a pending with no baseline is assumed saved again (the silent fallback)',
+    find: '    const accounted = bases.includes(null) ? 0',
+    repl: '    const accounted = bases.includes(null) ? ps.length' },
   // --- the check's OWN detector -------------------------------------------------------------
   // A detector that has quietly stopped detecting would carry every hostile-input assertion
   // green, so it needs its own proof of failure as much as the code under test does.

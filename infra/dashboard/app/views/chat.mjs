@@ -183,10 +183,17 @@ export function reconcile(list, pendingUsers, salvage) {
   }
   const saved = new Set();
   for (const [s, ps] of groups) {
-    // Missing baseline (an older pending, or a direct caller that did not supply one) means 0,
-    // which is the round-1 behaviour: safe in the flattering direction only for the first copy.
-    const base = Math.min(...ps.map(p => Number(p && p.baseline) || 0));
-    const accounted = Math.max(0, Math.min(ps.length, countOf(s) - base));
+    // A MISSING BASELINE IS A CALLER BUG, and the two ways of guessing past it are not symmetric.
+    // This defaulted to 0, which silently reinstates the round-1 semantics: a repeated question is
+    // matched by the earlier one's record and DELETED with nothing said. Assuming "not accounted
+    // for" instead shows a message that may in fact have been saved, and says so on screen. Only
+    // the second is recoverable by the person reading it, and only the second is visible at all —
+    // which is what makes this louder than the comment that used to be here (Task 9 fix round 2;
+    // the lead's own re-probe hit this fallback and read it as the bug still being present, which
+    // is the clearest possible evidence that a silent fallback to old semantics is the wrong one).
+    const bases = ps.map(p => (p && Number.isFinite(Number(p.baseline))) ? Number(p.baseline) : null);
+    const accounted = bases.includes(null) ? 0
+      : Math.max(0, Math.min(ps.length, countOf(s) - Math.min(...bases)));
     for (let i = 0; i < accounted; i++) saved.add(ps[i]);
   }
   // A pending already reported to the operator is not shown again and not re-reported. Round 1
