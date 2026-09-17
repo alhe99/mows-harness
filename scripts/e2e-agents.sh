@@ -532,5 +532,45 @@ chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
 chk "chat view: hostile replies render inert, ordinary markdown unchanged" \
   'node scripts/chat-view-check.mjs'
 
+echo "### discovery filter agrees with the validator (final review, M3)"
+# There are two frontmatter readers: mows-agent's has_mows (awk, the fast discovery filter used by
+# all_agents) and mows-agent-meta's frontmatter() (Python + PyYAML, the real parse). Four shapes
+# used to diverge, every one of them silently: a file the validator reads as a perfectly good agent
+# was dropped by the filter, so `render --all` never generated ITS TIMERS, `lint --all` never
+# linted it, `list` never showed it and retention never pruned it -- while `run <name>` worked,
+# because agent_file() deliberately does not filter. An agent that silently never fires.
+#
+# Each shape is asserted through the PUBLIC surface (`mows-agent list`, i.e. through all_agents)
+# and against the REAL validator on the same file, so the two cannot drift apart again without a
+# red line here. Proved able to fail: restoring the previous one-liner --
+#   awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}'
+# -- turns fm-opensp, fm-opentab and fm-crlf red (the filter drops them, the validator does not)
+# and fm-noclose red the other way (the filter sweeps in a file that has no frontmatter at all).
+FM="$T/fm"; mkdir -p "$FM"
+fm_body(){ printf 'name: %s\nmows:\n  profile: default\n  workdir: %s\n  task: t\n  budget: { usd_per_run: 1, max_turns: 2 }\n' "$1" "$T/work"; }
+# opening delimiter with a trailing space, then a tab: mows-agent-meta's regex allows [ \t]* there.
+{ printf -- '--- \n'; fm_body fm-opensp; printf -- '---\nbody\n'; } > "$A/fm-opensp.md"
+{ printf -- '---\t\n'; fm_body fm-opentab; printf -- '---\nbody\n'; } > "$A/fm-opentab.md"
+# CRLF throughout: Python opens in text mode, so it never sees the CR; awk did.
+{ printf -- '--- \n'; fm_body fm-crlf; printf -- '---\nbody\n'; } | sed 's/$/\r/' > "$A/fm-crlf.md"
+# ...and the divergence in the other direction: an opening delimiter and a mows: line with NO
+# closing delimiter is not frontmatter at all to the validator, and must not be swept in.
+{ printf -- '---\n'; fm_body fm-noclose; } > "$A/fm-noclose.md"
+for shape in opensp opentab crlf; do
+  chk "discovery: '$shape' frontmatter reaches \`list\` (the filter does not drop it)" \
+    "mows-agent list | grep -qE '^fm-$shape '"
+  chk "discovery: '$shape' — and the validator reads a mows: block out of the same file" \
+    "mows-agent-meta json \"\$A/fm-$shape.md\" | jq -e 'has(\"mows\")'"
+done
+# NOT asserted through `list`: cmd_list drops a row whose `meta "$f"` fails (`|| continue`), so a
+# list-based check here would be green against BOTH detectors and would be testing that second
+# filter, not this one. `lint --all` echoes "== <name>" straight out of all_agents with nothing in
+# between, so it is the surface that actually moves when has_mows does.
+chk "discovery: no closing delimiter is not frontmatter, and \`lint --all\` does not sweep it in" \
+  '! mows-agent lint --all 2>&1 | grep -q "^== fm-noclose$"'
+chk "discovery: 'noclose' — and the validator reads no frontmatter out of it either" \
+  '! mows-agent-meta json "$A/fm-noclose.md" 2>/dev/null | jq -e "has(\"mows\")" >/dev/null 2>&1'
+rm -f "$A"/fm-*.md
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

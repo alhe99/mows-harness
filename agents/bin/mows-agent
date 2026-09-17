@@ -33,8 +33,36 @@ profiles_json(){
 MOWS_PROFILES_JSON=$(profiles_json); export MOWS_PROFILES_JSON
 cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
 
-# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key
-has_mows(){ awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}' "$1"; }
+# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key.
+#
+# THIS IS THE SYSTEM'S SECOND FRONTMATTER READER and it has to agree with the first. The real
+# parse is mows-agent-meta's frontmatter() (Python + PyYAML); this awk exists only as a fast
+# discovery filter, because all_agents() runs it over EVERY *.md in every profile's agents dir --
+# mostly plain Claude Code subagents -- and forking python per file to answer "is this even one of
+# ours" would make `list` and `render --all` pay a full YAML parse for every unrelated subagent.
+#
+# Cheap is fine; DISAGREEING is not, and it used to. mows-agent-meta matches its frontmatter with
+# a regex that tolerates trailing spaces/tabs after EITHER delimiter, over a file opened in Python
+# TEXT mode (so CRLF is translated before the regex sees it), and it REQUIRES the closing
+# delimiter. The old one-liner here demanded line 1 be exactly "---" and never looked for a close.
+# Four shapes diverged (final review, M3), each silently:
+#
+#   opening "--- " or "---<tab>"   python: agent · awk: not an agent  -> dropped from every sweep
+#   CRLF line endings              python: agent · awk: not an agent  -> dropped from every sweep
+#   no closing "---"               python: no frontmatter at all      -> swept in, then errors
+#
+# Dropped from every sweep means: `render --all` never generates its units, so ITS TIMERS NEVER
+# FIRE; `lint --all` never lints it; `list` never shows it; retention never prunes it -- while
+# `mows-agent run <name>` keeps working, because agent_file() deliberately does not filter (see
+# below). An agent that silently never fires is the worst failure mode this layer has, and a file
+# arriving from a Windows editor or carrying one trailing space is not exotic.
+#
+# So: strip a trailing CR from every line, allow [ \t]* after either delimiter, and require the
+# close. Asserted shape by shape in scripts/e2e-agents.sh against the REAL mows-agent-meta, so the
+# two cannot drift apart again without a red line. What awk still cannot do is tell a top-level
+# `mows:` key from the text "mows:" at column 0 inside a quoted YAML block -- that needs a parser,
+# and such a file is caught by lint the moment it is named.
+has_mows(){ awk '{sub(/\r$/,"")} NR==1&&$0!~/^---[ \t]*$/{bad=1;exit} NR>1&&!done&&$0~/^---[ \t]*$/{done=1} NR>1&&!done&&/^mows:/{f=1} END{exit !(f&&done&&!bad)}' "$1"; }
 agent_file(){ # prints the single file for <name>; dies on genuine duplicates; empty if none
   # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
   # is missing its mows: block, so lint can report the exact "mows: block is required"
