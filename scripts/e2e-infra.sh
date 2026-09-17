@@ -171,6 +171,41 @@ chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/history | g
 # stays on '/': the window-target gate lives in the base page script, served on every page.
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
+
+# ---- the SPA's Content-Security-Policy -------------------------------------------------------
+# Defence BEHIND the escaping in views/chat.mjs, never instead of it. This branch shipped a stored
+# XSS in that renderer whose exploitability rested partly on nothing standing behind it, and the
+# policy is scoped to /ui because that is the surface that renders agent replies (see uiCsp's own
+# comment in lite.mjs for why the server-rendered pages at / are NOT in scope).
+#
+# Measured in two real engines before these lines were written, against a build with the header
+# removed as the control: without it an injected `onerror=` handler AND a dynamically inserted
+# inline <script> both execute in Chromium and in WebKit; with it, both are refused and the engine
+# reports script-src-attr / script-src-elem violations. A browser can confirm that; this suite
+# cannot, so what it asserts here is the part a curl CAN see — that the policy is served, that it
+# is the strict shape, and that its nonce is real rather than decorative.
+CSPD=/tmp/ui-csp.h; CSPB=/tmp/ui-csp.b
+curl -s -D "$CSPD" -o "$CSPB" http://127.0.0.1:3005/ui
+CSPH=$(tr -d '\r' < "$CSPD" | grep -i '^content-security-policy:' | cut -d: -f2-)
+CSPN=$(grep -oE "nonce-[A-Za-z0-9_-]+" <<<"$CSPH" | head -1 | cut -c7-)
+DOCN=$(grep -oE 'nonce="[A-Za-z0-9_-]+"' "$CSPB" | head -1 | cut -d'"' -f2)
+CSPN2=$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ui | tr -d '\r' \
+  | grep -i '^content-security-policy:' | grep -oE "nonce-[A-Za-z0-9_-]+" | head -1 | cut -c7-)
+echo "  /ui CSP: ${CSPH:-<none>}"
+chk "ui: a Content-Security-Policy is served at all" '[ -n "$CSPH" ]'
+chk "ui: default-src is none, so an undeclared directive refuses rather than allows" \
+  'grep -qF "default-src '\''none'\''" <<<"$CSPH"'
+chk "ui: script-src is nonced and carries no unsafe-inline" \
+  'grep -qE "script-src [^;]*'\''nonce-" <<<"$CSPH" && ! grep -qF "unsafe-inline" <<<"$CSPH"'
+# A header naming a nonce the document does not carry is WORSE than no header: the inline import
+# map and the inline <style> would both be refused and the SPA would not boot at all.
+chk "ui: the nonce in the header is the one the document actually carries" \
+  '[ -n "$CSPN" ] && [ "$CSPN" = "$DOCN" ]'
+# A per-process nonce is decoration — anyone who can inject markup can also read it off the page.
+# This is the one assertion of the five that a constant-nonce build still passes the other four of.
+chk "ui: the nonce is minted per response, not once per process" \
+  '[ -n "$CSPN" ] && [ -n "$CSPN2" ] && [ "$CSPN" != "$CSPN2" ]'
+
 SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"
 chk "webhook: good HMAC -> 202"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
 chk "webhook: GitHub header accepted" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Hub-Signature-256: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'

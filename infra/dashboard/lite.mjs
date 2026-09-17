@@ -2193,9 +2193,9 @@ addEventListener('touchend',function(){
 })()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
 </body></html>`;
 }
-function send(req, res, status, html, type = 'text/html; charset=utf-8') {
+function send(req, res, status, html, type = 'text/html; charset=utf-8', extra = null) {
   const buf = Buffer.from(html);
-  const h = { 'content-type': type, 'cache-control': 'no-cache' };
+  const h = { 'content-type': type, 'cache-control': 'no-cache', ...(extra || {}) };
   if (buf.length > 1024 && /gzip/.test(req.headers['accept-encoding'] || '')) {
     const gz = gzipSync(buf); h['content-encoding'] = 'gzip'; h['content-length'] = gz.length;
     res.writeHead(status, h); res.end(gz);
@@ -3315,7 +3315,54 @@ const uiAssetUrlFor = rel => {
   for (const [k, v] of uiAssets) if (v.rel === rel) return '/ui/assets/' + k;
   return '/ui/assets/' + rel;
 };
-function uiShellHtml(host) {
+// ---------- Content-Security-Policy for /ui ----------
+//
+// SCOPED TO /ui DELIBERATELY, and this is the whole reason it is cheap. The server-rendered pages
+// at / carry dozens of inline style="" attributes and several inline <script> blocks written over
+// many months; policing them would mean either 'unsafe-inline' (which buys nothing) or hashing
+// every one, and CSP3 ignores 'unsafe-inline' the moment a nonce is present, so a half-measure
+// there would BREAK those pages rather than harden them. The SPA is the surface that renders
+// agent replies — the stored-XSS path this branch actually shipped and fixed — and it was
+// measured to contain no inline style attribute at all (`grep -rn 'style=' infra/dashboard/app/`
+// is empty), so it takes a strict policy with two nonces and no exceptions.
+//
+// What each directive is holding up, so nobody loosens one without knowing what they are paying:
+//   default-src 'none'   nothing loads unless a directive below says so; that is what makes the
+//                        absence of a directive a refusal rather than a silence.
+//   script-src           'self' for the hashed module assets, plus the nonce for the ONE inline
+//                        script: the import map. There is no 'unsafe-inline' and no
+//                        'unsafe-eval', so an injected <script> or an onerror= attribute does not
+//                        run even if the escaping in views/chat.mjs is defeated again. That is
+//                        the defence-in-depth this branch was missing when the C1 XSS shipped.
+//   style-src            the nonce only, for the one inline <style>. The view's --kb keyboard
+//                        handler sets a custom property through CSSOM (element.style.setProperty),
+//                        which CSP does not govern, so it is unaffected — verified in both
+//                        engines, not assumed.
+//   img-src              'self' data: https: — markdown replies legitimately carry images, and
+//                        safeHref already restricts their scheme to http/https/mailto.
+//   connect-src 'self'   the EventSource on /stream and every fetch to /api and /a/*.
+//   base-uri 'none'      an injected <base> would re-point every relative import in the map at an
+//                        attacker's origin; nothing on this page needs one.
+//   frame-ancestors      the dashboard is never framed, and this is the clickjacking answer that
+//                        does not need a second header.
+//
+// The nonce is minted per RESPONSE, not per process: a constant nonce is worth roughly nothing,
+// since an attacker who can inject markup can also copy it out of the page. send() sets
+// cache-control: no-cache, so a stored copy is revalidated rather than replayed with a stale one.
+const uiCsp = nonce => [
+  "default-src 'none'",
+  `script-src 'self' 'nonce-${nonce}'`,
+  `style-src 'nonce-${nonce}'`,
+  "img-src 'self' data: https:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "manifest-src 'self'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join('; ');
+function uiShellHtml(host, nonce) {
   const imports = {
     preact: uiAssetUrlFor('vendor/preact.mjs'),
     'preact/hooks': uiAssetUrlFor('vendor/hooks.mjs'),
@@ -3340,17 +3387,20 @@ function uiShellHtml(host) {
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <title>mows control</title>
-<style>${CSS}</style>
-<script type="importmap">${JSON.stringify({ imports })}</script>
+<style nonce="${nonce}">${CSS}</style>
+<script type="importmap" nonce="${nonce}">${JSON.stringify({ imports })}</script>
 </head><body>
 <div id="app"></div>
 <noscript><p>This view needs JavaScript. The server-rendered dashboard is at <a href="/">/</a>.</p></noscript>
-<script type="module" src="${uiAssetUrlFor('main.mjs')}"></script>
+<script type="module" nonce="${nonce}" src="${uiAssetUrlFor('main.mjs')}"></script>
 </body></html>`;
 }
 async function uiView(req, res) {
   if (!uiAssets.size) await loadUiAssets();
-  send(req, res, 200, uiShellHtml(req.headers.host || ''));
+  // base64url, not hex: a nonce is a CSP base64-value and must survive the header verbatim.
+  const nonce = randomBytes(16).toString('base64url');
+  send(req, res, 200, uiShellHtml(req.headers.host || '', nonce), 'text/html; charset=utf-8',
+    { 'content-security-policy': uiCsp(nonce) });
 }
 async function uiAssetView(req, res, name) {
   if (!uiAssets.size) await loadUiAssets();
