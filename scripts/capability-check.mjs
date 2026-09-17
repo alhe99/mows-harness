@@ -697,4 +697,162 @@ check('the comma-separated string form of tools: is understood',
     !!c && /mows-harness/.test(flat(CapabilityPanel({ capability: c }))), c && c.policy);
 }
 
+// ---- what the fuzz pass found, pinned by name (Task 9) ---------------------------------------
+// Both of these were live against the module as it stood, both are one ordinary YAML keystroke
+// away, and neither was catchable by the method that produced the 153 assertions above: every
+// hand-written fixture spells its tool names correctly and picks one syntax.
+{
+  const asStr = agentCapability({ tools: 'Read, Bash' }, {});
+  const asArr = agentCapability({ tools: ['Read', 'Bash '] }, {});
+  check('the same declaration reads the same as a comma string and as a list',
+    asStr.hasBroad === asArr.hasBroad && asArr.effective.join() === asStr.effective.join(),
+    { asStr: asStr.effective, asArr: asArr.effective });
+  check('a padded tool name in a LIST still names its authority',
+    agentCapability({ tools: [' Bash '] }, {}).broad.join() === 'Bash',
+    agentCapability({ tools: [' Bash '] }, {}));
+  // `- Bash:` instead of `- Bash` parses as {Bash: null}. It used to stringify to "[object
+  // Object]", and the panel then gave a confident tool list, with no shell authority named, for an
+  // agent file it had not read.
+  const typo = agentCapability({ tools: ['Read', { Bash: null }] }, {});
+  check('a list with a non-string entry is unreadable, and rounds toward unrestricted',
+    typo.malformedTools === true && typo.inherits === true && typo.effective === null, typo);
+  check('a list that names something and yet yields no tool is unreadable too',
+    agentCapability({ tools: [''] }, {}).malformedTools === true,
+    agentCapability({ tools: [''] }, {}));
+  // ...while the one list shape that IS a restriction stays one. The two must not be conflated:
+  // the CLI was measured granting an agent with `tools: []` zero tools.
+  const emptyList = agentCapability({ tools: [] }, {});
+  check('an explicit empty list is still a real restriction, not unreadable',
+    emptyList.inherits === false && emptyList.malformedTools === false && emptyList.effective.length === 0, emptyList);
+  // The deny list gets the same parse, and the direction that matters there is the opposite one:
+  // a padded deny entry must still SUBTRACT, or the panel understates nothing and overstates the
+  // restriction instead.
+  const denyPad = agentCapability({ tools: ['Read', 'Bash'], disallowedTools: ['Bash '] }, {});
+  check('a padded entry in the DENY list still subtracts',
+    denyPad.hasBroad === false && denyPad.denyLoadBearing.join() === 'Bash', denyPad);
+}
+
+// ---- a random-input pass over the model (Task 9) ---------------------------------------------
+//
+// Same reasoning as the fuzz section in scripts/chat-view-check.mjs: every fixture above is one a
+// person thought of, and the two findings pinned immediately above are what that misses. The
+// oracles here are PROPERTIES rather than expected outputs — an expected-output test over random
+// frontmatter would just be a second implementation of the module.
+//
+// Deterministic: a fixed seed list, because scripts/capability-coverage.mjs re-executes this file
+// once per mutation and two runs have to be comparable.
+{
+  const rng = seed => { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+  const BEYOND = AUTHORITIES.filter(a => a.beyondList).flatMap(a => a.tools);
+  const NAMES = [...AUTHORITIES.flatMap(a => a.tools), 'Read', 'Glob', 'Grep', 'TodoWrite', 'NotebookRead',
+    'BashOutput', 'ExitPlanMode', 'bash', 'BASH', 'write', 'task', 'mcp__figma__x', 'CronCreate',
+    'SendMessage', 'Workflow', 'EnterWorktree', '', ' ', 'Bash ', ' Bash', 'Réad', '__proto__', 'constructor'];
+  const pickFrom = (r, a) => a[Math.floor(r() * a.length)];
+  const toolsValue = r => {
+    const k = r();
+    const list = () => { const n = Math.floor(r() * 6), o = []; for (let i = 0; i < n; i++) o.push(pickFrom(r, NAMES)); return o; };
+    if (k < 0.30) return list();
+    if (k < 0.50) return list().join(',');
+    if (k < 0.56) return list().join(', ');
+    if (k < 0.62) return undefined;
+    if (k < 0.66) return null;
+    if (k < 0.70) return '';
+    if (k < 0.74) return ', ,';
+    if (k < 0.78) return 42;
+    if (k < 0.82) return true;
+    if (k < 0.86) return { a: 1 };
+    if (k < 0.90) return [];
+    if (k < 0.94) return [null, 3, { Bash: null }];
+    return pickFrom(r, NAMES);
+  };
+  const genFm = r => {
+    const o = {};
+    const t = toolsValue(r); if (t !== undefined) o.tools = t;
+    if (r() < 0.75) o.disallowedTools = toolsValue(r);
+    if (r() < 0.4) o.permissionMode = pickFrom(r, ['default', 'plan', 'acceptEdits', 'bypassPermissions', 7, null, {}]);
+    if (r() < 0.4) o.maxTurns = pickFrom(r, [1, 5, 100, 0, -3, 2.5, '5', null]);
+    if (r() < 0.6) {
+      const m = {};
+      if (r() < 0.7) m.profile = pickFrom(r, ['work', 42, null]);
+      if (r() < 0.7) m.workdir = pickFrom(r, ['/srv/x', '', 0, null]);
+      if (r() < 0.7) m.budget = pickFrom(r, [{ usd_per_run: 1.5, max_turns: 5 }, { max_turns: '5' }, 'nope', null, {}]);
+      if (r() < 0.7) m.triggers = pickFrom(r, [[{ type: 'cron' }], [{ type: 'webhook' }], ['cron'], [null], 'cron', 3, [{}]]);
+      o.mows = pickFrom(r, [m, m, m, 'not-an-object', 7, [m], null]);
+    }
+    return o;
+  };
+  // The module's own parse, restated so the oracles below do not disagree with it for reasons of
+  // their own. It is the ONE thing here that is a copy, and it is a copy on purpose: an oracle
+  // that imports the parse it is checking cannot catch the parse being wrong.
+  const parse = v => Array.isArray(v)
+    ? (v.every(x => typeof x === 'string') ? v.map(s => s.trim()).filter(Boolean) : null)
+    : typeof v === 'string' ? v.split(',').map(s => s.trim()).filter(Boolean) : null;
+
+  const SEEDS = [1, 2, 3, 5, 7], PER = 700;
+  let broadSeen = 0, unreadableConfident = null, syntaxFlip = null, hiddenAuthority = null, denyAdded = null, threw = null;
+  for (const sd of SEEDS) {
+    const r = rng(sd);
+    for (let i = 0; i < PER; i++) {
+      const f = genFm(r);
+      // EVERYTHING in this block is guarded, not just the call to the model. The chat and agent
+      // views have no error boundary, so a throw ANYWHERE on this path — in agentCapability or in
+      // a consumer reading the object it returned — blanks the page rather than one panel. The
+      // oracles below are such a consumer, so when one of them throws that IS the finding and it is
+      // recorded here instead of taking this whole file down with it.
+      //
+      // Not hypothetical: mutation C3 leaves `inherits` false while `effective` stays null, and the
+      // deny-list oracle's `c.effective.every(...)` threw on exactly that. Before this guard the
+      // check died at assertion 159 of 165 and the coverage sweep reported the run INCOMPLETE.
+      try {
+      const c = agentCapability(f, { webhookArmed: r() < 0.5 });
+      if (c.hasBroad) broadSeen++;
+
+      // (a) a CONFIDENT answer may only be given about a value the module could actually read
+      const readableArray = !Array.isArray(f.tools) || f.tools.every(x => typeof x === 'string');
+      if (!c.inherits && !c.malformedTools && !readableArray) unreadableConfident = unreadableConfident || { seed: sd, i, fm: f, c };
+
+      if (Array.isArray(f.tools) && readableArray && f.tools.length) {
+        // (b) SYNTAX must not change the verdict: padding names, or writing the list as a comma
+        // string, are the same declaration to anyone reading the file. The comma form is skipped
+        // when a name itself contains a comma — that is one bogus tool in a list and two real ones
+        // in a string, and the module is right about both.
+        const padded = agentCapability({ ...f, tools: f.tools.map(t => ' ' + t + ' ') }, {});
+        if (padded.hasBroad !== c.hasBroad) syntaxFlip = syntaxFlip || { seed: sd, i, fm: f, was: c.broad, now: padded.broad };
+        if (!f.tools.some(t => t.includes(','))) {
+          const joined = agentCapability({ ...f, tools: f.tools.join(',') }, {});
+          if (joined.hasBroad !== c.hasBroad) syntaxFlip = syntaxFlip || { seed: sd, i, fm: f, was: c.broad, now: joined.broad };
+        }
+        // (c) METAMORPHIC: granting a beyond-the-list tool must always be NAMED. A parse that
+        // silently loses a tool is the entire bug class this module exists for.
+        const denied = parse(f.disallowedTools) || [];
+        for (const b of BEYOND) {
+          if (denied.includes(b)) continue;
+          const plus = agentCapability({ ...f, tools: [...f.tools, b] }, {});
+          if (!plus.hasBroad || !plus.broad.includes(b)) { hiddenAuthority = hiddenAuthority || { seed: sd, i, tool: b, fm: f, plus }; break; }
+        }
+      }
+      // (d) the deny list may only ever SUBTRACT, never add
+      if (!c.inherits) {
+        const open = agentCapability({ ...f, disallowedTools: [] }, {});
+        if (!open.inherits && !c.effective.every(t => open.effective.includes(t))) denyAdded = denyAdded || { seed: sd, i, fm: f, c, open };
+      }
+      } catch (e) { threw = threw || { seed: sd, i, fm: f, e: String(e && e.message || e) }; }
+    }
+  }
+  const total = SEEDS.length * PER;
+  console.log(`  fuzz: ${total} generated frontmatters over seeds ${SEEDS.join(',')}; ${broadSeen} of them hold beyond-the-list authority`);
+  // The corpus has to reach the branch the oracles are about, or "0 findings" means nothing.
+  check('[fuzz] the corpus reaches the beyond-the-list branch at all',
+    broadSeen > total / 10, broadSeen);
+  check('[fuzz] nothing on this path throws: not the model, not a consumer reading its result',
+    threw === null, threw);
+  check('[fuzz] no generated frontmatter gets a confident answer about a tools value it could not read',
+    unreadableConfident === null, unreadableConfident);
+  check('[fuzz] the syntax a readable tool list is written in never changes the verdict',
+    syntaxFlip === null, syntaxFlip);
+  check('[fuzz] a beyond-the-list tool added to a readable allow list is always named',
+    hiddenAuthority === null, hiddenAuthority);
+  check('[fuzz] the deny list only ever subtracts', denyAdded === null, denyAdded);
+}
+
 process.exit(failed ? 1 : 0);

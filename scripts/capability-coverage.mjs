@@ -43,6 +43,14 @@ const MUTATIONS = [
     find: '    inherits,', repl: '    inherits: false,' },
   { id: 'C4', file: 'model', desc: 'an unparseable tools: field collapses to the empty list (rounds toward restricted)',
     find: '  : null;', repl: '  : [];' },
+  // The two shapes the Task 9 fuzz pass found. C27 restores the pre-fuzz array branch, under which
+  // `tools: ['Bash ']` reads as an unclassified tool and `- Bash:` reads as "[object Object]";
+  // C28 restores the version that called a list naming nothing at all a restriction.
+  { id: 'C27', file: 'model', desc: 'the tools list parsed with v.map(String) again (no trim, non-strings coerced)',
+    find: "  ? (v.every(x => typeof x === 'string') ? v.map(s => s.trim()).filter(Boolean) : null)\n",
+    repl: '  ? v.map(String)\n' },
+  { id: 'C28', file: 'model', desc: 'a list that names something and yields no tool is read as a restriction',
+    find: ' || emptyToolString || emptyToolList;', repl: ' || emptyToolString;' },
   { id: 'C5', file: 'model', desc: 'the no-op deny list is no longer reported as one',
     find: "    denyNoop: inherits ? [] : [...denied].filter(t => !tools.includes(t)),",
     repl: '    denyNoop: [],' },

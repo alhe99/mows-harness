@@ -63,7 +63,24 @@ export const BROAD_TOOLS = new Set(AUTHORITIES.filter(a => a.beyondList).flatMap
 
 // null means "the key is present but is not a tool list" — a state that must NOT collapse into the
 // empty list, because an empty list reads as "no tools" and unparseable input is not that.
-const asList = v => Array.isArray(v) ? v.map(String)
+// BOTH BRANCHES TRIM, and the array branch refuses a non-string entry (Task 9, found by fuzzing).
+// It used to be `v.map(String)`, and the two branches then disagreed about the same declaration:
+//   tools: "Read, Bash"       -> [Read, Bash]  -> hasBroad TRUE
+//   tools: ["Read", "Bash "]  -> [Read, Bash ] -> hasBroad FALSE, and the shell authority was
+//                                                 reported instead as "a tool whose reach this
+//                                                 page cannot state".
+// One trailing space, written in the other of two equally ordinary YAML syntaxes, and the panel
+// stopped naming the shell -- in the FLATTERING direction, which is the one this module exists to
+// rule out. No hand-written fixture had ever used the array syntax with stray whitespace.
+//
+// `v.map(String)` was worse than untidy on a NON-STRING entry. `- Bash:` instead of `- Bash` is a
+// one-character YAML typo and parses as {Bash: null}, which stringified to "[object Object]": the
+// panel then gave a CONFIDENT, non-inheriting tool list for a file it had not understood, and said
+// the agent had no shell authority. Such an array is now unreadable (null), which routes it to
+// malformedTools below and rounds toward UNRESTRICTED -- the rule this module already states for
+// every other unparseable value, applied at last to this one.
+const asList = v => Array.isArray(v)
+  ? (v.every(x => typeof x === 'string') ? v.map(s => s.trim()).filter(Boolean) : null)
   : typeof v === 'string' ? v.split(',').map(s => s.trim()).filter(Boolean)
   : null;
 
@@ -81,7 +98,12 @@ export function agentCapability(fm, opts = {}) {
   // the one branch where being wrong is most flattering. An explicit `tools: []` is a different
   // thing and stays a real restriction; the CLI was measured granting such an agent zero tools.
   const emptyToolString = typeof rawTools === 'string' && tools.length === 0;
-  const malformedTools = (rawTools != null && tools === null) || emptyToolString;
+  // ...and the same ruling for a LIST that names something and yet yields no tool: `tools: ['']`
+  // and `tools: [' ']` are unreadable in exactly the way `tools: ''` is, now that the array branch
+  // trims too. `tools: []` is untouched and stays a genuine explicit restriction -- the CLI was
+  // measured granting such an agent zero tools, and that is a different statement from silence.
+  const emptyToolList = Array.isArray(rawTools) && rawTools.length > 0 && tools !== null && tools.length === 0;
+  const malformedTools = (rawTools != null && tools === null) || emptyToolString || emptyToolList;
   // The same rule applied to the deny list, which round 1 did not do: `disallowedTools: 42` was
   // silently read as "no deny list", so the panel could not say it had failed to read something.
   const malformedDenied = rawDenied != null && deniedList === null;
