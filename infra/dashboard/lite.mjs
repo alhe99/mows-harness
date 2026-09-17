@@ -626,6 +626,12 @@ const ICO = {
   trash: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
   terminal: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>`,
   plus: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  // The one 44:5 glyph ICO did not already carry. Path data is the Figma export's verbatim, so
+  // it keeps its native viewBox 0 0 16 16 and 1.33333 stroke rather than being redrawn on the
+  // 24-grid the others use — 1.33333/16 is the same ratio as 2/24, so it renders at identical
+  // visual weight beside them. stroke is currentColor (the export baked #18181B); nothing else
+  // was touched.
+  send: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.69067 14.4573C9.71599 14.5205 9.76003 14.5743 9.81685 14.6117C9.87367 14.6491 9.94057 14.6682 10.0086 14.6664C10.0766 14.6647 10.1424 14.6422 10.1972 14.602C10.2521 14.5617 10.2933 14.5057 10.3153 14.4413L14.6487 1.77467C14.67 1.7156 14.6741 1.65167 14.6604 1.59037C14.6467 1.52907 14.6159 1.47293 14.5715 1.42852C14.5271 1.38411 14.4709 1.35326 14.4096 1.33959C14.3483 1.32593 14.2844 1.33 14.2253 1.35133L1.55867 5.68467C1.49433 5.70673 1.43828 5.74795 1.39805 5.80278C1.35781 5.85762 1.33531 5.92345 1.33357 5.99144C1.33183 6.05943 1.35093 6.12633 1.38831 6.18315C1.42568 6.23997 1.47954 6.28401 1.54267 6.30933L6.82933 8.42933C6.99646 8.49625 7.1483 8.59631 7.27571 8.72349C7.40312 8.85067 7.50345 9.00233 7.57067 9.16933L9.69067 14.4573Z"/><path d="M14.5693 1.43133L7.276 8.724"/></svg>`,
   wrench: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`,
   maximize: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`,
@@ -1383,11 +1389,20 @@ const CSS = `
 --fg:#f4f4f5;--fg2:#d4d4d8;--title:#e4e4e7;--mut:#9f9fa9;--dim:#71717b;--dimmer:#52525c;
 --bd:rgba(39,39,42,.6);--bd2:rgba(39,39,42,.8);--hair:#18181b;
 --ring:rgba(161,161,170,.8);
---ok:#00d492;--ok-bg:rgba(0,212,146,.1);--ok-bd:rgba(0,212,146,.4);
---warn:#fbbf24;--bad:#f87171;
+--ok:#00d492;--ok-bg:rgba(0,212,146,.1);--ok-bd:rgba(0,212,146,.2);
+--ok-lt:#5ee9b5;--ok-dk:#00bc7d;--bd3:#3f3f47;
+--warn:#ffb900;--bad:#ff6467;
 --r:10px;--r-lg:16px;
---sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
---mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+--sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* Vendored latin-subset variable faces (infra/dashboard/app/vendor/*.woff2, hash-pinned in
+   SHA256SUMS like every other vendored file). One file per family covers 400-700 — do not
+   add static faces. font-display:swap so a slow font never blanks the page, and the system
+   stacks above stay as the fallback, which is exactly what shipped before this change. */
+@font-face{font-family:'Inter';font-style:normal;font-weight:400 700;font-display:swap;
+src:url(FONT_INTER) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;
+src:url(FONT_MONO) format('woff2')}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{background:var(--bg)}
 body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);padding:12px;max-width:1100px;margin:0 auto;position:relative}
@@ -2172,7 +2187,7 @@ function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false,
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun],a[href^='/ui']"}}]},"eagerness":"moderate"}]}</script>
-<title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
+<title>${esc(title)}</title><style>${cssText()}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
 ${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
@@ -3425,18 +3440,36 @@ function uiAssetName(rel, buf) {
   const dot = rel.lastIndexOf('.');
   return `${rel.slice(0, dot)}.${crc32(buf).toString(16)}${rel.slice(dot)}`;
 }
+// What app/ is allowed to serve, and the content-type each extension gets. An extension absent
+// from this map is not served at all — the default is refusal, so dropping a stray .DS_Store or
+// an editor backup into app/ can never become a route.
+//
+// COUPLED TO scripts/preflight.sh's client-asset ceiling, which greps app/ with its own find(1)
+// extension list. The two lists must name the same extensions: anything servable here and not
+// measured there ships to browsers without counting against the size budget, and the gate keeps
+// reporting a comfortable number while the payload grows. That is form 3 of this branch's
+// catalogue of hollow checks — a check whose label lies about what it tests. Change both or
+// neither; preflight asserts the agreement (see "asset extension lists agree" there).
+// No svg entry, deliberately: the 44:5 icons are lucide glyphs that ICO already inlines as
+// currentColor SVG, so nothing needs serving as a file. Adding an extension "for later" makes
+// app/ a route surface for anything that lands in it.
+const UI_ASSET_TYPES = {
+  mjs: 'text/javascript; charset=utf-8',
+  css: 'text/css; charset=utf-8',
+  woff2: 'font/woff2',
+};
 async function loadUiAssets() {
   uiAssets.clear();
   const walk = async d => {
     for (const e of await fsp.readdir(d, { withFileTypes: true })) {
       const full = `${d}/${e.name}`;
       if (e.isDirectory()) { await walk(full); continue; }
-      if (!/\.(mjs|css)$/.test(e.name)) continue;
+      const type = UI_ASSET_TYPES[e.name.slice(e.name.lastIndexOf('.') + 1)];
+      if (!type) continue;
       const rel = full.slice(UI_DIR.length);
       const buf = await fsp.readFile(full);
       uiAssets.set(uiAssetName(rel, buf), { buf, rel,
-        etag: '"' + crc32(buf).toString(16) + '"',
-        type: e.name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8' });
+        etag: '"' + crc32(buf).toString(16) + '"', type });
     }
   };
   try { await walk(UI_DIR.replace(/\/$/, '')); } catch {}
@@ -3445,6 +3478,17 @@ const uiAssetUrlFor = rel => {
   for (const [k, v] of uiAssets) if (v.rel === rel) return '/ui/assets/' + k;
   return '/ui/assets/' + rel;
 };
+// CSS is a module-level literal, so it is built long before the content hashes exist — but an
+// @font-face src must name the HASHED url or the font 404s (uiAssetView keys on the hashed name).
+// Hence two placeholders in CSS, substituted here once assets are loaded, and cached: it is the
+// same two replacements on every response, for both the server-rendered pages and the SPA.
+//
+// Safe because loadUiAssets() now runs at startup, before listen(), so uiAssets is always
+// populated by the time any handler renders a page.
+let cssCache = null;
+const cssText = () => (cssCache ??= CSS
+  .replace('FONT_INTER', uiAssetUrlFor('vendor/inter-var-latin.woff2'))
+  .replace('FONT_MONO', uiAssetUrlFor('vendor/jetbrains-mono-var-latin.woff2')));
 // ---------- Content-Security-Policy for /ui ----------
 //
 // SCOPED TO /ui DELIBERATELY, and this is the whole reason it is cheap. The server-rendered pages
@@ -3544,7 +3588,7 @@ function uiShellHtml(host, nonce, twin = '/agents') {
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <title>mows control</title>
-<style nonce="${nonce}">${CSS}</style>
+<style nonce="${nonce}">${cssText()}</style>
 <script type="importmap" nonce="${nonce}">${JSON.stringify({ imports })}</script>
 </head><body class="uiapp">${hdr}${termFab}
 <div id="app"></div>
@@ -3780,5 +3824,8 @@ if (args.includes('--selftest')) {
   process.exit(0);
 }
 await scan().catch(e => console.error('initial scan:', e.message));
+// Before listen(), not lazily on first /ui hit: cssText() resolves the @font-face urls out of
+// this map synchronously, and every server-rendered page needs them too — not just /ui.
+await loadUiAssets();
 setInterval(freshen, 30000).unref();
 server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));

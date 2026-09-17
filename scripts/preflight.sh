@@ -120,12 +120,32 @@ done
 # Without a gate, "SPA" grows back into the MB-scale bundle lite.mjs was written to replace.
 if [ -d infra/dashboard/app ]; then
   ( cd infra/dashboard/app/vendor && sha256sum -c SHA256SUMS --quiet ) || bad "vendored module hash mismatch"
+  # The extensions measured below MUST be the extensions lite.mjs is willing to serve. A file
+  # servable but unmeasured ships to browsers for free, and this check would keep printing a
+  # reassuring number while the payload grew — so the agreement is asserted, not commented.
+  # Parsed out of UI_ASSET_TYPES rather than restated: a literal copy is exactly what went
+  # stale when fonts were added, and a check that can't notice its own subject moving is the
+  # hollow check this repo keeps cataloguing.
+  SERVED=$(sed -n '/^const UI_ASSET_TYPES = {/,/^};/p' infra/dashboard/lite.mjs \
+    | grep -oE "^  [a-z0-9]+:" | tr -d ' :' | sort | tr '\n' ' ')
+  [ -n "$SERVED" ] || bad "could not parse UI_ASSET_TYPES out of lite.mjs — the ceiling's extension list is unverifiable"
+  MEASURED="css mjs woff2 "
+  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: lite.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
   GZ=0
   while IFS= read -r f; do
     GZ=$((GZ + $(gzip -9 -c "$f" | wc -c)))
-  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' \))
-  [ "$GZ" -le 76800 ] || bad "client assets ${GZ}B gzipped exceeds the 76800B ceiling (spec D3)"
-  note "client assets: ${GZ}B gzipped of 76800B"
+  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' \))
+  # Raised from 76800B (75 KiB) for the 44:5 redesign's two variable webfonts, and derived
+  # rather than guessed: 75 KiB of CODE budget — exactly what the original ceiling allowed,
+  # unchanged — plus 80 KiB for the fonts, which measured 79709B gzipped and are a fixed
+  # one-time cost that does not grow with the app. 76800 + 81920 = 158720.
+  #
+  # Deriving it this way keeps the gate doing its original job. A round number picked to sit
+  # just above today's total would have quietly shrunk the code budget from 31KB to 22KB, so
+  # the next few hundred lines of view code would trip a ceiling that was never about them.
+  # If a future change adds a font, raise this by that font's measured size and say so here.
+  [ "$GZ" -le 158720 ] || bad "client assets ${GZ}B gzipped exceeds the 158720B ceiling (spec D3)"
+  note "client assets: ${GZ}B gzipped of 158720B (fonts 79709B of that)"
 else
   bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
