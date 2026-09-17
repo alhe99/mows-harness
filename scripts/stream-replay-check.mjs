@@ -3,15 +3,31 @@
 import http from 'node:http';
 const PORT = process.env.PORT || 3105, AGENT = 'replaytest';
 const get = (path, headers = {}) => new Promise(r => http.get({ port: PORT, path, headers }, r));
+// Every delta this file injects goes through here, never through a bare get(). /_test/chat is
+// gated on MOWS_TEST_HOOKS in the SERVER's env, and when that gate is shut the route 404s: the
+// injections become no-ops and every assertion below that looks for the ABSENCE of something —
+// the cross-agent leak check in particular — passes because nothing was ever there to leak.
+// That is exactly how this file was run for its whole life (the harness was handed the env var
+// instead of the dashboard), so the leak regression reported PASS while testing nothing. A
+// non-204 here is a broken rig, not a result, and must never be reported as a pass.
+const seed = async (path) => {
+  const r = await get(path);
+  r.resume();
+  if (r.statusCode !== 204) {
+    console.log(`FAIL: test hooks unavailable — ${path} returned ${r.statusCode}, expected 204.`);
+    console.log('      MOWS_TEST_HOOKS=1 must be set on the DASHBOARD process, not on this one.');
+    process.exit(1);
+  }
+};
 const res1 = await get(`/stream?topics=chat:${AGENT}`);
 const seen = [];
 res1.on('data', b => { for (const l of String(b).split('\n')) if (l.startsWith('id: ')) seen.push(l.slice(4).trim()); });
 await new Promise(r => setTimeout(r, 300));
-await get(`/_test/chat?agent=${AGENT}&turn=1&seq=1&delta=A`);
-await get(`/_test/chat?agent=${AGENT}&turn=1&seq=2&delta=B`);
+await seed(`/_test/chat?agent=${AGENT}&turn=1&seq=1&delta=A`);
+await seed(`/_test/chat?agent=${AGENT}&turn=1&seq=2&delta=B`);
 await new Promise(r => setTimeout(r, 300));
 res1.destroy();
-await get(`/_test/chat?agent=${AGENT}&turn=1&seq=3&delta=C`);
+await seed(`/_test/chat?agent=${AGENT}&turn=1&seq=3&delta=C`);
 const res2 = await get(`/stream?topics=chat:${AGENT}`, { 'last-event-id': `${AGENT}:1:2` });
 let replayed = '';
 res2.on('data', b => { replayed += String(b); });
@@ -32,8 +48,8 @@ const LEAK_AGENT = 'leaktest';
 const seeder = await get(`/stream?topics=chat:${LEAK_AGENT}`);
 seeder.resume(); // drain, uninterested in its data — it only exists to be a live subscriber
 await new Promise(r => setTimeout(r, 300));
-await get(`/_test/chat?agent=${LEAK_AGENT}&turn=1&seq=1&delta=SECRET1`);
-await get(`/_test/chat?agent=${LEAK_AGENT}&turn=1&seq=2&delta=SECRET2`);
+await seed(`/_test/chat?agent=${LEAK_AGENT}&turn=1&seq=1&delta=SECRET1`);
+await seed(`/_test/chat?agent=${LEAK_AGENT}&turn=1&seq=2&delta=SECRET2`);
 await new Promise(r => setTimeout(r, 300));
 seeder.destroy();
 // attacker: subscribes to an unrelated topic, spoofs Last-Event-ID for LEAK_AGENT

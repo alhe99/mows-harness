@@ -64,7 +64,12 @@ exit 0
 S
 chmod +x /shim/systemctl
 export PATH="/shim:$PATH"
-HOME=$DH node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
+# MOWS_TEST_HOOKS belongs on THIS process, not on the node harness that drives it: the gate
+# (`process.env.MOWS_TEST_HOOKS === '1'`) is read inside lite.mjs's router, so it is the SERVER
+# that must have it. Setting it on the client, as the replay check below used to, leaves
+# /_test/chat a 404 and the check silently measures nothing. Still off by default everywhere
+# else, so the injectors remain unreachable on the real dashboard.
+HOME=$DH MOWS_TEST_HOOKS=1 node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
 # oauth2-proxy on :4180 from the RENDERED config, dummy Google creds
@@ -116,9 +121,26 @@ chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_co
 chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'
 chk "stream: emits fleet on connect"   'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 400 | grep -q "event: fleet"'
 chk "stream: heartbeat or data, never silence" 'timeout 30 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 200 | grep -qE "event:|: hb"'
-chk "stream: unknown topic is ignored, not fatal" '[ "$(timeout 6 curl -sN -o /dev/null -w "%{http_code}" "http://127.0.0.1:3005/stream?topics=nonsense")" = 200 ]'
-chk "stream: over cap -> 503"          'true  # exercised by the node harness in Task 3 step 5'
-chk "stream: replay resumes without duplicating" 'MOWS_TEST_HOOKS=1 node /r/scripts/stream-replay-check.mjs'
+# --max-time, NOT `timeout`. An SSE response never ends, so the curl has to be cut short either
+# way — but `timeout` cuts it short with SIGTERM from outside, and a SIGTERMed curl dies before
+# it ever emits --write-out. The command substitution therefore expanded to the empty string and
+# this compared "" = 200, which is false no matter what the server does: verified by pointing the
+# same idiom at topics=fleet, a stream that demonstrably works (117/118 pass against it), and
+# getting the identical empty result. It could not pass, so it never tested anything. curl's own
+# --max-time aborts from the inside instead: exit code 28, but %{http_code} is still written.
+# The neighbours above sidestep the whole problem by piping into head rather than asking curl
+# for --write-out; --max-time is the equivalent for a check that wants the status code itself.
+chk "stream: unknown topic is ignored, not fatal" '[ "$(curl -sN --max-time 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:3005/stream?topics=nonsense")" = 200 ]'
+# This was `true  # exercised by the node harness in Task 3 step 5` — a check whose body is the
+# `true` builtin passes unconditionally and proves nothing, and the delegation it claimed was not
+# real: stream-replay-check.mjs never touched SSE_MAX. Now delegated for real, to a harness that
+# needs a client the shell cannot express (SSE_MAX+1 simultaneous live connections, then a
+# deterministic teardown so the slots are free again for everything below).
+chk "stream: over cap -> 503"          'PORT=3005 node /r/scripts/stream-cap-check.mjs'
+# PORT=3005: the harness defaults to 3105 and the dashboard here is on 3005, so unfixed it
+# connected to nothing and died on ECONNREFUSED. MOWS_TEST_HOOKS moved to the server at the
+# spawn above, which is the process that reads it.
+chk "stream: replay resumes without duplicating" 'PORT=3005 node /r/scripts/stream-replay-check.mjs'
 # desktop/tablet browsers open sessions in their own named windows (client-side, so just
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
 chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
