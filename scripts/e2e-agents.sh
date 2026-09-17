@@ -179,6 +179,39 @@ mkagent "$A/relpath.md" "$(printf '%s\n  triggers: [{type: path, path: relative/
 chk "lint: relative path trigger"         'mows-agent lint relpath 2>&1 | grep -q "must be an absolute path"'
 mkagent "$A/prro.md" "$(printf '%s\n  merge: {policy: pr}' "$MOWS_BLOCK_OK")"
 chk "lint: pr policy on read-only agent"  'mows-agent lint prro 2>&1 | grep -q "nothing to merge"'
+# ---- how a tools: list is READ, both ways it can be written (Task 9 fix round 1) -------------
+# as_list's two branches disagreed: the string form stripped and the list form did not, and the
+# list form also handed whatever YAML produced straight through. Two consequences, both measured.
+#
+# (1) A STRAY COLON. `- Bash:` instead of `- Bash` is an ordinary typo and parses as a MAPPING.
+# `set(tools)` on the can_write line then raised an unhandled TypeError: unhashable type: 'dict',
+# so the operator got a Python traceback out of the one tool whose whole job is explaining what is
+# wrong with their file. Note it takes BOTH halves to reach: the `or` short-circuits unless the
+# deny list contains Write AND Edit, which mkagent's base block does — and which the repo's own
+# example agent does too, so this was the normal shape, not an exotic one. It failed CLOSED
+# (mows-agent refuses the run on a non-zero lint), which is why this is robustness and not safety.
+mkagent "$A/toolmap.md" "$MOWS_BLOCK_OK"
+sed -i 's/^tools: \[Read, Grep\]$/tools:\n  - Read\n  - Bash:/' "$A/toolmap.md"
+chk "lint: a mapping inside tools: is a lint ERROR, not a traceback" \
+  '! mows-agent lint toolmap && mows-agent lint toolmap 2>&1 | grep -q "tools must be a list or comma-separated string"'
+chk "lint: and the operator never sees a Python traceback for it" \
+  '! mows-agent lint toolmap 2>&1 | grep -q "Traceback (most recent call last)"'
+# (2) A TRAILING SPACE. `tools: [Read, "Bash "]` and `tools: "Read, Bash "` are the same
+# declaration to anyone reading the file, and only the second used to be recognised: the first
+# slipped past WRITE_CAPABLE_TOOLS and the agent linted as read-only, which is the permissive
+# direction. Observed through the read-only warning, which is what can_write feeds.
+mkagent "$A/padlist.md" "$(printf '%s\n  merge: {policy: pr}' "$MOWS_BLOCK_OK")"
+sed -i 's/^tools: \[Read, Grep\]$/tools: [Read, "Bash "]/' "$A/padlist.md"
+chk "lint: a padded tool name in a LIST is still read as the tool" \
+  '! mows-agent lint padlist 2>&1 | grep -q "nothing to merge"'
+mkagent "$A/padstr.md" "$(printf '%s\n  merge: {policy: pr}' "$MOWS_BLOCK_OK")"
+sed -i 's/^tools: \[Read, Grep\]$/tools: "Read, Bash "/' "$A/padstr.md"
+chk "lint: ...and the comma-string form of that same declaration agrees with it" \
+  '! mows-agent lint padstr 2>&1 | grep -q "nothing to merge"'
+# The control that keeps the pair above honest: a genuinely read-only agent must STILL warn, or
+# all three would pass with can_write hard-wired true.
+chk "lint: a genuinely read-only agent still warns (the control for the two above)" \
+  'mows-agent lint prro 2>&1 | grep -q "nothing to merge"'
 mkagent "$A/trifecta.md" "$(printf '%s\n  triggers: [{type: webhook}]' "$MOWS_BLOCK_OK")"; sed -i 's/^disallowedTools: .*/disallowedTools: [WebFetch]/' "$A/trifecta.md"
 chk "lint: webhook + write tools WARNs"   'mows-agent lint trifecta 2>&1 | grep -q "WARN: webhook trigger"'
 chk "lint: WARN alone still exits 0"      'mows-agent lint trifecta'

@@ -51,6 +51,26 @@ const MUTATIONS = [
     repl: '  ? v.map(String)\n' },
   { id: 'C28', file: 'model', desc: 'a list that names something and yields no tool is read as a restriction',
     find: ' || emptyToolString || emptyToolList;', repl: ' || emptyToolString;' },
+  // --- the cross-program agreement (Task 9 fix round 1) --------------------------------------
+  // A1 is the regression itself: the validator's pre-fix list branch, which neither strips nor
+  // refuses a non-string. A2 takes as_list away entirely, which is what "the gate could not run"
+  // looks like from here. A3 shrinks the table to readable rows only, so the rule A1 guards is
+  // true of nothing -- the same degenerate-corpus trap the fuzz sections check for.
+  { id: 'A1', file: 'meta', desc: "the validator's tools: parse drifts back (no strip, non-strings coerced)",
+    find: `    if isinstance(v, list):
+        if not all(isinstance(t, str) for t in v):
+            return None
+        return [t.strip() for t in v if t.strip()]
+    return None`,
+    repl: '    return list(v) if isinstance(v, list) else None' },
+  { id: 'A2', file: 'meta', desc: 'as_list is gone, so the agreement cannot be checked at all',
+    find: 'def as_list(v):', repl: 'def as_list_moved_somewhere(v):' },
+  { id: 'A3', file: 'check', desc: 'the agreement table holds only readable shapes, so the rule guards nothing',
+    find: `    'Read, Bash', ' Read , Bash ', 'Bash', '', ', ,',
+    ['Read', 'Bash'], ['Read', 'Bash '], [' Read ', ' Bash '], [], [''], ['  '],
+    ['Read', { Bash: null }], ['Read', ['Bash']], [null], [3], [true],
+    42, true, { a: 1 }, null,`,
+    repl: `    'Read, Bash', ['Read', 'Bash'], [], ['Read', 'Grep'],` },
   { id: 'C5', file: 'model', desc: 'the no-op deny list is no longer reported as one',
     find: "    denyNoop: inherits ? [] : [...denied].filter(t => !tools.includes(t)),",
     repl: '    denyNoop: [],' },

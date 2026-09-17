@@ -53,12 +53,40 @@ def frontmatter(path):
 
 
 def as_list(v):
-    """Claude accepts `tools: Read, Grep` (string) and `tools: [Read, Grep]` (list)."""
+    """Claude accepts `tools: Read, Grep` (string) and `tools: [Read, Grep]` (list).
+
+    BOTH BRANCHES STRIP, and a list carrying a non-string is not a tool list. This used to be
+    `list(v) if isinstance(v, list) else None`, which was wrong twice over (Task 9 fix round 1):
+
+      - `tools: ["Read", "Bash "]` kept the trailing space, so `WRITE_CAPABLE_TOOLS & set(tools)`
+        below missed it and a write-capable agent linted clean. The string form of the SAME
+        declaration stripped and was flagged. One trailing space and the answer flipped, in the
+        permissive direction.
+      - `- Bash:` instead of `- Bash` is an ordinary typo; YAML parses it as {"Bash": None}, and
+        the `set(tools)` on the can_write line below then raised an unhandled
+        `TypeError: unhashable type: 'dict'`. The operator got a Python traceback from the one
+        tool whose whole job is explaining what is wrong with their file. It failed CLOSED
+        (mows-agent:210 refuses the run on a non-zero lint), so this is robustness rather than
+        safety -- but a traceback is not a lint message.
+
+    Returning None routes both into the existing "tools must be a list or comma-separated string"
+    error, which is what an unreadable value should have produced all along.
+
+    Kept deliberately identical to asList() in infra/dashboard/capability.mjs, so the validator and
+    the dashboard cannot disagree about what a tools: field says. They are separate programs in
+    separate languages and neither can import the other, so the agreement is asserted instead:
+    scripts/e2e-agents.sh drives THIS function and scripts/capability-check.mjs drives that one,
+    over the same table of inputs.
+    """
     if v is None:
         return []
     if isinstance(v, str):
         return [t.strip() for t in v.split(",") if t.strip()]
-    return list(v) if isinstance(v, list) else None
+    if isinstance(v, list):
+        if not all(isinstance(t, str) for t in v):
+            return None
+        return [t.strip() for t in v if t.strip()]
+    return None
 
 
 def is_int(v):

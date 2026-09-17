@@ -132,6 +132,59 @@ export function renderPartial(text) {
   }
 }
 
+// ---------- reconciling the optimistic view with the saved transcript ------------------------
+//
+// A turn ends, the client refetches chat.jsonl, and the refetched list REPLACES what is on screen.
+// Everything the client added optimistically and the transcript does not have is therefore
+// deleted, silently, unless this function puts it back.
+//
+// Round 1 applied that reasoning to the agent's reply (review M1) and not to the operator's own
+// message, and the gap was measured in a real browser in Task 9: submit fires, a `you` bubble
+// appears, and 21 ms later it is gone with `.cherr` still null. The operator watched the system
+// eat their question and say nothing.
+//
+// WHEN IT HAPPENS, which is the part that decides how loud to be: mows-agent's cmd_chat appends
+// the user record BEFORE spawning claude, so the happy path is safe. Every EARLY EXIT before that
+// append is not — no completed run to resume, a lint refusal, a bad name, the unit missing. So the
+// message vanishes exactly in the cases where something has already gone wrong and the operator
+// most needs to be told. Restoring the bubble is the smaller half of the fix; saying so is the
+// larger one, and the caller does both.
+//
+// Exported for the same reason renderPartial is: scripts/chat-view-check.mjs exercises THIS
+// function rather than a copy of its rules, which is how the rules and their gate stay in step.
+export function reconcile(list, pendingUsers, salvage) {
+  const turns = Array.isArray(list) ? list : [];
+  // The user's own messages first, matched as a MULTISET and not a set. Asking the same question
+  // twice is two messages; membership-matching would call the second one saved because the first
+  // one was, and delete it — the same class of mistake as the "is the last entry an assistant
+  // turn?" version of the reply rule that re-review R5 threw out.
+  const pool = turns.filter(t => t && t.role === 'user').map(t => String(t.text ?? ''));
+  const missingUsers = [];
+  for (const p of pendingUsers || []) {
+    const at = pool.indexOf(String(p && p.text != null ? p.text : ''));
+    if (at === -1) missingUsers.push(p); else pool.splice(at, 1);
+  }
+  let out = missingUsers.length ? [...turns, ...missingUsers] : turns;
+  // ...then the reply, appended AFTER the question it answers rather than before it.
+  //
+  // Identity, not position (re-review R5). Asking "is the last entry an assistant turn?" says
+  // "present" for a STALE assistant turn left by an earlier turn while this turn's records are
+  // absent entirely — the exact silent drop M1 was opened for. So ask the newest assistant turn
+  // whether it actually carries what we just watched. `includes` and not `===`: a client that
+  // joined mid-turn holds only a SUFFIX of the reply, and exact equality would append that partial
+  // as a duplicate beside the complete saved one. A stale turn contains none of it, so it still
+  // salvages.
+  let salvagedReply = false;
+  if (salvage) {
+    const newest = [...out].reverse().find(t => t && t.role === 'assistant');
+    if (!(newest && String(newest.text || '').includes(salvage))) {
+      out = [...out, { at: new Date().toISOString(), role: 'assistant', text: salvage }];
+      salvagedReply = true;
+    }
+  }
+  return { turns: out, missingUsers, salvagedReply };
+}
+
 export function Chat({ name, runs }) {
   const [turns, setTurns] = useState([]);
   const [live, setLive] = useState('');
@@ -139,6 +192,11 @@ export function Chat({ name, runs }) {
   const [err, setErr] = useState('');
   const [atBottom, setAtBottom] = useState(true);
   const boxRef = useRef(null), taRef = useRef(null), turnRef = useRef(0), liveRef = useRef('');
+  // Messages this client has shown and has not yet seen come back in a refetched transcript.
+  // A ref and not state: the chatend handler below is created once per `name` and would
+  // otherwise close over the first render's value, which is the bug that makes an optimistic
+  // bubble look preserved in testing and vanish in production.
+  const pendingRef = useRef([]);
   const chatable = (runs || []).some(r => r.state === 'done');
 
   useEffect(() => {
@@ -183,35 +241,36 @@ export function Chat({ name, runs }) {
       // reply deleted off the screen with no message. The happy path is safe only because
       // cmd_chat appends the assistant record BEFORE printing the end line, which is a guarantee
       // in a different program and not one this file may lean on (review M1).
-      const keep = list => {
-        if (!salvage) return list;
-        // Identity, not position (re-review R5). The first version asked "is the last entry an
-        // assistant turn?", which says "present" for a STALE assistant turn left by an earlier
-        // turn while this turn's records are absent entirely — the exact silent-drop M1 was
-        // opened for. It was unreachable only because cmd_chat appends the user record before
-        // spawning, which is the same cross-program lean the comment above refuses to make.
-        // So ask the newest assistant turn whether it actually carries what we just watched.
-        // `includes` and not `===`: a client that joined mid-turn holds only a SUFFIX of the
-        // reply, and exact equality would append that partial as a duplicate beside the
-        // complete saved one. A stale turn contains none of it, so it still salvages.
-        const newest = [...list].reverse().find(t => t && t.role === 'assistant');
-        return newest && String(newest.text || '').includes(salvage)
-          ? list
-          : [...list, { at: new Date().toISOString(), role: 'assistant', text: salvage }];
-      };
       getJSON(`/api/agents/${name}/chat`)
         .then(x => {
           const list = x.turns || [];
-          const kept = turnRef.current === endedTurn ? keep(list) : list;
-          setTurns(kept);
-          if (kept !== list) setErr('Reply shown above, but it is not in the saved transcript yet.');
+          // newest-turn-wins still governs the REPLY — that is what it was added for (F8/R3) — so a
+          // stale end salvages nothing. It must NOT govern the user's own message: that message
+          // belongs to whoever typed it, not to the turn whose end happened to arrive, and
+          // discarding it because an older turn ended is the very deletion being fixed here.
+          const mine = turnRef.current === endedTurn;
+          const r = reconcile(list, pendingRef.current, mine ? salvage : '');
+          setTurns(r.turns);
+          pendingRef.current = r.missingUsers;
+          if (r.missingUsers.length) {
+            setErr('Your message is not in the saved transcript — the turn ended before the agent recorded it, so it probably never ran. It is still shown above, and it will be gone if you reload.');
+            // Hand the text back as well as saying so. Only when the composer is empty (the
+            // operator may already be typing something else) and only when no reply arrived at
+            // all — after a real reply a retry would be a duplicate question, not a recovery.
+            const lost = r.missingUsers[r.missingUsers.length - 1];
+            if (!salvage && taRef.current && !taRef.current.value) taRef.current.value = String(lost && lost.text || '');
+          } else if (r.salvagedReply) {
+            setErr('Reply shown above, but it is not in the saved transcript yet.');
+          }
           settle();
         })
         .catch(() => {
           // The refetch failed outright, so the transcript will not arrive at all. Same rule:
-          // settle the reply in place rather than blanking it or leaving a bubble pulsing
-          // "in progress" forever.
-          if (turnRef.current === endedTurn && salvage) setTurns(t => keep(t));
+          // settle what is on screen rather than blanking it or leaving a bubble pulsing
+          // "in progress" forever. Reconciling against the CURRENT turns is what makes this safe
+          // to run here: the pending message is already in that list, so it matches itself and is
+          // not appended twice.
+          if (turnRef.current === endedTurn && salvage) setTurns(t => reconcile(t, pendingRef.current, salvage).turns);
           settle();
           setErr('Reply received, but reloading the transcript failed. Reload to confirm it was saved.');
         });
@@ -243,6 +302,9 @@ export function Chat({ name, runs }) {
     taRef.current.value = '';
     // Kept by reference so the optimistic bubble can be withdrawn again if the POST never lands.
     const pending = { at: new Date().toISOString(), role: 'user', text: msg };
+    // Also recorded OUTSIDE the turns list, so the refetch that replaces that list wholesale can
+    // be asked whether it actually contains this message (see reconcile above).
+    pendingRef.current = [...pendingRef.current, pending];
     setTurns(t => [...t, pending]);
     setBusy(true); setErr(''); setAtBottom(true);
     const body = new URLSearchParams({ name, back: `/ui/agents/${name}`, msg });
@@ -257,6 +319,7 @@ export function Chat({ name, runs }) {
       // stayed disabled on "…" and "Thinking…" never cleared, recoverable only by reloading
       // (fix round 1). The typed text goes back in the box rather than being lost with it.
       setBusy(false);
+      pendingRef.current = pendingRef.current.filter(x => x !== pending);
       setTurns(t => t.filter(x => x !== pending));
       setErr(`Could not send: ${ex.message || ex}`);
       if (!taRef.current.value) taRef.current.value = msg;

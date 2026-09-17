@@ -30,7 +30,7 @@ registerHooks({
   },
 });
 
-const { renderPartial } = await import(new URL('views/chat.mjs', APP).href);
+const { renderPartial, reconcile } = await import(new URL('views/chat.mjs', APP).href);
 // The vendored marked itself, to pin the HAZARD the view's tokenizer override neutralises.
 const { marked: rawMarked } = await import(new URL('vendor/marked.mjs', APP).href);
 
@@ -515,6 +515,59 @@ check('an ordinary https image still renders as an image',
   console.log(`  fuzz: ${walked} intermediate prefixes walked`);
   check('[fuzz] no PREFIX of a generated reply renders live either',
     livePrefix === null, livePrefix);
+}
+
+// ---- reconcile(): what survives the refetch that replaces the screen (Task 9 fix round 1) -----
+//
+// A turn ends, the client refetches chat.jsonl, and that list REPLACES what is on screen. Anything
+// the client added optimistically and the transcript does not carry is therefore deleted. Round 1
+// protected the agent's reply and not the operator's own message, and Task 9 measured the result in
+// a real browser: `you` bubble at t+2 ms, gone at t+21 ms, `.cherr` null. These assertions are
+// about the half that was missing, plus the half that already worked, because the fix moved both
+// into one function and either could have broken the other.
+const U = (text, at) => ({ at: at || '2026-09-16T10:00:00Z', role: 'user', text });
+const A = (text, at) => ({ at: at || '2026-09-16T10:00:01Z', role: 'assistant', text });
+const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
+{
+  // The happy path: cmd_chat appended the user record before spawning, so the transcript has it.
+  // Nothing is added and nothing is reported — a fix that cried wolf on every successful turn
+  // would be worse than the bug.
+  const ok = reconcile([U('hello'), A('hi')], [U('hello')], '');
+  check('reconcile: a message the transcript already has is not re-added',
+    texts(ok) === 'user:hello|assistant:hi' && ok.missingUsers.length === 0, ok);
+
+  // The defect: the turn ended before the agent recorded anything.
+  const lost = reconcile([U('older'), A('older reply')], [U('what did the last run find?')], '');
+  check('reconcile: a message the transcript does NOT have is put back',
+    texts(lost) === 'user:older|assistant:older reply|user:what did the last run find?', lost);
+  check('reconcile: ...and is REPORTED missing, so the caller can say so',
+    lost.missingUsers.length === 1 && lost.missingUsers[0].text === 'what did the last run find?', lost.missingUsers);
+
+  // Multiset, not set. Asking the same thing twice is two messages; membership-matching would call
+  // the second one saved because the first one was, and delete it.
+  const twice = reconcile([U('ping')], [U('ping'), U('ping')], '');
+  check('reconcile: the same question asked twice is two messages, not one',
+    twice.missingUsers.length === 1 && texts(twice) === 'user:ping|user:ping', twice);
+
+  // Order: the question comes before the reply it produced, not after it.
+  const both = reconcile([], [U('q')], 'the answer');
+  check('reconcile: a salvaged reply is appended AFTER the question it answers',
+    texts(both) === 'user:q|assistant:the answer', both);
+
+  // The reply rules M1/R5 put in, unchanged by the move.
+  const saved = reconcile([U('q'), A('the answer, complete')], [], 'the answer');
+  check('reconcile: a reply the newest assistant turn already carries is not duplicated',
+    texts(saved) === 'user:q|assistant:the answer, complete' && saved.salvagedReply === false, saved);
+  const stale = reconcile([U('q'), A('a reply from an EARLIER turn')], [], 'the answer');
+  check('reconcile: a stale assistant turn does not count as this reply being saved',
+    stale.salvagedReply === true && texts(stale).endsWith('assistant:the answer'), stale);
+  check('reconcile: no salvage means no assistant turn is invented',
+    reconcile([U('q')], [], '').salvagedReply === false, reconcile([U('q')], [], ''));
+  // The catch path reconciles against the CURRENT turns, which already contain the pending
+  // message. It must match itself rather than being appended a second time.
+  const again = reconcile([U('q'), A('partial')], [U('q')], 'partial and then some');
+  check('reconcile: run against a list that already holds the pending message, it adds no duplicate',
+    again.missingUsers.length === 0 && again.turns.filter(t => t.role === 'user').length === 1, again);
 }
 
 process.exit(failed ? 1 : 0);

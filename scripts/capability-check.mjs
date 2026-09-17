@@ -855,4 +855,79 @@ check('the comma-separated string form of tools: is understood',
   check('[fuzz] the deny list only ever subtracts', denyAdded === null, denyAdded);
 }
 
+// ---- the validator and this panel must read `tools:` the same way (Task 9 fix round 1) --------
+//
+// agents/bin/mows-agent-meta decides whether an agent file is ACCEPTED; this module decides what
+// the dashboard SAYS about it. They are separate programs in separate languages and neither can
+// import the other, so "they agree" has to be asserted rather than commented — a validator and a
+// panel disagreeing about what a field means is exactly how the panel ends up describing a file
+// the runner reads differently.
+//
+// They disagreed twice until Task 9's fuzzing: only the string branch stripped, so
+// `tools: ["Bash "]` read as a shell tool in one and an unknown name in the other; and a list
+// carrying a non-string was coerced (`v.map(String)` / bare `list(v)`), which made one invent
+// "[object Object]" as a tool name and the other raise TypeError on `set(tools)`.
+//
+// THE ONE DIFFERENCE THAT REMAINS, and it is allowed on purpose rather than papered over: a value
+// that parses to ZERO names (`tools: ''`, `tools: ', ,'`, `tools: ['']`). This panel calls that
+// unreadable and rounds toward unrestricted, because "" is not a restriction anyone wrote on
+// purpose; the validator calls it the empty list. Neither reads a TOOL out of it, which is the
+// property that matters here, so the rule below permits exactly that and nothing wider. Whether
+// the validator should reject such a file outright is a separate question and nobody has measured
+// what the CLI does with it.
+{
+  const metaPath = new URL('agents/bin/mows-agent-meta', ROOT).pathname;
+  // Every shape either program can be handed, including the two that used to split them.
+  const TABLE = [
+    'Read, Bash', ' Read , Bash ', 'Bash', '', ', ,',
+    ['Read', 'Bash'], ['Read', 'Bash '], [' Read ', ' Bash '], [], [''], ['  '],
+    ['Read', { Bash: null }], ['Read', ['Bash']], [null], [3], [true],
+    42, true, { a: 1 }, null,
+  ];
+  // sys.dont_write_bytecode: importing a file with no .py extension still drops a __pycache__ into
+  // agents/bin, which preflight's junk-file gate rejects (it caught exactly that during Task 9).
+  const PY = `
+import importlib.util, importlib.machinery, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_loader('m', importlib.machinery.SourceFileLoader('m', sys.argv[1]))
+m = importlib.util.module_from_spec(spec)
+sys.argv = [sys.argv[0]]
+try:
+    spec.loader.exec_module(m)
+except SystemExit:
+    pass
+print(json.dumps([m.as_list(v) for v in json.loads(sys.stdin.read())]))
+`;
+  let py = null, pyErr = null;
+  try {
+    py = JSON.parse(execFileSync('python3', ['-c', PY, metaPath],
+      { encoding: 'utf8', input: JSON.stringify(TABLE) }));
+  } catch (e) { pyErr = String(e.message || e).split('\n').slice(0, 3).join(' | '); }
+  // Not nested in `if (py)`: an assertion that silently does not run is invisible to the coverage
+  // sweep, which can only reason about lines that were printed.
+  check('[agreement] the validator\'s own as_list is callable from here', py !== null, pyErr);
+
+  const jsParse = v => {
+    // What this module makes of the same value, expressed as the validator expresses it: the list
+    // of names, or null for "I could not read this".
+    const c = agentCapability({ tools: v }, {});
+    return c.malformedTools ? null : c.effective;
+  };
+  const rows = TABLE.map((v, i) => ({ v, js: jsParse(v), py: py ? py[i] : undefined }));
+  const disagree = rows.filter(r => {
+    if (r.py === undefined) return true;
+    // Refused by the panel: the validator must at least not read a TOOL out of it.
+    if (r.js === null) return !(r.py === null || r.py.length === 0);
+    // Read by the panel: the validator must read exactly the same names.
+    return JSON.stringify(r.js) !== JSON.stringify(r.py);
+  });
+  check('[agreement] the validator and this panel read every tools: shape the same way, or both refuse it',
+    disagree.length === 0, disagree.slice(0, 4));
+  // ...and the table has to reach BOTH branches, or the rule above is true of nothing.
+  const refused = rows.filter(r => r.js === null).length, read = rows.filter(r => Array.isArray(r.js)).length;
+  console.log(`  agreement: ${rows.length} tools: shapes — ${read} read by both, ${refused} refused by the panel`);
+  check('[agreement] the table exercises both the readable and the refused branch',
+    refused > 3 && read > 3, { refused, read });
+}
+
 process.exit(failed ? 1 : 0);

@@ -91,6 +91,32 @@ const MUTATIONS = [
   { id: 'X10', file: 'view', desc: 'protocol-relative refusal removed (L1)',
     find: '  if (/^[/\\\\]{2}/.test(h)) return false;\n', repl: '' },
 
+  // --- reconcile(): the optimistic view vs the saved transcript (Task 9 fix round 1) ---------
+  { id: 'R1', file: 'view', desc: 'the operator\'s own message is dropped again (the measured defect)',
+    find: '  let out = missingUsers.length ? [...turns, ...missingUsers] : turns;',
+    repl: '  let out = turns;' },
+  { id: 'R2', file: 'view', desc: 'a missing message is put back but never reported, so nothing is said',
+    find: '  return { turns: out, missingUsers, salvagedReply };',
+    repl: '  return { turns: out, missingUsers: [], salvagedReply };' },
+  { id: 'R3', file: 'view', desc: 'user messages matched as a SET, so the same question asked twice collapses',
+    find: '    if (at === -1) missingUsers.push(p); else pool.splice(at, 1);',
+    repl: '    if (at === -1) missingUsers.push(p);' },
+  { id: 'R4', file: 'view', desc: 'the salvaged reply appended BEFORE the question it answers',
+    find: '      out = [...out, { at: new Date().toISOString(), role: \'assistant\', text: salvage }];',
+    repl: '      out = [{ at: new Date().toISOString(), role: \'assistant\', text: salvage }, ...out];' },
+  { id: 'R5', file: 'view', desc: 'salvagedReply never reported, so the reply warning goes quiet',
+    find: '      salvagedReply = true;', repl: '      salvagedReply = false;' },
+  { id: 'R6', file: 'view', desc: 'a stale assistant turn counted as this reply being saved (position, not identity)',
+    find: "    if (!(newest && String(newest.text || '').includes(salvage))) {",
+    repl: '    if (!newest) {' },
+  { id: 'R7', file: 'view', desc: 'a pending message never matches the transcript, so a saved one is shown twice',
+    find: "    const at = pool.indexOf(String(p && p.text != null ? p.text : ''));",
+    repl: '    const at = -1;' },
+  { id: 'R8', file: 'view', desc: 'the reply is salvaged unconditionally, duplicating one the transcript has',
+    find: "    if (!(newest && String(newest.text || '').includes(salvage))) {",
+    repl: '    if (true) {' },
+  { id: 'R9', file: 'view', desc: 'an EMPTY reply buffer still salvages, inventing a blank assistant turn',
+    find: '  if (salvage) {', repl: '  if (salvage != null) {' },
   // --- the check's OWN detector -------------------------------------------------------------
   // A detector that has quietly stopped detecting would carry every hostile-input assertion
   // green, so it needs its own proof of failure as much as the code under test does.
