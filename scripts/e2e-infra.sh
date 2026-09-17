@@ -89,6 +89,22 @@ mkdir -p "$DH/.local/state/mows-agents/harness-reviewer"
 chk "api: /api/agents is json"          'curl -s http://127.0.0.1:3005/api/agents | jq -e ".agents | type == \"array\""'
 chk "api: agent detail is json"         'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".name == \"harness-reviewer\""'
 chk "api: chat is json"                 'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer/chat | jq -e ".turns | type == \"array\""'
+# The fourth built endpoint, and the SPA run view's sole data source. Spec §8 asks this suite to
+# assert "each /api/* endpoint returns valid JSON" and it asserted three of the four for the whole
+# branch (final review, H2). A run record is four files on disk, so the fixture is cheap: write the
+# one the endpoint actually reads (status.json) plus a stream.jsonl, since the handler's assistant-
+# text extraction is the half a status-only fixture would not exercise.
+RUNID=20260917-010203-99
+mkdir -p "$DH/.local/state/mows-agents/harness-reviewer/runs/$RUNID"
+cat > "$DH/.local/state/mows-agents/harness-reviewer/runs/$RUNID/status.json" <<JSON
+{"agent":"harness-reviewer","run_id":"$RUNID","state":"done","session_id":"s1","started_at":"2026-09-17T01:02:03Z","turns":2,"tool_calls":1,"cost_usd":0.12}
+JSON
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"fixture run text"}]}}' \
+  > "$DH/.local/state/mows-agents/harness-reviewer/runs/$RUNID/stream.jsonl"
+chk "api: per-run is json, with the run's assistant text" \
+  'curl -s "http://127.0.0.1:3005/api/agents/harness-reviewer/runs/$RUNID" | jq -e ".status.state == \"done\" and (.text | test(\"fixture run text\"))"'
+chk "api: an unparseable run id 404s rather than reaching the filesystem" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3005/api/agents/harness-reviewer/runs/..%2f..%2fetc")" = 404 ]'
 # The capability panel (Task 8), end to end: the fixture agent above has
 # tools: [Read, Glob, Grep, Bash] and disallowedTools: [Write, Edit, WebFetch, NotebookEdit], so
 # Write must be absent from `effective` AND hasBroad must be true. That pair is the whole point —
@@ -171,6 +187,46 @@ chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/history | g
 # stays on '/': the window-target gate lives in the base page script, served on every page.
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
+# /ui must carry the SAME pinned tab bar as every other page. It shipped without one for a whole
+# branch: the document was `<div id="app">` plus a <noscript>, so with JavaScript ON there was no
+# link out of the app to any sibling page and the only way back was Back or typing a URL (final
+# review, H1). Asserted link by link against the served document, because "a nav element exists"
+# would stay green if the bar rendered with the wrong hrefs or lost a tab.
+UIDOC=$(curl -s http://127.0.0.1:3005/ui)
+chk "dashboard: /ui carries the pinned tab bar" 'grep -q "<nav class=\"tabs\">" <<<"$UIDOC"'
+# BOTH bars, because they are not redundant: .tabs is display:none above 701px and .pnav (inside
+# the .navdup header) is display:none below it, so each is the ONLY navigation at its width.
+# Asserting one would leave the other width with no link out of the app and a green suite.
+chk "dashboard: /ui carries the desktop pill nav" 'grep -q "<nav class=\"pnav\">" <<<"$UIDOC"'
+for pair in /:Sessions /history:History /system:System /device:Device; do
+  href=${pair%:*}; label=${pair#*:}
+  # The trailing quote in the tab pattern is load-bearing: without it href="/" would also match
+  # href="/history" and the four assertions would collapse into one. The pill nav is matched by
+  # href AND label rather than by its class attribute, which is the empty string for an inactive
+  # tab and would make these assertions hostage to a cosmetic change in how that is emitted.
+  chk "dashboard: /ui tab bar links to $href" \
+    "grep -qF 'class=\"tb\" href=\"$href\"' <<<\"\$UIDOC\""
+  chk "dashboard: /ui pill nav links to $href" \
+    "grep -qF 'href=\"$href\">$label</a>' <<<\"\$UIDOC\""
+done
+# ...and the Agents tab stays INSIDE the app, so tapping the tab you are already on does not eject
+# you to the server-rendered twin you deliberately navigated away from.
+chk "dashboard: /ui Agents tab points back into the app" 'grep -q "class=\"tb on\" href=\"/ui/agents\"" <<<"$UIDOC"'
+# Spec §2 asks the <noscript> block to link to "the server-rendered equivalent"; it was a constant
+# pointing at / for the whole branch (final review, L3).
+chk "dashboard: /ui noscript names the route's own twin" \
+  '[ "$(curl -s http://127.0.0.1:3005/ui/agents/harness-reviewer | grep -c "is at <a href=\"/agents/harness-reviewer\">")" = 1 ]'
+chk "dashboard: ...and an unrecognised /ui path falls back to /agents, not to the path itself" \
+  '[ "$(curl -s "http://127.0.0.1:3005/ui/agents/%3Cimg%20src=x%3E" | grep -c "is at <a href=\"/agents\">")" = 1 ]'
+# THE OTHER HALF OF THE D3 CEILING. preflight 5b is a static file gate over ./app/ and cannot see
+# this document, which inlines the server-rendered dashboard's ENTIRE stylesheet -- a third again
+# on top of the gated total, no-cache, never 304-able because the nonce changes per response, and
+# growing every time somebody styles an unrelated page (final review, M2). Measured here because
+# this is the only place in the repo where a real GET /ui exists.
+UIGZ=$(curl -s http://127.0.0.1:3005/ui | gzip -9 -c | wc -c)
+echo "  served GET /ui: ${UIGZ}B gzipped of 20480B ceiling"
+chk "dashboard: served /ui document <= 20480B gzipped (spec D3, the half 5b cannot see)" \
+  '[ -n "$UIGZ" ] && [ "$UIGZ" -le 20480 ]'
 # The server-rendered pages must NOT prerender /ui links. Today no /ui href matches the
 # href_matches allowlist anyway, so the BEHAVIOUR would be right even with the exclusion removed —
 # which is exactly why the exclusion is written down and pinned here rather than left implicit.

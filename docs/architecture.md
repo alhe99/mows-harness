@@ -309,6 +309,31 @@ ones: `navigate()` in `app/main.mjs` wraps the `history.pushState` in `document.
 and the tab bar keeps its `view-transition-name: tabs`, so the pinned-bar crossfade survives.
 A browser without `startViewTransition` takes the `else` branch and navigates without animation.
 
+That bar is **the same bar**, not a copy of it: `pageChrome()` in `lite.mjs` builds the header,
+the tab bar and the terminal FAB once, and both `page()` (every server-rendered route) and
+`uiShellHtml()` (the SPA) call it. One parameter differs — the Agents tab points at `/ui/agents`
+from inside the app and at `/agents` from outside, so tapping the tab you are on does not eject
+you to the twin you navigated away from. Every other tab is an ordinary cross-document
+navigation, because `main.mjs`'s click handler only intercepts `a[href^="/ui"]`.
+
+This is worth spelling out because **for the whole of this branch there was no bar on `/ui` at
+all.** The shell was `<div id="app">` and a `<noscript>`, so with JavaScript on there was no link
+from the app to `/`, `/history`, `/system`, `/device` or `/agents` — the way back was the Back
+button or typing a URL. `scripts/e2e-infra.sh` now asserts both navs link to all four siblings,
+by href and by label: `.tabs` is `display:none` above 701px and `.pnav` is hidden below it, so
+each is the *only* navigation at its width and asserting one would leave the other green and
+unnavigable. One consequence to know before touching the chat view's CSS: the composer and the
+jump button are `position:sticky`, and a sticky element sticks to the scrollport rather than to
+the end of the document, so `body`'s bottom padding does not lift them clear of a fixed bar —
+they carry their own clearance, in a `max()` that collapses when the on-screen keyboard is up.
+
+One deliberate difference from the server-rendered pages: those hide their `<h1>` above 701px
+(`body>h1{display:none}`, because the desktop header replaces it), and the SPA's does **not** —
+its `<h1>` is inside `#app`, so the selector does not reach it, and that is left alone rather than
+extended. The SPA's `<h1>` is not a title, it is the back link: `← <name>` on a run view goes to
+that agent's page and nothing else on the page does. Hiding it to match would cost the only way
+back from a run view on a desktop, so a slightly duplicated heading is the cheaper trade.
+
 **Lost, accepted, and written down here rather than discovered later:**
 
 - **bfcache.** Back and forward are the client's job now. `app/main.mjs` keeps a
@@ -317,10 +342,14 @@ A browser without `startViewTransition` takes the `else` branch and navigates wi
   scroll position and the `popstate` handler does not, so scroll → Back → Forward → Back lands
   on the offset from the last click-navigation rather than the one you just set. The `TODO` in
   `app/main.mjs` carries the fix and the reason it is not a one-liner.
-- **The no-JS fallback.** `GET /ui/*` serves a `<noscript>` block pointing at `/`, and that is
-  the whole fallback — the server-rendered twin still exists for now (spec §6), so the link
-  goes somewhere real. When a twin is retired, that `<noscript>` stops being a fallback and
-  becomes a dead end; retiring a twin means revisiting this block in the same change.
+- **The no-JS fallback.** `GET /ui/*` serves a `<noscript>` block naming **that route's own**
+  server-rendered twin — `/agents/<name>` from `/ui/agents/<name>`, not a constant `/` — and that
+  is the whole fallback. The mapping is an allow-list (`uiTwinPath`) rather than string surgery on
+  the path: the value goes into an `href`, and the SPA's router falls through to the agents list
+  for any unmatched path, so anything unrecognised resolves to `/agents`, which is the twin of
+  what the app will actually render. When a twin is retired, that `<noscript>` stops being a
+  fallback and becomes a dead end; retiring a twin means revisiting `uiTwinPath` in the same
+  change, and the per-route link is what makes that obvious rather than easy to miss.
 - **Speculation Rules, with nothing yet in their place.** Spec §2 called for prefetch on hover
   to replace them for app routes. **It was specified and not built** — there is no prefetch,
   preload or hover handler anywhere in `infra/dashboard/app/`. A first tap on `/ui/agents/<name>`
@@ -329,15 +358,34 @@ A browser without `startViewTransition` takes the `else` branch and navigates wi
   replacement at all, and the only one with a straightforward path back.
 
 **The ceilings that replaced them.** A framework-free page needs no budget; a client-rendered one
-does, or it grows back into the bundle `lite.mjs` was written to delete. Four gates, all in
-`scripts/preflight.sh`, all blocking:
+does, or it grows back into the bundle `lite.mjs` was written to delete. Five gates, all blocking:
 
-| Gate | What it holds | Measured now |
-|---|---|---|
-| client-asset ceiling (5b) | every `.mjs`/`.css` under `app/`, gzip -9, summed | 45,136 B of 76,800 B |
-| vendored-module hashes (5b) | `app/vendor/SHA256SUMS`, checked with `sha256sum -c` | 4 modules pinned |
-| chat-view XSS gate (5c) | `scripts/chat-view-check.mjs` over the renderer | 91 assertions |
-| capability honesty gate (5d) | `scripts/capability-check.mjs` over the panel | 170 assertions |
+| Gate | Where | What it holds | Measured now |
+|---|---|---|---|
+| client-asset ceiling | preflight 5b | every `.mjs`/`.css` under `app/`, gzip -9, summed | 45,494 B of 76,800 B |
+| **served-document ceiling** | `e2e-infra.sh` | the real `GET /ui` response, gzipped | **~16,100 B of 20,480 B** |
+| vendored-module hashes | preflight 5b | `app/vendor/SHA256SUMS`, checked with `sha256sum -c` | 4 modules pinned |
+| chat-view XSS gate | preflight 5c | `scripts/chat-view-check.mjs` over the renderer | 91 assertions |
+| capability honesty gate | preflight 5d | `scripts/capability-check.mjs` over the panel | 170 assertions |
+
+**It takes both ceilings to cover the client, and for most of this branch only the first existed
+and `lite.mjs` claimed it covered everything.** 5b is a static file gate and cannot see the shell,
+which inlines the whole `CSS` constant — the *server-rendered* dashboard's entire stylesheet,
+fleet rows and history and terminal included, of which `/ui` uses a fraction. That is roughly a
+third again on top of the gated total; it is re-sent in full on every hard load (the shell is
+`no-cache` and its nonce changes per response, so it can never 304); and it grows every time
+somebody styles an unrelated server-rendered page, which is precisely the direction the ceiling
+exists to police and precisely the one the static gate is blind to. Splitting the stylesheet so
+`/ui` ships only what it uses is the real fix and is not done. Until then the served document is
+measured rather than assumed — proved able to fail by planting ~40 KB of extra rules in the `CSS`
+constant, which takes the response to 27,054 B gzipped and turns the assertion red. (The figure
+is written approximate because it is not byte-stable: gzip output varies by a few bytes between
+runs, and four consecutive runs measured 16,099–16,105. The ceiling is what is exact.)
+
+The served-document ceiling lives in `e2e-infra.sh` rather than preflight because it needs a
+running dashboard to `GET`, and preflight is a static gate that must not boot a server. That makes
+it weaker than 5b — it runs on the path-filtered push job and nightly, not on every preflight —
+and that is the trade, stated rather than glossed.
 
 5b *fails* rather than skips when `infra/dashboard/app` is absent, and 5c/5d fail rather than
 skip when Node or PyYAML is missing — a gate that quietly skips itself reports green while
@@ -374,11 +422,23 @@ agent can do" is the summary that undoes it. Field by field, with the gaps it de
   it, which is what the gate asserts, but which one matches the CLI is unmeasured.
 - **Prerender *activation*.** Chrome reports `PrerenderingDisabledByDevTools` whenever CDP is
   attached, so automation can only see the prerender request, never the activation.
+- **The tab bar's geometry on a real phone.** `e2e-infra.sh` asserts both navs are *served* with
+  the right links; that the composer clears the fixed bar, and that the `max()` collapses
+  correctly when the keyboard is up, is arithmetic against the bar's documented 59 px + safe-area
+  height and has not been seen on a device. Same gap as the on-screen keyboard above, and the
+  same answer: a physical phone.
 
 The scripted browser evidence that *does* exist, including the WebKit runs, is in
 `docs/qa/probes/` — SKIP-gated on a Playwright install, with the install command in its README
 and in the skip output. HTTP/2 against a live host is not in that set; it is the `MOWS_HOST`
 assertion below.
+
+**What was specified and never built** is a different list and is kept with the spec, not here:
+see the ADDENDUM at the end of
+[`docs/superpowers/specs/2026-09-16-dashboard-spa-design.md`](superpowers/specs/2026-09-16-dashboard-spa-design.md)
+— prefetch, `/api/fleet` and `/api/system`, the chat view's tool rows and thinking indicator, and
+the store-backed transcript restore. The plan's own self-review recorded several of those as
+covered, which is why the list lives beside the requirements it belongs to.
 
 #### Deploying this change — the dashboard is no longer one file
 
@@ -461,10 +521,60 @@ MOWS_HOST=<your dashboard hostname> ./scripts/e2e-infra
 ```
 
 A pass prints the negotiated version and `PASS: http2 negotiated on <host> (spec §3)`, and the
-suite ends `RESULT: 74 passed, 0 failed`. A fail prints `negotiated HTTP version on <host>: 1.1`
+suite ends `RESULT: 90 passed, 0 failed`. A fail prints `negotiated HTTP version on <host>: 1.1`
 (or `<none>` if the host was unreachable, which is a failure for a different reason) and the
-suite ends 73/1 — non-zero exit either way. Without `MOWS_HOST` the suite runs 73 assertions and
+suite ends 89/1 — non-zero exit either way. Without `MOWS_HOST` the suite runs 89 assertions and
 prints `SKIP: http2 check` instead. **Run against the reference box's live host on 2026-09-17:
-HTTP/2 negotiated, 74 passed, 0 failed.** The hostname is deliberately not written down here —
-`preflight.sh` treats a real domain as a leaked identifier, which is why the suite takes it from
-the environment rather than from a file in the repo.
+HTTP/2 negotiated, 90 passed, 0 failed.**
+
+**And here is the tension, stated rather than glossed, because it has no cheap answer.** The spec
+singles out HTTP/2 regression as the *silent* risk — over HTTP/1.1 the browser caps SSE at six
+connections per origin across all tabs, so the seventh tab simply never receives a token and
+looks like a hung agent — and asserts it in `e2e-infra.sh` for exactly that reason. But the
+hostname cannot live in this repository: `preflight.sh` treats a real domain as a leaked
+identifier and blocks the publish, which is why the suite reads it from the environment. So the
+one gate against the silent risk was, for the whole branch, guarded by a maintainer remembering
+to type a variable — it ran exactly once, by hand, in Task 10.
+
+`.github/workflows/e2e-infra.yml` now passes `MOWS_HOST: ${{ vars.MOWS_HOST }}` — a repository
+**variable**, which is not a file and never enters the tree. Set it once in the repo settings and
+the nightly job covers the assertion; leave it unset, which is every fork and every clone, and it
+expands to the empty string and the check SKIPs loudly exactly as before. That closes the gap for
+whoever sets it and closes nothing for anyone who does not, which is the honest description: the
+tension between "assert it in CI" and "never commit the domain" is not resolved, only made
+one setting away from resolved.
+
+#### Known and unguarded — read before raising a budget or adding a caller
+
+These are not bugs found and left; they are properties that hold today because of a number
+somewhere else, and the number is the only thing holding them. Each would become a real defect the
+moment somebody changed the thing it rests on, and none of them has a gate.
+
+- **Two chat turns on one agent run concurrently, with no lock.** `mows-agent chat` refuses to
+  start while a *run* is live, and says why — *"resuming a live session would interleave with
+  it"* — and then permits a second *chat* on the same `--resume <session>` with no `flock`
+  anywhere. `POST /a/agent-chat` spawns detached and 303s immediately without serialising. It is
+  reachable without doing anything unusual: two browser tabs (the composer's disable is
+  per-component state), two operators, or the server-rendered `/agents/<name>` page open beside a
+  `/ui` tab. Both children append to the same `chat.jsonl`, and on the dashboard side the second
+  turn's first delta resets that agent's replay buffer, so a reconnect during *either* turn
+  recovers nothing. **Deliberately not fixed here:** the missing guard is verified, the
+  consequence of two genuinely racing turns is reasoned and was never driven with real money, and
+  a lock written against a reasoned consequence is how you ship the wrong lock. Documented so the
+  next person starts from "this is known" rather than rediscovering it.
+- **The chat replay buffer is bounded by a budget, not by code.** `chatBuf` is append-only with no
+  cap and no eviction; what keeps it small is that `mows-agent` caps a chat turn at `$0.25` and
+  six turns. Raise either and this becomes unbounded per in-flight turn, with nothing to notice.
+- **`/ui/<anything>` renders the agents list with a 200.** The SPA router falls through to
+  `AgentsList` for every unmatched path, which is better than a blank page and worse than a
+  refusal for `/ui/system` and `/ui/fleet` — paths spec §6 names as future routes. A user who
+  types one gets a different page and no indication anything is wrong.
+- **The asset content hash is CRC32.** Fine as a cache key, and the spec only asks for "a content
+  hash" — but assets are served `immutable, max-age=31536000`, so a CRC32 collision between two
+  *versions of the same file* would pin a stale body in every client cache for a year with no
+  recovery short of renaming the file. Negligible per deploy; unbounded and undiagnosable if it
+  ever happens.
+- **The vendored-hash gate covers the files `SHA256SUMS` lists.** A fifth module dropped into
+  `app/vendor/` is not pinned by it. Preflight's bidirectional manifest diff means such a file
+  cannot arrive without a visible `scripts/manifest.txt` line, so nothing sneaks in — but "each
+  vendored file is pinned" is held up by the manifest, not by the hash check.

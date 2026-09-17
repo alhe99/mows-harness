@@ -30,7 +30,21 @@
 // does not hold (2026-09-16). It exists because a streaming chat transcript and a
 // live run list are state a page reload destroys. It is still zero-DEPENDENCY: four
 // vendored ESM modules under ./app/vendor/ pinned by SHA256SUMS, no npm install, no
-// bundler, no build step, and preflight caps the whole client at 76,800 B gzipped.
+// bundler, no build step.
+//
+// TWO CEILINGS, and it takes both to cover the client. This used to read "preflight caps the
+// whole client at 76,800 B gzipped", which was not true and overstated by a third (final
+// review, M2):
+//   preflight.sh 5b   every .mjs/.css under ./app/, gzip -9, summed   <= 76,800 B
+//   e2e-infra.sh      the SERVED GET /ui document, gzipped            <= 20,480 B
+// The second exists because 5b is a static file gate and cannot see the shell, which inlines
+// the whole CSS constant below -- the SERVER-RENDERED dashboard's entire stylesheet, fleet rows
+// and history and terminal included, of which /ui uses a fraction. That is a third again on top
+// of the gated total, it is re-sent in full on every hard load (the shell is no-cache and its
+// nonce changes per response, so it can never 304), and it grows every time somebody styles an
+// unrelated server-rendered page -- the one direction D3 exists to police, and the one the
+// static gate is blind to. Splitting the CSS is the real fix and is not this branch's; until
+// then the served document is measured rather than assumed.
 // DEPLOY NOTE: this file is no longer self-contained. It imports ./chat-stream.mjs
 // and ./capability.mjs at load, and serves ./app/ at runtime — install all of them
 // together or the unit will not start (missing sibling) or /ui will answer 200 with
@@ -1930,6 +1944,21 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .cap-unknown{border-left:3px solid var(--dim);padding-left:10px;color:var(--mut)}
 .auth{margin:6px 0;padding:0;list-style:none}.auth li{margin:4px 0}
 .policy{margin:6px 0 0 18px}.policy li{margin:4px 0}
+/* /ui carries the same fixed .tabs bar as every other page (final review, H1), and a STICKY
+   element sticks to the scrollport, not to the end of the document — so body's bottom padding,
+   which is what keeps ordinary content clear of the bar, does not move these two. They have to
+   clear it themselves or the composer sits behind the bar on every phone.
+   70px is .termfab's own clearance, this file's one number for "floating thing above the tab
+   bar" (.tabs box height is 59px + safe area; see its comment in the standalone block below).
+   max() rather than a sum, and this is the part worth reading: when the on-screen keyboard is up,
+   --kb already exceeds the bar's height AND the bar is behind the keyboard (WebKit, which ignores
+   interactive-widget=resizes-content) or above it (Chrome, where --kb is ~0 and the bar is the
+   thing to clear). Adding the clearance on top of --kb would leave a 70px dead gap between the
+   composer and the keyboard in the one engine the --kb handler exists for.
+   Scoped below 701px only: .tabs is display:none above it, so there is nothing to clear. */
+@media(max-width:700px){
+.uiapp .chat .chatf{bottom:calc(env(safe-area-inset-bottom,0px) + max(var(--kb,0px),70px))}
+.uiapp .jump{bottom:calc(70px + max(var(--kb,0px),70px))}}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2070,19 +2099,35 @@ async function mdView(req, res, url) {
   send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>`, '', '', false, null, req.headers.host));
 }
 
-function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
-  // desktop header (mock 2026-08-29): logo+title/subtitle, centered pill nav, "+ new
-  // session" button; .navdup hides the whole thing <700px where the mobile <h1> + tab
-  // bar rule instead (see body>h1 in CSS). liveN: live-session count badge — only pages
-  // that already computed tmuxLive pass it; fleet.js keeps it fresh (id=pnav-live) on
-  // pages that carry the island. host: real request Host header — SPEC text mapping
-  // ("connected · <host>"), never a hardcoded/placeholder address.
+// ---------- page chrome, shared by BOTH document shapes ----------
+//
+// The desktop header, the pinned bottom tab bar and the terminal FAB, built once and used by
+// page() below (every server-rendered route) AND by uiShellHtml() (the SPA at /ui).
+//
+// Extracted rather than copied, and this is the whole point of it: /ui shipped for an entire
+// branch with NO tab bar at all. Spec §2 lists the pinned bar under "Kept"; what actually shipped
+// was a document containing `<div id="app">` and a `<noscript>`, so with JavaScript on there was
+// no link out of the app to /, /history, /system, /device or /agents — the only way back was the
+// Back button or typing a URL (final review, H1). A second bar written to fix that is how the two
+// disagree six months from now, so there is one bar and one place to change it.
+//
+// agentsHref is the one thing that legitimately differs. During the §6 migration BOTH /agents and
+// /ui/agents are real pages: from a server-rendered page the Agents tab must go to the twin, and
+// from inside the SPA it must keep you in the SPA rather than ejecting you to the twin you just
+// navigated away from. One parameter, defaulting to the server-rendered answer.
+//
+// desktop header (mock 2026-08-29): logo+title/subtitle, centered pill nav, "+ new session"
+// button; .navdup hides the whole thing <700px where the mobile <h1> + tab bar rule instead (see
+// body>h1 in CSS). liveN: live-session count badge — only pages that already computed tmuxLive
+// pass it; fleet.js keeps it fresh (id=pnav-live) on pages that carry the island. host: real
+// request Host header — SPEC text mapping ("connected · <host>"), never a hardcoded address.
+function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/agents') {
   const pnav = `<nav class="pnav">
 <a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
 <a class="${tab === 'system' ? 'on' : ''}" href="/system">System</a>
 <a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a>
-<a class="${tab === 'agents' ? 'on' : ''}" href="/agents">Agents</a></nav>`;
+<a class="${tab === 'agents' ? 'on' : ''}" href="${agentsHref}">Agents</a></nav>`;
   const hdr = `<header class="hdr navdup">
 <div class="hdl"><span class="hlogo" aria-hidden="true">&gt;_</span><div class="hcol"><div class="htitle">mows control</div><div class="hsub">Connected · ${esc(host || os.hostname())}</div></div></div>
 ${pnav}
@@ -2092,12 +2137,17 @@ ${pnav}
 <a class="tb${tab === 'history' ? ' on' : ''}" href="/history"><span class="ti">${ICO.history}</span>History</a>
 <a class="tb${tab === 'system' ? ' on' : ''}" href="/system"><span class="ti">${ICO.activity}</span>System</a>
 <a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
-<a class="tb${tab === 'agents' ? ' on' : ''}" href="/agents"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
+<a class="tb${tab === 'agents' ? ' on' : ''}" href="${agentsHref}"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
   // terminal is an ACTION (opens the ttyd session picker), not a content page — kept as a
   // persistent floating utility button (every tab, every width) instead of a nav tab of its
   // own (gap #5: nav read sessions·history·system·device, exactly 4, until the Agents tab
   // (2026-09-15) made it five content tabs — terminal is still a FAB, never a 6th).
   const termFab = `<a class="termfab" href="${termHref('menu', '')}" title="open terminal" aria-label="open terminal">${ICO.terminal}</a>`;
+  return { hdr, tabs, termFab };
+}
+
+function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
+  const { hdr, tabs, termFab } = pageChrome(tab, liveN, host);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
@@ -2390,7 +2440,15 @@ function fleetEventPayload(fleet) {
   return fleet.map(f => ({ sid8: fleetKey(f), name: f.name, label: f.label || '', proj: f.proj,
                             state: f.state, rel: f.mt, snippet: f.snippet }));
 }
-const SSE_MAX = 8; // this box already runs hot (spec §3) — 9th concurrent client gets 503
+// this box already runs hot (spec §3). PER ENDPOINT, not per box, and the difference matters to
+// anyone tuning it: two independent counters read this constant -- sseClients for /events (the
+// server-rendered pages' feed) and streamClients.size for /stream (the SPA's) -- so the box admits
+// 8 of each, 16 in total, and the 9th client of EITHER kind gets a 503. That split is ruling D4
+// and is deliberate: during the §6 migration both navigation models run at once, and a shared
+// counter would let a few server-rendered tabs lock the SPA out of its own stream. The comment
+// used to say "9th concurrent client gets 503" full stop, which was true when there was one
+// counter and false from Task 3 onward (final review, L2).
+const SSE_MAX = 8;
 let sseClients = 0;
 async function eventsView(req, res) {
   if (sseClients >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many /events clients'); }
@@ -2431,9 +2489,20 @@ async function eventsView(req, res) {
 // costs one connection no matter how many views it shows.
 const streamClients = new Set(); // {res, topics:Set, id}
 let streamSeq = 0;
-// Ring buffer of the IN-FLIGHT turn only, per agent. A completed turn is already in chat.jsonl
+// Replay buffer for the IN-FLIGHT turn only, per agent. A completed turn is already in chat.jsonl
 // and the client refetches it from /api/agents/<name>/chat, so buffering it twice would be
 // memory spent on data we already have.
+//
+// NOT a ring buffer, which is what this comment used to call it (final review, L1). It is an
+// append-only array with no cap and no eviction: `b.deltas.push(...)` below runs once per delta
+// and nothing ever trims it. Spec §3's "capped at the turn's own token count" is satisfied, but
+// by ARITHMETIC rather than by code -- a chat turn is bounded to $0.25 and six turns by
+// mows-agent, so the array cannot grow past what that buys. Calling it a ring is what stops the
+// next reader going to look for the cap and finding there isn't one. Two consequences follow from
+// the same fact and are worth knowing before anyone raises those budget numbers: the entry lives
+// for the life of the process if a turn never produces a chatEnd for its own turn number, and a
+// SECOND concurrent turn on one agent resets the buffer (see the turn check below), discarding the
+// first turn's replay data -- see "Known and unguarded" in docs/architecture.md.
 const chatBuf = new Map(); // agent -> {turn, deltas:[{seq,text}]}
 function streamWrite(c, ev, data, id) {
   try {
@@ -3409,7 +3478,26 @@ const uiCsp = nonce => [
   "frame-ancestors 'none'",
   "object-src 'none'",
 ].join('; ');
-function uiShellHtml(host, nonce) {
+// The server-rendered twin of a /ui path, for the <noscript> block. Spec §2 asks for a link to
+// "the server-rendered equivalent", and the block used to be a constant pointing at `/` — from
+// /ui/agents/<name> the equivalent is /agents/<name>, not the fleet page (final review, L3).
+//
+// Allow-listed rather than computed by string surgery, deliberately: this value is interpolated
+// into HTML, and the SPA's router falls through to the agents list for ANY unmatched path
+// (/ui/system renders the list today), so a naive '/' + p.slice(4) would both hand an attacker
+// the shape of the output and promise twins for routes that do not exist. Anything unrecognised
+// gets /agents, which is the twin of what the SPA will actually render. AGENT_RE and RUN_RE are
+// the same patterns the API and the server-rendered routes validate with — reused, not restated,
+// so a twin link can never name a shape those routes would refuse, and nothing that is not
+// [a-z0-9-] or a run id can reach the attribute in the first place.
+function uiTwinPath(p) {
+  let m;
+  if ((m = p.match(/^\/ui\/agents\/([^/]+)\/([^/]+)\/?$/)) && AGENT_RE.test(m[1]) && RUN_RE.test(m[2]))
+    return `/agents/${m[1]}/${m[2]}`;
+  if ((m = p.match(/^\/ui\/agents\/([^/]+)\/?$/)) && AGENT_RE.test(m[1])) return `/agents/${m[1]}`;
+  return '/agents';
+}
+function uiShellHtml(host, nonce, twin = '/agents') {
   const imports = {
     preact: uiAssetUrlFor('vendor/preact.mjs'),
     'preact/hooks': uiAssetUrlFor('vendor/hooks.mjs'),
@@ -3429,6 +3517,12 @@ function uiShellHtml(host, nonce) {
     const unhashed = '/ui/assets/' + v.rel, hashed = '/ui/assets/' + k;
     if (unhashed !== hashed) imports[unhashed] = hashed;
   }
+  // Same chrome as every other page, from the same builder (see pageChrome): the header, the
+  // pinned tab bar and the terminal FAB. The Agents tab points BACK INTO the app rather than at
+  // the server-rendered twin, so tapping the tab you are already on does not eject you from it.
+  // Every other tab is an ordinary cross-document navigation — main.mjs's click handler only
+  // intercepts a[href^="/ui"] — which is exactly right while both models ship (spec §6).
+  const { hdr, tabs, termFab } = pageChrome('agents', null, host, '/ui/agents');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
@@ -3436,17 +3530,18 @@ function uiShellHtml(host, nonce) {
 <title>mows control</title>
 <style nonce="${nonce}">${CSS}</style>
 <script type="importmap" nonce="${nonce}">${JSON.stringify({ imports })}</script>
-</head><body>
+</head><body class="uiapp">${hdr}${termFab}
 <div id="app"></div>
-<noscript><p>This view needs JavaScript. The server-rendered dashboard is at <a href="/">/</a>.</p></noscript>
+<noscript><p>This view needs JavaScript. The server-rendered version of this page is at <a href="${esc(twin)}">${esc(twin)}</a>.</p></noscript>
+${tabs}
 <script type="module" nonce="${nonce}" src="${uiAssetUrlFor('main.mjs')}"></script>
 </body></html>`;
 }
-async function uiView(req, res) {
+async function uiView(req, res, p) {
   if (!uiAssets.size) await loadUiAssets();
   // base64url, not hex: a nonce is a CSP base64-value and must survive the header verbatim.
   const nonce = randomBytes(16).toString('base64url');
-  send(req, res, 200, uiShellHtml(req.headers.host || '', nonce), 'text/html; charset=utf-8',
+  send(req, res, 200, uiShellHtml(req.headers.host || '', nonce, uiTwinPath(p)), 'text/html; charset=utf-8',
     { 'content-security-policy': uiCsp(nonce) });
 }
 async function uiAssetView(req, res, name) {
@@ -3469,7 +3564,7 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
     if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
-    if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res);
+    if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res, p);
     if (p === '/events') return await eventsView(req, res);
     if (p === '/stream') return await streamView(req, res);
     // test-only delta injection, for scripts/stream-replay-check.mjs. Absent unless explicitly

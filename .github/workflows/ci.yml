@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - run: ./scripts/preflight.sh
-      # 126 assertions, ~45s, no container and no network. preflight does NOT run this suite and
+      # 145 assertions, ~45s, no container and no network. preflight does NOT run this suite and
       # nor did CI, so until now the whole agents layer was gated on nothing at all. Best
       # coverage-per-second available here; unconditional, and in this job rather than its own
       # because it needs nothing the steps above have not already installed.

@@ -2,6 +2,13 @@
 // rather than opening their own connection.
 let es = null, wanted = new Set();
 const subs = new Map(); // event name -> Set<fn>
+// UNWIRED, and saying so here is the point. Spec §2 names a store-backed transcript as the
+// compensation for losing bfcache -- "the chat view restores its transcript from the store, not
+// the network" -- and that was never built (see the ADDENDUM in the design spec). Nothing imports
+// this object and nothing writes it; every view refetches on mount, so Back into a chat costs a
+// round trip. Left in place rather than deleted because wiring it is the open work, but a `chat:
+// []` slot in a module called `store` reads like the caching is there, which is how a reader
+// checking §2 concludes a requirement shipped when it did not (final review, M1).
 export const state = { agents: [], agent: null, chat: [], streaming: null };
 export function subscribe(ev, fn) {
   if (!subs.has(ev)) subs.set(ev, new Set());

@@ -44,5 +44,23 @@ jobs:
       # scripts/e2e-infra does its own `docker run` and installs everything it needs inside the
       # container, so there is nothing to set up on the runner beyond Docker, preinstalled on
       # ubuntu-24.04. Exits non-zero on any failed assertion (`[ "$FAIL" -eq 0 ]` at its tail),
-      # which is only a usable gate because the suite is now fully green -- 51 passed, 0 failed.
+      # which is only a usable gate because the suite is now fully green -- 90 passed, 0 failed
+      # (89 here unless MOWS_HOST is set; see below).
+      #
+      # MOWS_HOST is the one assertion in this suite that cannot run inside the container: HTTP/2
+      # needs a live TLS endpoint, and this container has neither DNS for one nor a certificate.
+      # The spec singles that regression out as SILENT (over HTTP/1.1 the browser caps SSE at six
+      # connections per origin ACROSS ALL TABS; the seventh tab simply never receives a token and
+      # looks like a hung agent), and until now its only execution in this branch's life was one
+      # maintainer typing the variable by hand -- a gate against a silent risk, itself guarded by
+      # somebody remembering (final review, M5).
+      #
+      # `vars.MOWS_HOST` is a repository VARIABLE, not a file: preflight's forbidden-string gate
+      # treats a real domain as a leaked identifier, so the hostname cannot live in this tree and
+      # the suite reads it from the environment for exactly that reason. Unset -- which is every
+      # fork, every clone and this repo until somebody sets it -- expands to the empty string and
+      # the assertion SKIPs loudly, precisely as it does today. Nothing about that tension is
+      # solved by this line; it is documented in docs/architecture.md, and this is the hook.
       - run: ./scripts/e2e-infra
+        env:
+          MOWS_HOST: ${{ vars.MOWS_HOST }}

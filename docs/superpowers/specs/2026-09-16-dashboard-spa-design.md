@@ -295,3 +295,37 @@ only at step 4. Reverting is deleting a redirect.
   features, not a framework". If this design disappoints, the honest fallback is reverting to
   server-rendered pages plus the §3 stream for chat alone, which is approach A from the
   discussion and remains available because of D6.
+
+---
+
+## ADDENDUM 2026-09-17 — what this spec asked for and the branch did NOT build
+
+**Read this before believing any requirement above shipped.** `layer6-agent-chat` implemented most
+of this document and left the items below unbuilt. Nobody decided to defer them: the plan's own
+self-review recorded §1, §2 and §4 as covered because it checked that the tasks agreed with each
+other and never re-read this document's requirement list. The final whole-branch review found them
+by walking §1–§8 against the tree, and the owner's ruling was to ship an honest list rather than
+build four features inside a fix round.
+
+So this is the list. Each line says what the spec asked for, and what is there instead.
+
+| § | Specified | What exists instead |
+|---|---|---|
+| 1 | `GET /api/fleet` and `GET /api/system` | Not built. `apiView` 404s any path whose first segment is not `agents`, so four of the six specified endpoints exist. Nothing calls the missing two, because §6 step 3 is also unbuilt — the two gaps mask each other. |
+| 2 | "Prefetch on hover replaces Speculation Rules for app routes" | Not built. There is no prefetch, preload or hover handler anywhere in `infra/dashboard/app/`. A first tap on a detail route pays its `/api` round trip; the multiplexed `/stream` keeps the *list* live but pre-warms nothing. |
+| 2 | "the chat view restores its transcript from the store, not the network" | Not built. `store.mjs` exports a `state` object with a `chat: []` slot that **nothing imports and nothing writes**; every view refetches on mount, so Back into a chat costs a round trip. The named compensation for losing bfcache does not exist. |
+| 4 | Tool rows: a tool call renders as a collapsed row with name + duration, expanding on tap; long-running tools show elapsed time | Not built, at either end. The chat bubble renders one text blob, and `mows-agent`'s streaming loop extracts only `.event.delta.text`, so the tool data never reaches the browser to be rendered. The "40 s gap looks like a hang" this requirement exists to prevent is the current behaviour. |
+| 4 | Thinking: `thinking_delta` drives a live indicator with its `estimated_tokens` | Not built. `thinking` and `estimated_tokens` appear nowhere in the repository. What ships is a static `Thinking…` string, shown while a turn is in flight and no delta has arrived. |
+| 4 | "a 'jump to latest' affordance **with a count**" | The button ships; the count does not. |
+| 6 | Step 3: `/ui/` fleet and `/ui/system` routes | Not built. Worse than absent: the SPA router falls through to the agents list for any unmatched path, so `GET /ui/system` answers **200** and renders the agents list with no indication anything is wrong. |
+| 1 | "`preflight.sh` asserts **each** vendored file's SHA-256" | `sha256sum -c SHA256SUMS` verifies the four listed files and says nothing about a fifth dropped into `app/vendor/`. The spec's *property* still holds, by a different mechanism — preflight's bidirectional manifest diff means no file can arrive without a visible `scripts/manifest.txt` line — but a new vendored dependency ships unpinned. |
+| 8 | The journey "kill[s] the connection mid-stream" | `docs/qa/journeys/agent-chat.md` step 9 reloads instead, which re-mounts the page and sends no `Last-Event-ID`, exercising neither the replay path nor the topic gate. **The requirement is met, elsewhere:** `docs/qa/probes/probes.mjs` cuts the socket through `proxy.mjs` and asserts the pre-cut text survives. The artefact this spec names tests something else under a label that reads like these words. |
+
+**Two of these are ranked by the review as worth building next, in this order:** prefetch (§2),
+because it is the one loss with no replacement at all and is a small change; and tool rows (§4),
+because a tool call being invisible is the chat view's headline risk and the reason the
+requirement was written.
+
+**Everything else the branch did ship is recorded honestly elsewhere** — `docs/architecture.md`'s
+"Two navigation models" section names the bfcache scroll-restore gap, the `<noscript>` dead end
+that twin retirement will create, both halves of the D3 ceiling, and what is not verified.
