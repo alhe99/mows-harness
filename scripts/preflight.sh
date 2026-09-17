@@ -184,6 +184,72 @@ else
   bad "scripts/capability-check.mjs is missing — the capability panel's honesty gate did NOT run"
 fi
 
+# 5e. e2e assertion lint — three greps against the suites' own `chk` lines.
+#
+# Why this exists: two assertions in e2e-infra.sh were born red and stayed red through 57
+# commits, a task review and a fix round, and a third passed unconditionally for just as long.
+# Nobody was careless — the branch's rule is that every check must be OBSERVED to fail before it
+# counts, and that rule was applied rigorously to implementation code and never once to the e2e
+# scripts, because those read as test infrastructure rather than as code. They are code. These
+# greps are the cheap, offline half of that discipline: they cannot prove an assertion is
+# meaningful, but they catch the three shapes that have actually bitten us.
+E2E=(scripts/e2e-infra.sh scripts/e2e-agents.sh scripts/e2e-container.sh scripts/e2e-agy.sh)
+# (a) a chk body that is the `true`/`:` builtin, or ends in `|| true` / `; true`, passes no
+# matter what the code does. e2e-infra.sh carried `chk "stream: over cap -> 503" 'true'` with a
+# comment claiming a node harness covered it; no harness did. It contributed a green line and
+# tested nothing, which is strictly worse than a red one — a red line gets investigated.
+if grep -nE "^chk[[:space:]].*('[[:space:]]*(true|:)[[:space:]]*(#[^']*)?'|\"[[:space:]]*(true|:)[[:space:]]*(#[^\"]*)?\")[[:space:]]*$" "${E2E[@]}"; then
+  bad "e2e lint: a chk body is the true/: builtin — it cannot fail (see above)"
+fi
+if grep -nE "^chk[[:space:]].*(\|\||;)[[:space:]]*true[[:space:]]*(#[^']*)?'[[:space:]]*$" "${E2E[@]}"; then
+  bad "e2e lint: a chk body ends in '|| true' / '; true' — it cannot fail (see above)"
+fi
+# (b) `timeout N curl … --write-out`. An SSE stream never ends, so such a curl has to be cut
+# short — but `timeout` cuts it short with SIGTERM from OUTSIDE, and a SIGTERMed curl dies
+# before emitting --write-out. The substitution expands to "" and the comparison is false
+# whatever the server did. Worse, it inverts: the one case that DOES print a status is a server
+# that closed the connection, i.e. a broken one, so the check passes only when the code is
+# wrong. Use curl's own --max-time, which aborts from the inside and still writes the status.
+if grep -nE "timeout[[:space:]]+[0-9]+[[:space:]]+curl.*(-w[[:space:]]|--write-out)" "${E2E[@]}"; then
+  bad "e2e lint: 'timeout N curl … -w' — SIGTERM kills curl before --write-out (see above)"
+fi
+# (c) two chk lines sharing a label. Adjacent class rather than the same one: it does not make a
+# check unable to fail, it makes the PASS/FAIL report unable to say which behaviour was
+# exercised — and it is the signature of a copy-pasted assertion whose body was edited and whose
+# name was not, which silently double-counts one behaviour and drops another.
+for f in "${E2E[@]}"; do
+  [ -f "$f" ] || continue
+  DUP=$(grep -oE "^chk[[:space:]]+\"[^\"]+\"" "$f" | sort | uniq -d)
+  [ -z "$DUP" ] || bad "e2e lint: duplicate chk labels in $f: $DUP"
+done
+# Deliberately NOT linted: a chk body that curls without -f and without a grep/jq/comparison.
+# It looks like the same class, but it flags `chk "oauth2-proxy listening :4180" 'curl -s -o
+# /dev/null …/ping'` and the caddy equivalent, which are correct — a pure reachability probe
+# fails on connection refused, which is exactly what "listening" means. A lint with false
+# positives on correct code teaches people to scroll past it, so it is worth less than nothing.
+
+# 5e. The capability panel makes claims about what the RUNNER does, and nothing else in this repo
+# would notice if the runner stopped doing it. The panel would then go on stating, in prose, an
+# enforcement story that had quietly become false — the exact failure this task exists to prevent,
+# one level removed. Each pattern below is the line in agents/bin/mows-agent that makes one panel
+# sentence true; if a pattern goes missing, the sentence it supports has to change with it.
+if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs ]; then
+  # pattern <TAB> the panel sentence it holds up
+  while IFS='|' read -r pat claim; do
+    [ -z "$pat" ] && continue
+    grep -qF -- "$pat" agents/bin/mows-agent \
+      || bad "capability panel: agents/bin/mows-agent no longer contains '$pat' — the panel still says \"$claim\""
+  done <<'PATTERNS'
+--max-budget-usd|up to $X per run
+--max-turns|and N turns per run
+cd "$WORKDIR"|the directory it starts in, not a boundary it is held to
+User=$(id -un)|every agent on this box runs under the same OS login
+--permission-prompts none|it cannot see the profile's permission rules
+PATTERNS
+else
+  bad "capability panel: could not check its claims against agents/bin/mows-agent (a file is missing)"
+fi
+
 # 6. gitleaks if available (CI always runs it)
 if command -v gitleaks >/dev/null; then gitleaks detect --source . --no-banner || bad "gitleaks"; fi
 

@@ -143,7 +143,15 @@ chk "stream: over cap -> 503"          'PORT=3005 node /r/scripts/stream-cap-che
 chk "stream: replay resumes without duplicating" 'PORT=3005 node /r/scripts/stream-replay-check.mjs'
 # desktop/tablet browsers open sessions in their own named windows (client-side, so just
 # prove the wiring is served: the per-session data-nw attr and the gate that applies it)
-chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/ | grep -q "data-nw=\"t-aaaa1111\""'
+# /history, not /. This assertion used to curl '/' and had failed since the 2026-08-29 fleet
+# reskin, which made the home page fleet-first — "no system stats, no today list" (homeView's
+# own header comment) — and moved session browsing entirely to /history. sessionRowHtml() is
+# where data-nw is emitted and listView() is its ONLY caller, so the attribute has not appeared
+# on '/' since that reskin; the check outlived its subject by pointing at a page that had
+# deliberately stopped rendering the thing it looks for. Verified by dumping both pages against
+# this exact fixture: '/' contains "aaaa1111" 0 times, /history 7, including data-nw="t-aaaa1111".
+chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/history | grep -q "data-nw=\"t-aaaa1111\""'
+# stays on '/': the window-target gate lives in the base page script, served on every page.
 chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
 chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
 SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"

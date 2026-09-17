@@ -1,5 +1,6 @@
 .claude-plugin/marketplace.json
 .github/workflows/ci.yml
+.github/workflows/e2e-infra.yml
 .gitignore
 .gitleaksignore
 ATTRIBUTIONS.md

@@ -1,0 +1,48 @@
+name: e2e-infra
+# Stands the whole layer-3 cockpit up in a container -- Caddy, oauth2-proxy, ttyd and the
+# dashboard -- and proves the auth chain end to end, plus the /stream contract.
+#
+# Deliberately NOT part of preflight.sh. preflight is the fast, offline, always-run pre-commit
+# gate; a five-minute job needing Docker and network in there gets skipped on a laptop and then
+# disabled, and a check that silently skips is the exact disease this job exists to treat -- two
+# of the assertions it runs were born red and survived 57 commits because nothing ever ran them.
+#
+# Its own workflow rather than a job inside ci.yml so it can use GitHub's native path filter:
+# per-job filtering needs a third-party action, and this repo should not take on a new
+# supply-chain dependency to answer a question `on.push.paths` already answers. The path list is
+# duplicated across push/pull_request because GitHub Actions does not support YAML anchors --
+# keep the two copies in step.
+on:
+  push:
+    paths:
+      - 'infra/**'
+      - 'install.sh'
+      - 'scripts/e2e-infra'
+      - 'scripts/e2e-infra.sh'
+      - 'scripts/stream-*.mjs'
+      - '.github/workflows/e2e-infra.yml'
+  pull_request:
+    paths:
+      - 'infra/**'
+      - 'install.sh'
+      - 'scripts/e2e-infra'
+      - 'scripts/e2e-infra.sh'
+      - 'scripts/stream-*.mjs'
+      - '.github/workflows/e2e-infra.yml'
+  # The suite downloads the LATEST oauth2-proxy release and the Caddy apt repo on every run, so
+  # it can break with nobody having touched this repo. Nightly turns that from a surprise during
+  # the next infra change into a dated, attributable failure.
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+jobs:
+  e2e-infra:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # scripts/e2e-infra does its own `docker run` and installs everything it needs inside the
+      # container, so there is nothing to set up on the runner beyond Docker, preinstalled on
+      # ubuntu-24.04. Exits non-zero on any failed assertion (`[ "$FAIL" -eq 0 ]` at its tail),
+      # which is only a usable gate because the suite is now fully green -- 51 passed, 0 failed.
+      - run: ./scripts/e2e-infra
