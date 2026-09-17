@@ -70,6 +70,9 @@ export PATH="/shim:$PATH"
 # /_test/chat a 404 and the check silently measures nothing. Still off by default everywhere
 # else, so the injectors remain unreachable on the real dashboard.
 HOME=$DH MOWS_TEST_HOOKS=1 node /r/infra/dashboard/lite.mjs --port 3005 --host 127.0.0.1 >/tmp/dash.log 2>&1 &
+# Captured here, read at the very end of the script: the RSS ceiling is only meaningful once
+# this process has served every request the suite makes, not four seconds after it booted.
+DASH_PID=$!
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
 # oauth2-proxy on :4180 from the RENDERED config, dummy Google creds
@@ -241,6 +244,33 @@ chk "/term is gated too"        '[ "$(curl -s -o /dev/null -w "%{http_code}" htt
 chk "dashboard NOT reachable unauthenticated" '! curl -s http://127.0.0.1/ | grep -q "claude sessions"'
 chk "PWA statics bypass by design" '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/manifest.webmanifest)" = "200" ]'
 chk "open-redirect blocked"     '! curl -s -o /dev/null -w "%{redirect_url}" "http://127.0.0.1/oauth2/start?rd=https://evil.test" | grep -q "evil.test"'
+
+echo "### the two resource facts a browser depends on and nothing else here measures"
+# HTTP/2 matters on the LIVE host, which is the only place a browser negotiates it. An || of two
+# weak local checks would pass vacuously — SKIP loudly instead of inventing a pass.
+#
+# Why it is load-bearing and silent if it regresses: over HTTP/1.1 the browser caps SSE at six
+# connections PER ORIGIN, ACROSS ALL TABS, which is exactly this owner's usage pattern (a phone
+# with the dashboard, an agent and a run open at once). Nothing in the UI reports the cap being
+# hit — the seventh tab simply never receives a token, forever, and looks like a hung agent.
+# --max-time and NOT `timeout N curl`: see preflight 5e (b). This one would survive either way
+# (a TLS handshake is not an endless stream), but the wrong idiom is the thing that spreads.
+MOWS_HOST="${MOWS_HOST:-}"
+if [ -n "$MOWS_HOST" ]; then
+  HV=$(curl -s --max-time 15 -o /dev/null -w '%{http_version}' "https://$MOWS_HOST/" 2>/dev/null)
+  echo "  negotiated HTTP version on $MOWS_HOST: ${HV:-<none>}"
+  chk "http2 negotiated on $MOWS_HOST (spec §3)" '[ "$HV" = 2 ]'
+else
+  echo "SKIP: http2 check — set MOWS_HOST to the live host to run it (spec §3, load-bearing)"
+fi
+
+# The RSS check requires DASH_PID to be non-empty; an unset variable would make `-le` compare
+# nothing and pass. That is the same failure shape as the HTTP/2 check above, so it is guarded
+# too. `ps` is present in ubuntu:24.04 without extra packages (verified), so an empty RSS_KB here
+# means a dead dashboard, which is a real failure and should read as one.
+RSS_KB=$(ps -o rss= -p "$DASH_PID" | tr -d ' ')
+chk "dashboard RSS <= 150MB (spec D3)" '[ -n "$RSS_KB" ] && [ "$RSS_KB" -le 153600 ]'
+echo "  dashboard RSS: $((RSS_KB / 1024))MB of 150MB ceiling"
 
 [ "$FAIL" -gt 0 ] && { echo "--- oauth.log ---"; tail -5 /tmp/oauth.log; }
 caddy stop >/dev/null 2>&1
