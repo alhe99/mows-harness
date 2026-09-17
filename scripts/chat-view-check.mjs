@@ -181,7 +181,22 @@ function liveBits(htmlStr) {
       const v = decodeEntities(val).replace(/[\u0000-\u0020]+/g, '');
       const head = v.split(/[/?#]/, 1)[0];
       const colon = head.indexOf(':');
-      if (colon !== -1 && !/^(?:https?|mailto)$/i.test(head.slice(0, colon))) bad.push('url:' + val);
+      const scheme = colon === -1 ? '' : head.slice(0, colon);
+      // A COLON DOES NOT MAKE A SCHEME. Found by fuzzing (Task 9, seed 35, case 9593): a reference
+      // definition with an angle-bracket destination and a LEADING SPACE — `[r]: < mailto:a@b.c>` —
+      // makes marked emit href="%20mailto:a@b.c", because cleanUrl runs encodeURI over the
+      // destination and the leading space becomes %20. The old rule read "%20mailto" as an unknown
+      // scheme and flagged a link that is completely inert: a scheme is `[a-zA-Z][a-zA-Z0-9+.-]*`
+      // in every URL parser, "%20mailto" cannot be one, so the browser resolves the whole thing as
+      // a RELATIVE path (measured: https://<host>/ui/agents/%20mailto:a@b.c). Percent-encoding can
+      // only ever DESTROY a scheme, never mint one, so narrowing the rule this way cannot hide a
+      // live URL.
+      //
+      // The entity decode above still runs FIRST and is untouched, so "&#106;avascript&#58;"
+      // decodes to a syntactically valid "javascript" and is still flagged — the two assertions
+      // below pin both directions. What a false positive actually costs is why this was worth
+      // fixing rather than exempting: an oracle that cries wolf is one people start overriding.
+      if (scheme && /^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(scheme) && !/^(?:https?|mailto)$/i.test(scheme)) bad.push('url:' + val);
     }
   }
   return bad;
@@ -199,6 +214,15 @@ check('[detector] does not flag escaped markup in text',
 check('[detector] does not flag an entity-quoted handler sitting INSIDE an attribute value',
   liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">').length === 0,
   liveBits('<img src="a.png" alt="&quot; onerror=&quot;alert(1)">'));
+// The scheme-syntax rule, both directions (see liveBits' own comment). Percent-encoding cannot
+// mint a scheme, so a percent-mangled one is a relative URL and must not be flagged...
+check('[detector] does not flag a percent-mangled pseudo-scheme, which is a relative URL',
+  liveBits('<a href="%20mailto:a@b.c">r</a>').length === 0,
+  liveBits('<a href="%20mailto:a@b.c">r</a>'));
+// ...while an ENTITY-encoded one decodes to a real scheme before the rule is applied, and must be.
+check('[detector] still flags an entity-encoded scheme, which does decode to a real one',
+  liveBits('<a href="&#106;avascript&#58;alert(1)">r</a>').length > 0,
+  liveBits('<a href="&#106;avascript&#58;alert(1)">r</a>'));
 
 // ---- the premise the C1 fix rests on ------------------------------------------------------
 // The fix (a Tokenizer.tag override that clears lexer.state.inRawBlock) is worth exactly as much
@@ -227,8 +251,6 @@ const HOSTILE = {
   'a <style> block': '<style>body{display:none}</style>',
   'a mixed-case JaVaScRiPt: link': '[x](JaVaScRiPt:alert(1))',
   'an entity-smuggled scheme': '[x](&#106;avascript&#58;alert(1))',
-  'a tab-smuggled scheme (angle-bracket destination, which does reach the renderer)': '[x](<java\tscript:alert(1)>)',
-  'a NUL-smuggled scheme': '[x](<jav\u0000ascript:alert(1)>)',
   // The next two are inert even UNGUARDED (marked escapes alt and title in outputLink), so
   // they pin marked's behaviour, not ours — same convention as the [marked, not renderPartial]
   // assertions above. Re-review R4.
@@ -266,9 +288,32 @@ const HOSTILE = {
   // counts as the \s. Both flip; both must still be inert.
   'a flip via an UPPERCASE tag': 'a <CODE> b\n\n<img/src=x onerror=alert(1)>',
   'a flip via a tag carrying attributes': 'a <code class="x"> b\n\n<img/src=x onerror=alert(1)>',
+  // Found by the fuzz pass below rather than by anyone's imagination (seed 35, case 9593). An
+  // angle-bracket reference destination with a LEADING SPACE: safeHref trims it and reads a
+  // mailto, marked's cleanUrl encodeURIs it and emits "%20mailto:…", and the two disagree about
+  // what the scheme is. Inert either way (see liveBits), and kept so the disagreement is pinned.
+  'a reference destination whose leading space survives into the href': '[r]\n\n[r]: < mailto:a@b.c>',
   // (no self-closing "<code/>" fixture: the flip regex requires whitespace or > after the tag
   // name, so it never flips and such a fixture could not fail either way.)
 };
+// ---- two destinations that only LOOKED like they were testing our guard (Task 9) ------------
+// Both were HOSTILE fixtures above until the fuzz pass sharpened liveBits' scheme rule (see its
+// comment). Under the OLD rule they went red whenever safeHref was disabled -- but only because
+// the detector read marked's own percent-encoding ("java%09script:") as an unknown scheme. A
+// browser reads that as a RELATIVE path, so the redness was a false alarm and the coverage it
+// provided was fake: these payloads are inert with the guard removed as well as with it present.
+// The mutation sweep said so the moment the rule was corrected, which is what that tool is for.
+//
+// What actually separates the two states is whether an href is emitted AT ALL. Asserted directly,
+// so these two now exercise the guard instead of the detector's imprecision.
+const SMUGGLED = {
+  'a tab-smuggled scheme (angle-bracket destination, which does reach the renderer)': '[x](<java\tscript:alert(1)>)',
+  'a NUL-smuggled scheme': '[x](<jav\u0000ascript:alert(1)>)',
+};
+for (const [label, src] of Object.entries(SMUGGLED)) {
+  const out = renderPartial(src);
+  check(`a smuggled scheme is refused outright, emitting no href: ${label}`, !/href=/.test(out), out);
+}
 for (const [label, src] of Object.entries(HOSTILE)) {
   const out = renderPartial(src);
   check(`hostile reply renders inert: ${label}`, liveBits(out).length === 0, { bits: liveBits(out), out });
@@ -352,5 +397,124 @@ check('a relative link has no scheme to abuse and is still rendered',
 const okImg = renderPartial('![a diagram](https://example.com/d.png)');
 check('an ordinary https image still renders as an image',
   /<img src="https:\/\/example\.com\/d\.png" alt="a diagram">/.test(okImg), okImg);
+
+// ---- a random-input pass, because every fixture above is one a person thought of -------------
+//
+// The method that produced fourteen green hostile fixtures was also blind to a Critical stored
+// XSS for two rounds: each fixture is a single construct someone chose, and C1 lived in the
+// COMBINATION of two (an inline tag that flips marked's inRawBlock, and a payload shape marked's
+// tag regex rejects). Enumerating combinations by hand is exactly what people are bad at, so a
+// generator does it instead.
+//
+// DETERMINISTIC ON PURPOSE. A fixed seed list, not Math.random: a gate that fails one run in
+// fifty teaches people to re-run it, and scripts/chat-view-coverage.mjs re-executes this file
+// twenty-odd times and needs two runs to be comparable. Exploratory sweeps over many more seeds
+// are a separate thing you run by hand; what is committed is the corpus that must stay green.
+//
+// The alphabet is an attacker's vocabulary — tag names, event attributes, URL attributes,
+// schemes, and the SEPARATORS that decide whether marked sees a tag at all — because random
+// bytes would essentially never produce a tag and would test nothing. Control bytes are built
+// with fromCharCode rather than written as escapes: editing tools on this branch have twice
+// rewritten such an escape into a raw embedded byte, which preflight now rejects outright.
+{
+  const NUL = String.fromCharCode(0), TABC = String.fromCharCode(9), LF = String.fromCharCode(10), CR = String.fromCharCode(13);
+  // mulberry32: a finding has to be reproducible from its seed or it is an anecdote.
+  const rng = seed => { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+  const TAGS = ['script', 'img', 'svg', 'iframe', 'style', 'pre', 'code', 'kbd', 'a', 'math', 'object', 'embed', 'form', 'input', 'template', 'noscript', 'title', 'textarea', 'base', 'link', 'meta', 'video', 'source', 'body', 'p', 'CODE', 'ScRiPt', 'applet'];
+  const EVENTS = ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onanimationend', 'ontoggle', 'onbegin'];
+  const URLATTRS = ['href', 'src', 'xlink:href', 'action', 'formaction', 'data', 'poster', 'srcdoc'];
+  const SCHEMES = ['javascript:', 'JaVaScRiPt:', 'data:text/html,', 'vbscript:', 'jav' + TABC + 'ascript:', 'jav' + LF + 'ascript:', 'jav' + NUL + 'ascript:', '&#106;avascript:', '&#x6a;avascript&#58;', ' javascript:', '//evil.example', '\\\\evil.example', 'https://ok.example', 'mailto:a@b.c', '/relative', '#frag'];
+  const SEPS = ['', ' ', '/', TABC, LF, '  ', NUL, CR];
+  const TEXT = ['the log said', 'use the', 'tag carefully', 'then', 'a', 'b', 'item', 'quoted', 'x', 'df -h', 'ok', '1 < 2 && 3 > 2', 'héllo', '\u{1f44b}', '`tick`'];
+  const PUNCT = ['&', '<', '>', '"', "'", '&amp;', '&lt;', '&#39;', '&quot;', NUL, TABC, '```', '~~~', '\\'];
+  const WRAP = [
+    s => s, s => '- ' + s, s => '> ' + s,
+    s => '| h |' + LF + '| --- |' + LF + '| ' + s + ' |',
+    s => '# ' + s,
+    s => '```' + LF + s + LF + '```',
+    s => '```js' + LF + s,
+    s => '`' + s + '`', s => '**' + s + '**',
+    s => '[link](' + s + ')', s => '![alt](' + s + ')',
+    s => '[r]' + LF + LF + '[r]: ' + s,
+    s => '<!-- ' + s + ' -->', s => '<' + s + '>',
+  ];
+  const frag = r => {
+    const pick = a => a[Math.floor(r() * a.length)];
+    const k = r();
+    if (k < 0.34) {
+      const t = pick(TAGS), sep = pick(SEPS), bits = [];
+      if (r() < 0.6) bits.push(pick(EVENTS) + '=' + (r() < 0.5 ? '"alert(1)"' : 'alert(1)'));
+      if (r() < 0.6) bits.push(pick(URLATTRS) + '=' + (r() < 0.5 ? '"' + pick(SCHEMES) + '"' : pick(SCHEMES)));
+      if (r() < 0.3) bits.push('class="' + pick(TEXT) + '"');
+      return '<' + t + sep + bits.join(pick(SEPS) || ' ') + (r() < 0.85 ? '>' : '');
+    }
+    if (k < 0.5) return pick(SCHEMES);
+    if (k < 0.62) return '</' + pick(TAGS) + (r() < 0.7 ? '>' : '');
+    if (k < 0.72) return pick(PUNCT);
+    return pick(TEXT);
+  };
+  const doc = r => {
+    const parts = [], n = 1 + Math.floor(r() * 6);
+    for (let i = 0; i < n; i++) {
+      let s = '';
+      const m = 1 + Math.floor(r() * 4);
+      for (let j = 0; j < m; j++) s += frag(r) + (r() < 0.5 ? ' ' : '');
+      parts.push(WRAP[Math.floor(r() * WRAP.length)](s));
+    }
+    return parts.join(r() < 0.5 ? LF + LF : LF);
+  };
+
+  // 6,000 cases, which is what keeps this file's runtime about a second -- it is re-executed
+  // twenty-odd times by scripts/chat-view-coverage.mjs, so a slow gate here is a slow sweep there.
+  // This corpus is the FLOOR, not the search: the exploratory run behind Task 9 was 60 seeds x
+  // 20,000 cases plus ~8.4M walked prefixes, and its one finding (seed 35, case 9593 -- the
+  // "%20mailto:" scheme imprecision corrected in liveBits above) is pinned as its own named
+  // fixture in HOSTILE rather than being left to a seed that would have to stay in range forever.
+  const SEEDS = [1, 2, 3, 35, 101], PER = 1200;
+  const corpus = [];
+  for (const sd of SEEDS) { const r = rng(sd); for (let i = 0; i < PER; i++) corpus.push({ seed: sd, i, src: doc(r) }); }
+
+  // (a) THE CORPUS MUST BE CAPABLE OF THE THING IT IS LOOKING FOR. A generator that quietly
+  // degenerated into plain prose would report "0 live" forever and look like the strongest
+  // assertion in this file. So run the same corpus through the UNGUARDED vendored marked: if that
+  // does not produce live output in quantity, nothing below means anything.
+  let unguarded = 0;
+  for (const c of corpus) {
+    let o; try { o = rawMarked.parse(c.src, { async: false }); } catch { continue; }
+    if (liveBits(o).length) unguarded++;
+  }
+  console.log(`  fuzz: ${corpus.length} generated replies over seeds ${SEEDS.join(',')}; ${unguarded} of them render live through UNGUARDED marked`);
+  check('[fuzz] the corpus can produce live output at all, measured against unguarded marked',
+    unguarded > corpus.length / 20, unguarded);
+
+  // (b) the whole reply, as a finished turn
+  let live = null;
+  for (const c of corpus) {
+    let out;
+    try { out = renderPartial(c.src); } catch (e) { live = { ...c, threw: String(e) }; break; }
+    const bits = liveBits(out);
+    if (bits.length) { live = { ...c, bits, out: out.slice(0, 300) }; break; }
+  }
+  check('[fuzz] no generated reply renders live through renderPartial',
+    live === null, live);
+
+  // (c) and as a half-arrived one. renderPartial runs on EVERY intermediate buffer, and a delta
+  // boundary falls wherever the model's tokeniser happened to break -- not where a payload author
+  // chose. Every prefix of every case is too slow for a gate that runs in CI and under the
+  // mutation sweep, so a fixed sample of cases is walked exhaustively.
+  let livePrefix = null, walked = 0;
+  for (let n = 0; n < corpus.length && !livePrefix; n += 50) {
+    const { src, seed, i } = corpus[n];
+    for (let p = 1; p <= src.length; p++) {
+      walked++;
+      let out;
+      try { out = renderPartial(src.slice(0, p)); } catch (e) { livePrefix = { seed, i, p, threw: String(e) }; break; }
+      if (liveBits(out).length) { livePrefix = { seed, i, p, prefix: src.slice(0, p), bits: liveBits(out) }; break; }
+    }
+  }
+  console.log(`  fuzz: ${walked} intermediate prefixes walked`);
+  check('[fuzz] no PREFIX of a generated reply renders live either',
+    livePrefix === null, livePrefix);
+}
 
 process.exit(failed ? 1 : 0);

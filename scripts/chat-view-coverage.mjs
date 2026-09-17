@@ -109,6 +109,12 @@ const MUTATIONS = [
       const nm = a[1].toLowerCase();
       const val = a[2] ?? a[3] ?? a[4] ?? '';
       if (false) { continue; }` },
+  // The pre-fuzz scheme rule: "a colon makes a scheme". It is what flagged the inert
+  // "%20mailto:" href a reference destination with a leading space produces, so reinstating it
+  // is what reddens the two assertions that pin the corrected rule (Task 9).
+  { id: 'D4', file: 'check', desc: 'detector reverts to "any colon is a scheme" (the pre-fuzz rule)',
+    find: "      if (scheme && /^[a-zA-Z][a-zA-Z0-9+.-]*$/.test(scheme) && !/^(?:https?|mailto)$/i.test(scheme)) bad.push('url:' + val);",
+    repl: "      if (colon !== -1 && !/^(?:https?|mailto)$/i.test(scheme)) bad.push('url:' + val);" },
   { id: 'D2', file: 'check', desc: 'detector stops detecting entirely',
     find: 'function liveBits(htmlStr) {\n  const bad = [];',
     repl: 'function liveBits(htmlStr) {\n  const bad = [];\n  if (htmlStr) return bad;' },
