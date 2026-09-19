@@ -106,6 +106,19 @@ renderer.image = function (token) {
   // token.text is the alt text, already escaped by the tokenizer — returned as-is on refusal.
   return safeHref(token.href) ? Renderer.prototype.image.call(this, token) : (token.text || '');
 };
+// The agent's memory write-back is a ```mows-memory fence at the end of most replies, and it
+// was most of every message on screen — the same text the Memory card already shows. It is
+// collapsed to a one-line disclosure rather than removed: what the agent chose to remember must
+// stay one click away in the transcript, because that is where a wrong belief is first noticed.
+// The fence body still goes through the BASE code renderer, so the escaping the rest of this
+// file was built to guarantee is untouched; only the wrapper is new, and its one dynamic value
+// is a line count.
+renderer.code = function (token) {
+  const inner = Renderer.prototype.code.call(this, token);
+  if (!/^mows-memory\b/.test(token.lang || '')) return inner;
+  const lines = (token.text || '').split('\n').filter(l => l.trim()).length;
+  return `<details class="memupd"><summary>memory updated · ${lines} line${lines === 1 ? '' : 's'}</summary>${inner}</details>`;
+};
 
 // Mid-stream the buffer routinely holds a fence that has opened and not yet closed. Close it for
 // DISPLAY only; the buffer is untouched.

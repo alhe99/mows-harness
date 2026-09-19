@@ -2000,8 +2000,13 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    mows-agent extracts it — but an unlabelled green block read as "what is that green text?" the
    first time a person saw one. So the fence whose info string is mows-memory gets a caption and a
    green edge. CSS only: marked emits <pre><code class="language-<info>">. */
-.chat .mb pre:has(> code.language-mows-memory){border-color:var(--ok-bd);position:relative;padding-top:32px}
-.chat .mb pre:has(> code.language-mows-memory)::before{content:'memory · saved to memory.md';position:absolute;top:10px;left:14px;font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ok)}
+.memupd{margin-top:8px}
+.memupd summary{display:inline-flex;align-items:center;gap:6px;font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-bd);border-radius:999px;padding:6px 10px;cursor:pointer;list-style:none}
+.memupd summary::-webkit-details-marker{display:none}
+.memupd summary::before{content:'▸';font-size:9px}
+.memupd[open] summary::before{content:'▾'}
+.memupd[open] summary{margin-bottom:8px}
+.memupd pre{border-color:var(--ok-bd)}
 /* system divider: a run-lifecycle event, interleaved into the transcript */
 .sysdiv{display:flex;align-items:center;gap:12px}
 .sysl{flex:1;height:1px;background:var(--bd)}
