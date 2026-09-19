@@ -244,11 +244,13 @@ export function reconcile(list, pendingUsers, salvage) {
 // the log records one line per chat turn ("chat turn (streamed): $0.02"), and that cost is
 // already printed on the message it belongs to, so rendering all of them would interrupt every
 // single message with a restatement of itself. What survives the filter is the run lifecycle and
-// the failures — which is exactly what the comp's one divider shows.
+// the failures, and a memory that was cut or cleared — which is what the comp's one divider is for.
 const EV_RE = /^(\d{4}-\d\d-\d\dT[\d:]+(?:[+-][\d:]+|Z))\s+(.+)$/;
 const systemEvents = events => (events || [])
   .map(l => EV_RE.exec(l))
-  .filter(m => m && !/^chat turn\b/.test(m[2]))
+  // `memory stored` is per-turn too — the reply above it carries the same fact as a pill —
+  // so it joins the filter. `memory truncated` and `memory cleared` stay: those are worth a line.
+  .filter(m => m && !/^(chat turn|memory stored)\b/.test(m[2]))
   .map(m => ({ at: m[1], text: m[2] }));
 
 // Turns keep the ORDER THE SERVER GAVE THEM — they are not re-sorted. Sorting a merged list by
