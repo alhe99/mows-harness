@@ -405,6 +405,20 @@ mows-agent prune >/dev/null 2>&1
 chk "prune: 40d-old run gone (retention 5)"   '[ ! -d "$MOWS_AGENTS_STATE/short/runs/20200101-000000-1" ]'
 chk "prune: 20d-old run kept (retention 30)"  '[ -d "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1" ]'
 chk "prune: last target never pruned"         '[ -d "$MOWS_AGENTS_STATE/short/$(readlink "$MOWS_AGENTS_STATE/short/last")" ]'
+# chat.jsonl ceiling (spec 2026-09-19 §1.1): the last 200 entries survive, older ones go, logged.
+C="$MOWS_AGENTS_STATE/good/chat.jsonl"; : > "$C"
+for i in $(seq 1 230); do jq -nc --arg t "e$i" '{at:"2026-09-19T00:00:00+00:00",role:"user",text:$t}' >> "$C"; done
+mows-agent prune >/dev/null 2>&1
+chk "prune: chat.jsonl capped to 200 entries"   '[ "$(wc -l < "$C")" = 200 ]'
+chk "prune: the LAST 200 are kept"              '[ "$(head -1 "$C" | jq -r .text)" = e31 ] && [ "$(tail -1 "$C" | jq -r .text)" = e230 ]'
+chk "prune: trim is logged with the count"      'grep -q "chat.jsonl trimmed: 30 entries dropped" "$MOWS_AGENTS_STATE/good/events.log"'
+chk "prune: no chat.jsonl.tmp left"             '[ ! -e "$C.tmp" ]'
+: > "$C"; for i in $(seq 1 150); do echo '{"at":"x","role":"user","text":"y"}' >> "$C"; done
+E1=$(grep -c "chat.jsonl trimmed" "$MOWS_AGENTS_STATE/good/events.log"); mows-agent prune >/dev/null 2>&1
+chk "prune: 150 entries untouched, no event"    '[ "$(wc -l < "$C")" = 150 ] && [ "$(grep -c "chat.jsonl trimmed" "$MOWS_AGENTS_STATE/good/events.log")" = "$E1" ]'
+printf 'keep me\n' > "$MOWS_AGENTS_STATE/good/memory.md"; mows-agent prune >/dev/null 2>&1
+chk "prune: memory.md is never pruned"          '[ "$(cat "$MOWS_AGENTS_STATE/good/memory.md")" = "keep me" ]'
+rm -f "$C" "$MOWS_AGENTS_STATE/good/memory.md"
 rm -rf "$MOWS_AGENTS_STATE/good/runs/20200102-000000-1"
 
 echo "### merge.policy pr"

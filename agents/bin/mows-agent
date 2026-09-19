@@ -605,10 +605,21 @@ cmd_chat(){
 }
 
 # ---------- prune ----------
-cmd_prune(){ # delete run dirs older than retention_days per agent; never the `last` target
-  local n f m days d keep r
+cmd_prune(){ # per agent: delete run dirs older than retention_days (never the `last` target);
+             # cap chat.jsonl at CHAT_KEEP entries. memory.md is never touched (spec 2026-09-19 §1).
+  local n f m days d keep r c have
   while IFS=$'\t' read -r n f; do
     m=$(meta "$f") || continue; days=$(mget "$m" .mows.retention_days); days=${days:-30}
+    # chat.jsonl has no other ceiling (spec §1.1). CHAT_KEEP is far above the CHAT_CTX_TURNS
+    # ever injected and above what the dashboard shows: a ceiling, not a window. Before the
+    # runs/ check on purpose — an agent can have a transcript and no runs.
+    c="$STATE_ROOT/$n/chat.jsonl"
+    if [ -f "$c" ]; then
+      have=$(wc -l < "$c")
+      if [ "$have" -gt "$CHAT_KEEP" ]; then
+        tail -n "$CHAT_KEEP" "$c" > "$c.tmp" && mv "$c.tmp" "$c" && event "$n" "chat.jsonl trimmed: $((have - CHAT_KEEP)) entries dropped"
+      fi
+    fi
     d="$STATE_ROOT/$n/runs"; [ -d "$d" ] || continue
     keep=$(readlink "$STATE_ROOT/$n/last" 2>/dev/null); keep=${keep#runs/}
     while IFS= read -r r; do
