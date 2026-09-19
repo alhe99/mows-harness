@@ -149,6 +149,50 @@ write_status(){ # write_status <state>  (uses the run globals; atomic)
           turns:$turns,tool_calls:$tools,cost_usd:$cost,permission_denials:$den,pid:$pid,claude_pid:$cpid}' \
         > "$RUNDIR/status.json.tmp" && mv "$RUNDIR/status.json.tmp" "$RUNDIR/status.json"
 }
+# ---------- memory ----------
+# store_memory <name> <reply-text>: the LAST fenced block whose info string is exactly
+# `mows-memory` becomes $STATE_ROOT/<name>/memory.md, whole. No block: the file is left as it
+# is and nothing is logged — silence is the documented "keep". An empty block clears the file
+# and is logged: that is the one way an agent forgets on purpose. The agent never writes this
+# file itself (spec D2): both shipped agents deny Write, and the alternative is Bash redirection,
+# the exact smell the capability panel exists to name.
+#
+# The info-string match is exact (`mows-memory` then only whitespace), so `mows-memory-notes`
+# is not a match; and because a fence opened with four backticks is only closed by four, a
+# three-backtick mows-memory fence quoted inside one is swallowed as that fence's body — the
+# awk below sees a line of exactly three backticks close the INNER fence, then the four-tick
+# line as ordinary text, so the quoted copy never becomes `last`. "Last" is deliberate:
+# harness-reviewer is asked to begin by QUOTING its memory, and the quote must not win.
+store_memory(){
+  local n=$1 dir="$STATE_ROOT/$1" out status body bytes lines orig
+  out=$(awk '
+    /^```mows-memory[ \t]*$/ { inb=1; cur=""; next }
+    inb && /^```[ \t]*$/     { inb=0; have=1; last=cur; next }
+    inb                      { cur = cur $0 "\n" }
+    END { if (have) { print "BLOCK"; printf "%s", last } else print "NONE" }' <<<"$2")
+  status=${out%%$'\n'*}
+  [ "$status" = BLOCK ] || return 0
+  body=${out#BLOCK}; body=${body#$'\n'}
+  mkdir -p "$dir"
+  if [ -z "$body" ]; then
+    : > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
+    event "$n" "memory cleared by agent"; return 0
+  fi
+  bytes=$(printf '%s' "$body" | wc -c); lines=$(printf '%s\n' "$body" | wc -l)
+  if [ "$bytes" -gt "$MEM_MAX_BYTES" ] || [ "$lines" -gt "$MEM_MAX_LINES" ]; then
+    # Keep whole lines while both caps hold. LC_ALL=C so length() is bytes, not characters —
+    # the cap is on what the file weighs, and a UTF-8 memory must not slip past it. A first
+    # line that alone exceeds the byte cap would leave nothing; cut it hard rather than write
+    # an empty file that reads as "cleared".
+    orig=$body
+    body=$(printf '%s\n' "$body" | LC_ALL=C awk -v B="$MEM_MAX_BYTES" -v L="$MEM_MAX_LINES" \
+      '{ n = length($0) + 1; if (tot + n > B || NR > L) exit; tot += n; print }')
+    [ -n "$body" ] || body=$(printf '%s' "$orig" | LC_ALL=C head -c "$((MEM_MAX_BYTES - 1))")
+    event "$n" "memory truncated: $bytes bytes / $lines lines offered, cap $MEM_MAX_BYTES/$MEM_MAX_LINES"
+  fi
+  printf '%s\n' "$body" > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
+  event "$n" "memory stored: $(wc -c < "$dir/memory.md") bytes, $(wc -l < "$dir/memory.md") lines"
+}
 run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
   local prev
   prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
@@ -187,6 +231,9 @@ tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decide
   local st
   if [ -n "$final" ]; then
     printf '%s\n' "$final" > "$RUNDIR/result.json"
+    # Memory is captured from EVERY result record, whatever state the run ends in: a run that
+    # hit its budget and still wrote a block wrote the most useful words it had (spec §3).
+    store_memory "$AGENT" "$(jq -r '.result // ""' <<<"$final")"
     COST=$(jq '.total_cost_usd // 0' <<<"$final"); TURNS=$(jq '.num_turns // 0' <<<"$final")
     DENIALS=$(jq '(.permission_denials // []) | length' <<<"$final"); SID=$(jq -r '.session_id // empty' <<<"$final")
     case "$(jq -r '[.subtype // "", .terminal_reason // "", (.is_error|tostring)] | join("|")' <<<"$final")" in
@@ -345,6 +392,12 @@ CHAT_TURNS="${CHAT_TURNS:-6}"  # enough for a lookup or two, not enough to run a
 # failure the __mows_rc= sentinel exists to catch — can be driven hermetically in ~1s instead
 # of needing an actual 300s wait (fix round 1, F4).
 CHAT_TIMEOUT_SEC="${CHAT_TIMEOUT_SEC:-300}"
+# ---------- memory (spec 2026-09-19 D1/D5): a file, bounded, owned by this script ----------
+MEM_MAX_BYTES="${MEM_MAX_BYTES:-4096}"   # hard cap; the instruction asks the agent for < 40 lines
+MEM_MAX_LINES="${MEM_MAX_LINES:-60}"
+CHAT_CTX_TURNS="${CHAT_CTX_TURNS:-12}"   # chat.jsonl entries injected into a chat turn
+CHAT_CTX_CHARS="${CHAT_CTX_CHARS:-2000}" # per-entry cut inside that injection
+CHAT_KEEP="${CHAT_KEEP:-200}"            # chat.jsonl ceiling, enforced by prune
 cmd_chat(){
   local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent chat <name> [--stream] <message…>  ·  --history  ·  --clear"
   shift

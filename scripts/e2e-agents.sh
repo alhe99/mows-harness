@@ -19,7 +19,7 @@ mkdir -p "$HOME/.claude/agents" "$HOME/.claude-work/agents" "$HOME/.local/state"
 export PATH="$T/shim:$BIN_DIR:$PATH"
 export MOWS_AGENTS_STATE="$HOME/.local/state/mows-agents"
 export MOWS_AGENT_META="$BIN_DIR/mows-agent-meta"
-export CLAUDE_MODE_FILE="$T/claude-mode" CLAUDE_ARGS_FILE="$T/claude-args" CURL_LOG="$T/curl.log" QUOTA_FILE="$T/quota.json" GH_LOG="$T/gh.log" SYSTEMCTL_LOG="$T/systemctl.log"
+export CLAUDE_MODE_FILE="$T/claude-mode" CLAUDE_ARGS_FILE="$T/claude-args" CLAUDE_RESULT_FILE="$T/claude-result" CURL_LOG="$T/curl.log" QUOTA_FILE="$T/quota.json" GH_LOG="$T/gh.log" SYSTEMCTL_LOG="$T/systemctl.log"
 export STALL_SEC=2
 echo "DISCORD_WEBHOOK=https://discord.invalid/hook" > "$HOME/.config/mows-agents/config"
 
@@ -107,6 +107,14 @@ case $mode in
   # not by argv — the streaming flags are still exactly what a real turn would send). Proves
   # the fallback to .result when the delta stream is empty (fix round 1, F7).
   nodelta)    res success false completed 0.0123 "reply via .result, no deltas arrived";;
+  # memblock: the result text is read verbatim from $CLAUDE_RESULT_FILE and JSON-encoded by
+  # jq, so a test can hand over a reply containing a fenced mows-memory block (newlines,
+  # backticks) without fighting the single-quoted interpolation res() uses. memblockbudget is
+  # the same text under a budget_exceeded result — memory must be stored whatever the state.
+  memblock)   jq -nc --arg sid "$sid" --rawfile r "${CLAUDE_RESULT_FILE:-/dev/null}" \
+                '{type:"result",subtype:"success",is_error:false,terminal_reason:"completed",num_turns:2,session_id:$sid,total_cost_usd:0.0123,permission_denials:[],result:$r}';;
+  memblockbudget) jq -nc --arg sid "$sid" --rawfile r "${CLAUDE_RESULT_FILE:-/dev/null}" \
+                '{type:"result",subtype:"error_max_budget_usd",is_error:true,terminal_reason:"budget_exceeded",num_turns:2,session_id:$sid,total_cost_usd:1.5,permission_denials:[],result:$r}';;
 esac
 S
 chmod +x "$T"/shim/*
@@ -520,6 +528,44 @@ echo nodelta > "$CLAUDE_MODE_FILE"
 mows-agent chat good --stream "hi" >/dev/null 2>&1
 chk "chat --stream falls back to .result when no deltas arrive" \
   'tail -1 "$MOWS_AGENTS_STATE/good/chat.jsonl" | jq -e ".text == \"reply via .result, no deltas arrived\""'
+echo ok > "$CLAUDE_MODE_FILE"
+
+echo "### memory: store_memory via run (spec 2026-09-19 D2/D5, §3)"
+M="$MOWS_AGENTS_STATE/good/memory.md"
+memrun(){ printf '%s' "$1" > "$CLAUDE_RESULT_FILE"; echo memblock > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1; }
+rm -f "$M"
+memrun $'Report done.\n\n```mows-memory\nnewest: abc123\nopen: none\n```\n'
+chk "memory: block stored as the file body"     '[ "$(cat "$M")" = "$(printf "newest: abc123\nopen: none")" ]'
+chk "memory: stored event written"              'grep -q "memory stored: " "$MOWS_AGENTS_STATE/good/events.log"'
+memrun $'Done.\n```mows-memory\nnewest: def456\n```\n'
+chk "memory: second block replaces, not appends" '[ "$(cat "$M")" = "newest: def456" ]'
+cp "$M" "$T/mem-before"; E0=$(grep -c "memory" "$MOWS_AGENTS_STATE/good/events.log")
+memrun $'Nothing to remember this time.\n'
+chk "memory: no block leaves the file byte-identical" 'cmp -s "$M" "$T/mem-before"'
+chk "memory: no block writes no memory event"   '[ "$(grep -c "memory" "$MOWS_AGENTS_STATE/good/events.log")" = "$E0" ]'
+memrun $'Forget it.\n```mows-memory\n```\n'
+chk "memory: empty block clears the file"       '[ -f "$M" ] && [ ! -s "$M" ]'
+chk "memory: clear is logged"                   'grep -q "memory cleared by agent" "$MOWS_AGENTS_STATE/good/events.log"'
+memrun $'My memory was:\n```mows-memory\nold: 1\n```\nNow updated:\n```mows-memory\nnew: 2\n```\n'
+chk "memory: the LAST block wins"               '[ "$(cat "$M")" = "new: 2" ]'
+memrun $'Quoting a doc:\n````\n```mows-memory\nnot me\n```\n````\n```mows-memory\nreal: yes\n```\n'
+chk "memory: a fence inside a wider fence is not the match" '[ "$(cat "$M")" = "real: yes" ]'
+memrun $'```mows-memory\nreal: yes\n```\nLater I wrote ```mows-memory-notes``` too.\n'
+chk "memory: info string must be exact, not a prefix" '[ "$(cat "$M")" = "real: yes" ]'
+# 80 lines × 51 bytes = 4080 B: under the byte cap, so the LINE cap is what bites.
+big=$(python3 -c 'print("\n".join("line %03d: " % i + "x"*40 for i in range(80)))')
+memrun "$(printf '```mows-memory\n%s\n```\n' "$big")"
+chk "memory: 80 lines capped to 60"             '[ "$(wc -l < "$M")" = 60 ]'
+chk "memory: cap event names both offered and cap" 'grep -q "memory truncated: .* bytes / 80 lines offered, cap 4096/60" "$MOWS_AGENTS_STATE/good/events.log"'
+# 50 lines × 125 bytes = 6250 B: under the line cap, so the BYTE cap is what bites (32 lines = 4000 B).
+wide=$(python3 -c 'print("\n".join("w%02d " % i + "y"*120 for i in range(50)))')
+memrun "$(printf '```mows-memory\n%s\n```\n' "$wide")"
+chk "memory: 6250 B capped under 4096 B"        '[ "$(wc -c < "$M")" -le 4096 ]'
+chk "memory: byte cap cuts at a line boundary"  '[ "$(wc -l < "$M")" = 32 ] && tail -1 "$M" | grep -qE "^w[0-9]{2} y{120}$"'
+chk "memory: no .tmp left behind"               '[ ! -e "$M.tmp" ]'
+printf '%s' $'```mows-memory\nstored despite budget_exceeded\n```\n' > "$CLAUDE_RESULT_FILE"
+echo memblockbudget > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
+chk "memory: stored even when the run ends budget_exceeded" '[ "$(cat "$M")" = "stored despite budget_exceeded" ] && [ "$(jq -r .state "$MOWS_AGENTS_STATE/good/last/status.json")" = budget_exceeded ]'
 echo ok > "$CLAUDE_MODE_FILE"
 
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
