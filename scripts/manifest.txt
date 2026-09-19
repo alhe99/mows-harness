@@ -117,6 +117,7 @@ docs/qa/probes/run.sh
 docs/superpowers/plans/2026-08-10-agy-delegation.md
 docs/superpowers/plans/2026-09-15-agents-layer.md
 docs/superpowers/plans/2026-09-16-dashboard-spa.md
+docs/superpowers/plans/2026-09-19-agent-memory-and-identity.md
 docs/superpowers/specs/2026-08-10-antigravity-delegation-design.md
 docs/superpowers/specs/2026-08-25-persistent-terminal-shell-design.md
 docs/superpowers/specs/2026-08-28-fleet-redesign-design.md
