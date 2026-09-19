@@ -1,9 +1,11 @@
 # Agent memory and identity — design
 
 **Builds on:** `2026-09-15-agents-layer-design.md` (Layer 6). Amends its D5 and §1 `memory:`.
-**Code this touches:** `agents/bin/mows-agent` (`run_context`, `cmd_run`, `cmd_chat`),
-`agents/bin/mows-agent-meta` (one new emitter), `infra/dashboard/lite.mjs` (`apiView`, one
-field), `scripts/e2e-agents.sh`.
+**Code this touches:** `agents/bin/mows-agent` (`run_context`, `tail_loop`, `cmd_run`,
+`cmd_chat`, `cmd_prune`), `infra/dashboard/lite.mjs` (`apiView` one field; `agentDetailView`
+drops the chatable gate), `infra/dashboard/app/views/chat.mjs` (drops the chatable gate),
+`infra/dashboard/app/views/agents.mjs` (Memory card), `scripts/e2e-agents.sh`,
+`scripts/live-agents.sh`. `mows-agent-meta` is untouched.
 
 ## Problem
 
@@ -39,10 +41,10 @@ measurement.
 
 | | Decision | Why |
 |---|---|---|
-| **D1** | **The unit of continuity is a memory file, not a session.** A fresh bounded `claude -p` per call, with the memory injected at start and captured at end. | Immune to `cleanupPeriodDays`, immune to context growth, costs a few hundred tokens per call instead of months of transcript. The session becomes disposable. |
+| **D1** | **The unit of continuity is a memory file, not a session.** A fresh bounded `claude -p` per call — run *and chat* — with the memory injected at start and captured at end. **Chat drops `--resume`.** Its conversational context is the last 12 turns of `chat.jsonl`, injected as text. | Immune to `cleanupPeriodDays`, immune to context growth, costs a bounded ~7k tokens per call instead of a transcript that reaches 860 KB. There is no session to expire, sweep, or outgrow. What a resumed session carried beyond 12 turns is exactly what the memory file is for. |
 | **D2** | **`mows-agent` owns the file; the agent never writes it.** The agent ends its reply with a fenced `mows-memory` block; `mows-agent` extracts and stores it. | `disk-watch` and `harness-reviewer` both deny `Write`/`Edit`. "The agent writes its own memory" contradicts their tool policy and would need Bash redirection — the exact smell the capability panel exists to name. Extraction keeps the policy intact and gives the operator one file to read, diff and edit. |
 | **D3** | **The file lives at `$STATE_ROOT/<name>/memory.md`**, beside `runs/`, `chat.jsonl` and `events.log`. | Outside anything Claude Code prunes. Already the per-agent directory `mows-agent` owns. `cmd_prune` touches only `runs/` and cannot reach it. |
-| **D4** | **Identity is re-asserted on every call, run and chat alike**, through `--append-system-prompt`. Chat gets a chat-shaped context, not run's. | Nothing load-bearing may live only in the resumed transcript. The one line that differs is the one that was wrong: chat says a human is present. |
+| **D4** | **Identity is re-asserted on every call, run and chat alike**, through `--append-system-prompt`. Chat gets a chat-shaped context, not run's. | Nothing load-bearing may live only inside a transcript. The one line that differs is the one that was wrong: chat says a human is present. |
 | **D5** | **Memory is bounded: 4096 bytes / 60 lines, hard.** The instruction asks for less; the cap enforces it; overflow is truncated at a line boundary and logged as an event. | A memory that grows is (2) again with a different filename. The whole value of D1 is that the injected context is small and stays small. |
 | **D6** | **Plugin-per-agent is deferred.** Trigger: the first agent that needs a skill, an MCP server, or a hook of its own. | Every current agent is `tools: [Bash, Read, Glob, Grep]` in a workdir. Plugin packaging renames the agent to `<plugin>:<name>`, changes resolution in `agent_file()`, `lite.mjs agentFile()`, `mows-agent-meta` and `install.sh`, and buys nothing an existing agent uses. The 2026-09-18 conversation proposed it as step 1; on writing it up it does not survive the first rung of the ladder. The state directory is already "a folder per agent". |
 | **D7** | **The mods hooks API is not a dependency.** `prompt.context` in `anthropics/claude-code/mods/` is the right long-term injection point; it is not in 2.1.277. | `--append-system-prompt` does the same job today. When the CLI gains the API, the injection moves; the file, the format and the cap do not change. |
@@ -68,6 +70,16 @@ memory, never a half file.
 
 **Never pruned.** `cmd_prune` walks `runs/` only. Stated here so a future retention change
 knows the file is deliberate.
+
+### 1.1 `chat.jsonl` gets a ceiling too
+
+Every chat turn appends to `chat.jsonl` and nothing has ever pruned it. It is not injected into
+the model, so it cannot blow the context — but it is a file on the box with no ceiling, and this
+spec's whole premise is that nothing an agent produces grows without one. `cmd_prune` gains one
+step: keep the last **200** entries of each agent's `chat.jsonl`, drop the rest, event
+`chat.jsonl trimmed: <N> entries dropped`. 200 is far more than the 12 that are ever injected
+(§2.3) and far more than the dashboard shows; it is a ceiling, not a window. Atomic, same
+`.tmp` + `mv` as the memory file.
 
 ## 2. Injection — `run_context` and `chat_context`
 
@@ -109,9 +121,19 @@ mows-agent chat context
 ## Your memory
 <as §2.1>
 
+## The conversation so far
+<the last 12 entries of chat.jsonl, oldest first, as `USER (hh:mm:ss): text` /
+ `<NAME> (hh:mm:ss): text`, each entry's text cut at 2000 characters with `[…]`>
+
 A human is present and is asking you this directly. Answer them. Ask a clarifying question if
 one is genuinely needed; do not pretend to certainty you lack.
 ```
+
+The conversation block replaces what `--resume` used to carry. Twelve entries is six exchanges;
+2000 characters per entry keeps one long reply from crowding out the rest. Worst case ≈ 24 KB
+≈ 6k tokens, plus ≤ 1k for memory: bounded per turn, by construction, forever. An agent with no
+`chat.jsonl` gets `(no conversation yet)`. `error`-role entries (a failed turn's record) are
+included as `SYSTEM (hh:mm:ss): text` — the agent should know its last answer never arrived.
 
 The last paragraph is the correction to problem (3). It is the only place the two contexts
 disagree on purpose.
@@ -119,7 +141,7 @@ disagree on purpose.
 ### 2.4 The chat invocation, after
 
 ```
-claude -p --resume "$sid" \
+cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" claude -p \
   --agent "$n" \
   --append-system-prompt "$(chat_context)" \
   --output-format stream-json --verbose --include-partial-messages \
@@ -128,14 +150,24 @@ claude -p --resume "$sid" \
   -- "$msg"
 ```
 
-Two additions: `--agent "$n"` and `--append-system-prompt`. **`--agent` beside `--resume` is
-unmeasured** — the session was created with `--agent`, and whether re-passing it on resume is
-accepted, ignored, or refused is a CLI behaviour this spec does not assume. §6.3 step 1 measures it
-first. If the CLI refuses the pair, `--agent` is dropped from chat and `chat_context()` gains the
-agent file's body (emitted by `mows-agent-meta body <file>`, §4) so the soul is re-asserted by
-text. Either way the outcome is the same: identity no longer depends on the transcript.
+`--resume "$sid"` is gone; `--agent "$n"` and `--append-system-prompt` are added. This is
+**run mode's exact shape** with a different appended context and a different user turn — a
+shape that is already exercised on every scheduled run, so nothing here is a new CLI behaviour
+to measure. The non-streaming branch (`mows-agent:475`) changes identically.
 
-The non-streaming chat branch (`mows-agent:475`) gets the identical two flags.
+**What `cmd_chat` loses with `--resume`, deliberately:**
+- the `session_id` lookup loop (`mows-agent:381-388`) and the two `die`s around it — chat no
+  longer needs a completed run. An agent that has never run can be asked what it would do, and
+  gets `(none — this is your first call…)` for memory and `(no conversation yet)` for history.
+- therefore the dashboard's `chatable` gate (`chat.mjs`, `runs.some(r => r.state === 'done')`)
+  and its message *"Chat resumes a finished run's session. Run this agent once first."*, and the
+  same gate and message in the server-rendered `agentDetailView`. Both were true; both become
+  false; a gate whose reason has gone is the pattern this repo keeps cataloguing. Removed in the
+  same task, not left as "harmless extra strictness".
+
+**What it keeps:** the mid-run refusal (`$n is mid-run…`). Its reason changes — not
+"interleaving a live session" but *"a run is in progress; its memory write-back would race
+yours"* — and so does its text. Two `claude` processes for one agent may not both hold the pen.
 
 ## 3. Write-back — the `mows-memory` block
 
@@ -176,11 +208,10 @@ chose to remember.
 Event on store: `memory stored: <bytes> bytes, <lines> lines` — one line per write, so the
 `Events` disclosure shows the memory's history without opening the file.
 
-## 4. `mows-agent-meta body <file>`
+## 4. `mows-agent-meta` — unchanged
 
-One new subcommand: prints the Markdown body after the frontmatter, nothing else. Needed by the
-§2.4 fallback only; cheap enough to add unconditionally so the fallback is one line when it is
-needed. No frontmatter changes. `MOWS_KEYS` is unchanged — memory is not configured, it exists.
+No new subcommand, no frontmatter changes. `MOWS_KEYS` is unchanged — memory is not configured,
+it exists. (An earlier draft added `body <file>` for a `--resume` fallback; D1 removed the need.)
 
 ## 5. Dashboard
 
@@ -218,23 +249,31 @@ is `$EDITOR memory.md`, on purpose.
 - chat (stub) → argument contains `A human is present` and does **not** contain `no human
   available`.
 - run → argument contains `no human available` and does **not** contain `A human is present`.
-- chat → argv contains `--agent <name>` (or, after §6.3 step 1 rules it out, the argument contains the
-  agent body's first line).
+- chat → argv contains `--agent <name>` and does **not** contain `--resume`.
+- chat with a 14-entry `chat.jsonl` → the argument contains exactly the last 12, oldest first,
+  and not the first two.
+- chat with one 5000-char entry → that entry appears cut to 2000 chars ending `[…]`.
+- chat with no `chat.jsonl` → contains `(no conversation yet)`.
+- chat with an `error`-role entry → it appears as `SYSTEM (`.
+- chat against an agent with **no runs at all** → exit 0, reply recorded (the old `die` is gone).
+- chat while `last/status.json` says `working` → refused, message names the memory race.
+
+### 6.2b `chat.jsonl` ceiling
+- 230-entry `chat.jsonl`, `mows-agent prune` → 200 entries remain, the **last** 200, event
+  `chat.jsonl trimmed: 30 entries dropped`. 150 entries → untouched, no event.
 
 ### 6.3 The measurement (live, `scripts/live-agents.sh`, never CI)
-Costs cents; needs a completed run to resume.
-1. **`--agent` + `--resume` compatibility.** One chat turn with both flags. Record: exit code,
-   whether `result.json` exists, whether stderr names either flag. This decides §2.4's branch
-   and is written into this spec's addendum as a fact with the CLI version it was measured on.
-2. **Does chat enforce the tool list?** Against `disk-watch` (`tools: [Bash, Read, Glob, Grep]`,
+Costs cents.
+1. **Does chat enforce the tool list?** Against `disk-watch` (`tools: [Bash, Read, Glob, Grep]`,
    `disallowedTools: [Write, Edit, …]`): chat *"Create a file named
    mows-chat-tool-probe.txt in your working directory using the Write tool, then say which tool
    you used."* Assert: the file does **not** exist afterwards, and the reply does not claim
    `Write`. Then the control: same request via Bash redirection — the file **does** exist,
    because Bash is granted. The pair is what makes the result a measurement: a probe that only
-   ever fails cannot tell "enforced" from "broken".
-3. Record both outcomes in `capability.mjs`'s comment beside the "measured, not assumed" text,
-   **with the date and CLI version**, and change the panel text if (2) fails.
+   ever fails cannot tell "enforced" from "broken". With chat now passing `--agent` this is
+   expected to hold; it is measured anyway, because the panel says it was.
+2. Record both outcomes in `capability.mjs`'s comment beside the "measured, not assumed" text,
+   **with the date and CLI version**, and change the panel text if (1) fails.
 
 ### 6.4 The gate that was hollow
 `scripts/capability-check.mjs`'s `'the chat caveat says the tool list carries across a chat
@@ -250,10 +289,9 @@ step 3 writes. A gate that cannot measure something says when it was last measur
   about what every future agent needs to remember.
 - **Memory edits from the dashboard.** Read-only. The file is the interface.
 - **Sharing memory between agents.** Keyed by name, on purpose (Layer 6 D5).
-- **Removing `--resume`.** The session still carries useful in-conversation context within
-  its 30-day life; this spec makes it non-load-bearing, it does not forbid it. If the measured
-  cost of a resumed turn climbs, dropping `--resume` becomes a one-line change with nothing
-  else to move.
+- **Keeping `--resume` as an option.** An earlier draft kept it and called removal "a
+  one-line change later". Asked whether anything could still grow without control, the honest
+  answer was: yes, the resumed transcript, exactly as today. So it goes now (D1), not later.
 - **Migrating claude-mem's observations into agent memory.** Different thing: claude-mem is an
   observer log of *sessions*; this is an agent's working notes. They can point at each other;
   they are not the same store.
@@ -267,8 +305,10 @@ step 3 writes. A gate that cannot measure something says when it was last measur
   failure — loud, and the fix is prompt wording, not code.
 - **The agent stuffs the block.** D5 caps it and logs the cut. The operator sees `memory
   truncated` in Events and tightens the wording.
-- **`--agent` + `--resume` is refused.** §2.4 names the fallback; §6.3.1 decides it before any
-  chat change lands.
+- **A fresh session per chat turn loses nuance a resumed one carried.** Beyond the last 12
+  entries, yes — and that is the memory file's job. If an agent keeps re-deriving something
+  from the conversation, the fix is that it should be writing that thing into its memory, and
+  the visible `mows-memory` block in the transcript shows whether it is.
 - **A block inside quoted output is mis-extracted.** Info string must be exactly `mows-memory`;
   §6.1 tests the nested-fence case. If a real reply still fools it, the stored memory is visible
   in the transcript and the card, so the mistake is seen the same day.
