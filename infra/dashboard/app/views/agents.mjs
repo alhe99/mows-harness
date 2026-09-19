@@ -121,7 +121,7 @@ export function AgentDetail({ name }) {
               a short confident list for the file that is actually least restricted is the exact
               inversion capability.mjs exists to prevent. Inheriting agents get no hint line —
               the Capabilities card beside it already says what they can reach, at length. */ ''}
-        <${Chat} name=${name} runs=${d.recs} events=${d.events}
+        <${Chat} name=${name} events=${d.events}
           tools=${d.capability?.effective?.length ? d.capability.effective.join(', ') : null} />
       </section>
       <aside class="agside">
@@ -145,6 +145,16 @@ export function AgentDetail({ name }) {
                 <a href="/ui/agents/${name}/${r.run_id}" title=${r.run_id}>${runLabel(r.run_id)}</a>
                 <span class="rcost">${usd(r.cost_usd)}</span></li>`)}</ul>`
             : html`<p class="muted">Never run.</p>`}</div>
+        ${/* The agent's working memory (spec 2026-09-19), read-only. null and '' are different
+              states and both are shown as words: null means mows-agent has never stored one,
+              '' means the agent emitted an empty block — cleared it on purpose. A <pre> of the
+              text otherwise; the file is Markdown but rendering it would invite the same
+              injection surface the chat view had to close, for a card whose whole job is
+              "show what it wrote". */ ''}
+        <div class="card"><h2 class="cl">Memory</h2>
+          ${d.memory == null ? html`<p class="muted">No memory yet.</p>`
+            : d.memory === '' ? html`<p class="muted">Cleared by the agent.</p>`
+            : html`<pre class="mem">${d.memory}</pre>`}</div>
         ${/* The comp has no events surface, but this view had one and dropping it would lose
               the only place the raw unit log is readable. Collapsed rather than deleted: shut,
               it costs the design one hairline; open, nothing regressed. */ ''}

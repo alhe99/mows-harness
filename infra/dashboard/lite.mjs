@@ -2034,6 +2034,7 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .rruns .pill{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 7px;border-radius:4px;flex-shrink:0}
 .rruns a{font:12px var(--mono);color:var(--fg2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .rcost{font:12px var(--mono);color:var(--fg2);font-variant-numeric:tabular-nums;flex-shrink:0}
+.mem{font:12px/1.5 var(--mono);color:var(--fg2);white-space:pre-wrap;word-break:break-word;margin:0;max-height:320px;overflow:auto}
 .agside .agev{padding:14px 20px}
 .agev summary{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer}
 .agev .events{margin-top:12px}
@@ -3339,6 +3340,10 @@ async function apiView(req, res, rest) {
     return sendJson(req, res, 200, {
       name, recs: a.recs, events: a.events, total: a.total, cost7d: a.cost7d,
       timers, timer: summarizeTimers(timers), capability,
+      // The agent's own working memory (spec 2026-09-19): mows-agent writes it, this reads it,
+      // nothing here edits it. null when absent — never '' — so the card can tell "no memory
+      // yet" from "memory deliberately cleared" (an empty file), which the agent can do.
+      memory: await fsp.readFile(`${AGENTS_STATE}/${name}/memory.md`, 'utf8').catch(() => null),
     });
   }
   if (kind === 'chat') return sendJson(req, res, 200, { turns: await agentChat(name) });
@@ -3373,15 +3378,13 @@ async function agentDetailView(req, res, name) {
     : tsum.state === 'mixed' ? btn('pause', 'Pause') + btn('resume', 'Resume')
     : btn('pause', 'Pause');
   const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
-  // Chat resumes the newest COMPLETED run's session, so it is only offered once one exists —
-  // `mows-agent chat` refuses otherwise and the button would just produce an error page.
+  // No completed-run gate (spec 2026-09-19 §2.4): a chat turn no longer resumes a session, so
+  // an agent that has never run can be asked what it would do. The gate that stood here was
+  // true until the reason for it left; it did not stay on as "harmless extra strictness".
   const chat = await agentChat(name);
-  const chatable = a.recs.some(r => r.state === 'done');
   const pending = chat.length && chat[chat.length - 1].role === 'user';
   const bubbles = chat.map(t => `<div class="m ${t.role === 'user' ? 'me' : 'claude'}"><div class="mh"><b>${t.role === 'user' ? 'you' : esc(name)}</b> <span class="muted">${esc((t.at || '').slice(11, 19))}${t.cost_usd ? ' · ' + usd(t.cost_usd) : ''}</span></div><pre>${esc(t.text || '')}</pre></div>`).join('');
-  const chatBox = !chatable
-    ? '<p class="muted">Chat resumes a finished run\'s session. Run this agent once first.</p>'
-    : `${bubbles || '<p class="muted">No messages yet. Ask it about its last run.</p>'}
+  const chatBox = `${bubbles || '<p class="muted">No messages yet. Ask it anything about its territory.</p>'}
 ${pending ? '<p class="muted">Thinking… reload in a few seconds.</p>' : ''}
 <form method="post" action="/a/agent-chat" class="chatf">
 <input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}">

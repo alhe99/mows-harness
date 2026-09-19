@@ -255,7 +255,7 @@ function feed(turns, events) {
   return out;
 }
 
-export function Chat({ name, runs, events, tools }) {
+export function Chat({ name, events, tools }) {
   const [turns, setTurns] = useState([]);
   const [live, setLive] = useState('');
   const [busy, setBusy] = useState(false);
@@ -267,7 +267,6 @@ export function Chat({ name, runs, events, tools }) {
   // otherwise close over the first render's value, which is the bug that makes an optimistic
   // bubble look preserved in testing and vanish in production.
   const pendingRef = useRef([]);
-  const chatable = (runs || []).some(r => r.state === 'done');
 
   useEffect(() => {
     // Pendings belong to the agent they were typed at. Today `Chat` unmounts when `name`
@@ -421,7 +420,8 @@ export function Chat({ name, runs, events, tools }) {
     }
   };
 
-  if (!chatable) return html`<p class="muted">Chat resumes a finished run's session. Run this agent once first.</p>`;
+  // No completed-run gate (spec 2026-09-19 §2.4): a chat turn no longer resumes a session, so
+  // there is nothing a first run has to create before the first question can be asked.
   return html`<div class="chat">
     <div class="chatbox" ref=${boxRef} onScroll=${onScroll}>
       ${feed(turns, events).map((row, i) => row.sys
