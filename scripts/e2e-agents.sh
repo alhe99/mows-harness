@@ -583,6 +583,57 @@ chk "run: absent memory is stated as none"            'grep -qx "(none — this 
 chk "run: empty (cleared) memory reads as none too"   'grep -q "^(none — this is your first call" "$CLAUDE_ARGS_FILE"'
 rm -f "$M"
 
+echo "### chat: identity re-asserted, --resume gone, history injected (spec D1, §2.3, §2.4)"
+echo ok > "$CLAUDE_MODE_FILE"
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: passes --agent <name>"                  'grep -qx -- "--agent" "$CLAUDE_ARGS_FILE" && grep -qx "good" "$CLAUDE_ARGS_FILE"'
+chk "chat: never passes --resume"                  '! grep -qx -- "--resume" "$CLAUDE_ARGS_FILE"'
+chk "chat: appended prompt says a human is present" 'grep -q "^A human is present and is asking you this directly" "$CLAUDE_ARGS_FILE"'
+chk "chat: appended prompt does NOT say no human"   '! grep -q "no human available" "$CLAUDE_ARGS_FILE"'
+chk "chat: appended prompt has the memory section"  'grep -qx "## Your memory" "$CLAUDE_ARGS_FILE"'
+chk "chat: appended prompt has the write-back instruction" 'grep -qx "## Updating your memory" "$CLAUDE_ARGS_FILE"'
+chk "chat: -- guard still precedes the message"     'awk "/^--$/{g=NR} /^hi$/{m=NR} END{exit !(g && m && g<m)}" "$CLAUDE_ARGS_FILE"'
+# history: a 14-entry chat.jsonl; the appended prompt carries exactly the last 12, oldest first,
+# and NOT the message being sent now (the context is built before this turn is appended).
+C="$MOWS_AGENTS_STATE/good/chat.jsonl"; : > "$C"
+for i in $(seq 1 14); do
+  r=user; [ $((i % 2)) = 0 ] && r=assistant
+  jq -nc --arg r $r --arg t "turn $i" --arg a "2026-09-19T10:00:$(printf %02d $i)+00:00" '{at:$a,role:$r,text:$t}' >> "$C"
+done
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: history heading present"                'grep -qx "## The conversation so far" "$CLAUDE_ARGS_FILE"'
+chk "chat: history has the last 12, not the first 2" 'grep -q "turn 3$" "$CLAUDE_ARGS_FILE" && grep -q "turn 14$" "$CLAUDE_ARGS_FILE" && ! grep -q "turn 1$" "$CLAUDE_ARGS_FILE" && ! grep -q "turn 2$" "$CLAUDE_ARGS_FILE"'
+chk "chat: history oldest first"                   '[ "$(grep -n "turn 3$" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" -lt "$(grep -n "turn 14$" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" ]'
+chk "chat: the message being sent is not in the history" '! grep -qE "^USER \([0-9:]+\): hi$" "$CLAUDE_ARGS_FILE"'
+chk "chat: user lines labelled USER (hh:mm:ss)"    'grep -qE "^USER \(10:00:03\): turn 3$" "$CLAUDE_ARGS_FILE"'
+chk "chat: agent lines labelled by upper-cased name" 'grep -qE "^GOOD \(10:00:04\): turn 4$" "$CLAUDE_ARGS_FILE"'
+: > "$C"; jq -nc --arg t "$(python3 -c 'print("z"*5000)')" '{at:"2026-09-19T10:00:00+00:00",role:"user",text:$t}' >> "$C"
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: a 5000-char entry is cut to 2000 + […]"  'grep -qE "^USER \(10:00:00\): z{2000}\[…\]$" "$CLAUDE_ARGS_FILE"'
+: > "$C"; jq -nc '{at:"2026-09-19T10:00:00+00:00",role:"error",text:"claude exited 1"}' >> "$C"
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: error entries appear as SYSTEM"         'grep -qx "SYSTEM (10:00:00): claude exited 1" "$CLAUDE_ARGS_FILE"'
+rm -f "$C"; mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: no chat.jsonl reads as no conversation yet" 'grep -qx "(no conversation yet)" "$CLAUDE_ARGS_FILE"'
+# a never-run agent can now be chatted with
+mkagent "$A/fresh.md" "$MOWS_BLOCK_OK"
+chk "chat: an agent with no runs at all is chattable" 'mows-agent chat fresh --stream "hello" >/dev/null 2>&1'
+chk "chat: ...and its reply was recorded"          'tail -1 "$MOWS_AGENTS_STATE/fresh/chat.jsonl" | jq -e ".role == \"assistant\""'
+# the mid-run refusal survives, with the memory-race reason
+mkdir -p "$MOWS_AGENTS_STATE/good/runs/99990101-000000-1"; ln -sfn runs/99990101-000000-1 "$MOWS_AGENTS_STATE/good/last"
+jq -n --argjson pid $$ '{state:"working",pid:$pid}' > "$MOWS_AGENTS_STATE/good/runs/99990101-000000-1/status.json"
+chk "chat: refused while a run is working"         '! mows-agent chat good --stream "hi" >/dev/null 2>&1'
+chk "chat: refusal names the memory race"          'mows-agent chat good --stream "hi" 2>&1 | grep -qi "memory"'
+rm -rf "$MOWS_AGENTS_STATE/good/runs/99990101-000000-1"; mows-agent run good >/dev/null 2>&1   # restore a sane `last`
+# memory captured from a chat reply, streaming and not
+printf '%s' $'Sure.\n```mows-memory\nfrom chat: yes\n```\n' > "$CLAUDE_RESULT_FILE"; echo memblock > "$CLAUDE_MODE_FILE"
+mows-agent chat good --stream "remember this" >/dev/null 2>&1
+chk "chat --stream: memory block stored"           '[ "$(cat "$M")" = "from chat: yes" ]'
+printf '%s' $'Sure.\n```mows-memory\nfrom plain chat: yes\n```\n' > "$CLAUDE_RESULT_FILE"
+mows-agent chat good "remember this" >/dev/null 2>&1
+chk "chat (plain): memory block stored"            '[ "$(cat "$M")" = "from plain chat: yes" ]'
+echo ok > "$CLAUDE_MODE_FILE"; rm -f "$M"
+
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
 chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
   'node scripts/chat-stream-utf8-check.mjs'

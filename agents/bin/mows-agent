@@ -215,6 +215,32 @@ Write the WHOLE memory, not a diff: the block replaces the file. Keep it under 4
 Leave the block out to keep your memory exactly as it is. Nothing else in your reply is stored.
 EOF
 }
+chat_history(){ # chat_history <name>: the last CHAT_CTX_TURNS entries of chat.jsonl, as text (spec §2.3)
+  local n=$1 f="$STATE_ROOT/$1/chat.jsonl"
+  printf '\n## The conversation so far\n'
+  [ -s "$f" ] || { printf '(no conversation yet)\n'; return 0; }
+  # error-role entries (a failed turn) are shown as SYSTEM: the agent should know its last answer
+  # never arrived. Each text is cut at CHAT_CTX_CHARS so one long reply cannot crowd out the rest.
+  tail -n "$CHAT_CTX_TURNS" "$f" | jq -r --arg n "$n" --argjson max "$CHAT_CTX_CHARS" '
+    (if .role == "user" then "USER" elif .role == "error" then "SYSTEM" else ($n | ascii_upcase) end) as $who
+    | (.text // "") as $t
+    | "\($who) (\((.at // "")[11:19])): \(if ($t | length) > $max then $t[:$max] + "[…]" else $t end)"'
+}
+chat_context(){ # chat_context <name> <profile> <workdir>: appended system prompt for ONE chat turn
+  local n=$1 prev
+  prev=$(ls -1d "$STATE_ROOT/$n/runs"/*/ 2>/dev/null | tail -1)
+  printf 'mows-agent chat context\n- agent: %s\n- profile: %s\n- workdir: %s\n' "$n" "$2" "$3"
+  printf -- "- this turn's budget: %s USD, %s turns\n" "$CHAT_USD" "$CHAT_TURNS"
+  if [ -n "$prev" ] && [ -f "$prev/status.json" ]; then
+    printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
+  fi
+  memory_block "$n"
+  chat_history "$n"
+  # The one line where run and chat disagree on purpose (spec §2.3). run_context says there is
+  # no human; that line used to sit in a resumed transcript while a human typed at it.
+  printf '\nA human is present and is asking you this directly. Answer them. Ask a clarifying question if one is genuinely needed; do not pretend to certainty you lack.\n'
+  memory_instruction
+}
 run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
   local prev
   prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
@@ -407,9 +433,12 @@ cmd_logs(){
 
 # ---------- chat ----------
 # One conversation turn against an agent's most recent run, by resuming its session id.
-# The run record already stores session_id, so a chat turn is just `claude -p --resume` —
-# no daemon, no background session, no TUI to scrape. The thread persists across turns and
-# across days because Claude Code keeps the session; we only ever store our own transcript.
+# A chat turn is one bounded `claude -p --agent <name>` with the agent's memory and the recent
+# conversation appended to its system prompt (spec 2026-09-19 D1). It shares run mode's exact
+# shape and differs in three things: the budget (CHAT_USD/CHAT_TURNS, sized for one question),
+# the appended context (chat_context, which says a human is present), and the user turn (the
+# message). No --resume: there is no session to expire at cleanupPeriodDays, none to outgrow,
+# and no completed run is needed before the first question. We store our own transcript.
 CHAT_USD="${CHAT_USD:-0.25}"   # per-turn cap; a chat turn is one question, not a work session
 CHAT_TURNS="${CHAT_TURNS:-6}"  # enough for a lookup or two, not enough to run a whole task
 # Overridable (not just a literal `timeout 300` below) so a real `timeout` kill — the specific
@@ -449,21 +478,12 @@ cmd_chat(){
   # that does not honour `--`, and costs nothing since it is invisible in a chat message.
   case $msg in -*) msg=" $msg";; esac
 
-  # Resume the newest run that COMPLETED, not merely the newest run. A run that was stopped or
-  # that failed before its result record never persisted a conversation, so `--resume` on its
-  # session id fails with "No conversation found" — the newest run is exactly the one most likely
-  # to be in that state, since that is what a stop leaves behind.
-  [ -d "$dir/runs" ] || die "$n has no runs yet — chat resumes a run's session, so run it once first: mows-agent run $n"
+  # No --resume (spec 2026-09-19 D1), so no completed run is required and no session id is looked
+  # up. Two claude processes may not hold the pen at once, though: a run in progress will write
+  # memory.md when it ends, and so would this turn — whichever finishes second wins silently.
   if [ -f "$dir/last/status.json" ] && [ "$(jq -r .state "$dir/last/status.json")" = working ]; then
-    die "$n is mid-run; resuming a live session would interleave with it. Wait for it to finish."
+    die "$n is mid-run; its memory write-back would race this turn's. Wait for it to finish."
   fi
-  local st sid="" r
-  while IFS= read -r r; do
-    st="$r/status.json"; [ -f "$st" ] || continue
-    [ "$(jq -r .state "$st")" = done ] || continue
-    sid=$(jq -r '.session_id // empty' "$st"); [ -n "$sid" ] && break
-  done < <(find "$dir/runs" -mindepth 1 -maxdepth 1 -type d | sort -r)
-  [ -n "$sid" ] || die "$n has no completed run to resume — every run so far failed or was stopped. Run it once: mows-agent run $n"
 
   check_version
   local m; m=$(meta "$f")
@@ -472,6 +492,9 @@ cmd_chat(){
   local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
 
   mkdir -p "$dir"
+  # Built BEFORE this turn's message is appended below, so the history the model sees is the
+  # conversation up to now and the message arrives once, as the user turn — not twice.
+  local ctx; ctx=$(chat_context "$n" "$(mget "$m" .mows.profile)" "$wd")
   jq -nc --arg r user --arg t "$msg" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
 
   if [ "$stream" = 1 ]; then
@@ -524,7 +547,8 @@ cmd_chat(){
         jq -nc --argjson s "$seq" --arg d "$t" '{seq:$s,delta:$d}'
       fi
     done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
-              --resume "$sid" --output-format stream-json --verbose --include-partial-messages \
+              --agent "$n" --append-system-prompt "$ctx" \
+              --output-format stream-json --verbose --include-partial-messages \
               --permission-prompts none --strict-mcp-config "${mcp[@]}" \
               --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
               -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
@@ -543,6 +567,9 @@ cmd_chat(){
     [ -z "$reply" ] && reply=$(jq -r '.result // ""' <<<"$resline")
     jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$iserr" \
        '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+    # From the RESULT record's text, not the concatenated deltas: the block is the model's last
+    # words and survives a tool-only or partial-delta turn that never streamed it.
+    store_memory "$n" "$(jq -r '.result // ""' <<<"$resline")"
     jq -nc --argjson c "$cost" --arg e "$iserr" '{end:true,cost_usd:$c,is_error:($e=="true")}'
     event "$n" "chat turn (streamed): \$$cost"
     [ "$iserr" = true ] && return 3; return 0
@@ -550,7 +577,7 @@ cmd_chat(){
 
   local out rc
   out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
-        --resume "$sid" --output-format json \
+        --agent "$n" --append-system-prompt "$ctx" --output-format json \
         --permission-prompts none --strict-mcp-config "${mcp[@]}" \
         --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
         -- "$msg" 2>/dev/null)
@@ -571,6 +598,7 @@ cmd_chat(){
   err=$(jq -r '(.is_error // false)|tostring' <<<"$out")
   jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$err" \
      '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+  store_memory "$n" "$reply"
   event "$n" "chat turn: \$$cost"
   printf '%s\n' "$reply"
   [ "$err" = true ] && return 3; return 0
