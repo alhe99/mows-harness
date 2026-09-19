@@ -549,7 +549,7 @@ grep -rn 'style=' infra/dashboard/app/ ; echo "(must be empty)"
 node --check infra/dashboard/lite.mjs
 ./scripts/preflight.sh
 ./scripts/e2e-infra
-PLAYWRIGHT=/home/alonso/.npm/_npx/6bcb61ec6d5aea22/node_modules/playwright/index.mjs ./docs/qa/probes/run.sh journey chromium
+PLAYWRIGHT=~/.npm/_npx/<hash>/node_modules/playwright/index.mjs ./docs/qa/probes/run.sh journey chromium   # probes.mjs also auto-finds the npx cache
 PLAYWRIGHT=… ./docs/qa/probes/run.sh journey webkit
 ```
 Expected: empty grep; syntax OK; ALL CLEAN (chat-view-check 91, capability-check 170); e2e-infra 89/0 + http2 SKIP; both probes all green (the fixture still has a done run, so the journey's "renders a chat transcript and a composer" is unaffected — the composer is now unconditional).
