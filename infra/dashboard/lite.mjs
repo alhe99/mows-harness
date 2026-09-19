@@ -1996,6 +1996,12 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .chat .mb pre{background:rgba(9,9,11,.6);border:1px solid var(--bd);border-radius:8px;padding:12px 14px;font:12px var(--mono);color:var(--ok);overflow-x:auto}
 .chat .mb code{font:12px var(--mono);background:var(--pop);border-radius:4px;padding:1px 5px;color:var(--fg2)}
 .chat .mb pre code{background:none;padding:0;color:inherit}
+/* The agent's memory write-back as it appears in a reply. It IS a code fence — that is how
+   mows-agent extracts it — but an unlabelled green block read as "what is that green text?" the
+   first time a person saw one. So the fence whose info string is mows-memory gets a caption and a
+   green edge. CSS only: marked emits <pre><code class="language-<info>">. */
+.chat .mb pre:has(> code.language-mows-memory){border-color:var(--ok-bd);position:relative;padding-top:32px}
+.chat .mb pre:has(> code.language-mows-memory)::before{content:'memory · saved to memory.md';position:absolute;top:10px;left:14px;font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ok)}
 /* system divider: a run-lifecycle event, interleaved into the transcript */
 .sysdiv{display:flex;align-items:center;gap:12px}
 .sysl{flex:1;height:1px;background:var(--bd)}
