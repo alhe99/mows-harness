@@ -123,6 +123,7 @@ docs/superpowers/specs/2026-08-28-fleet-redesign-design.md
 docs/superpowers/specs/2026-09-15-agents-layer-design.md
 docs/superpowers/specs/2026-09-16-dashboard-spa-design.md
 docs/superpowers/specs/2026-09-17-agents-figma-redesign-design.md
+docs/superpowers/specs/2026-09-19-agent-memory-and-identity-design.md
 fleet/SETUP.md
 fleet/add-agent.sh
 fleet/bin/cc
