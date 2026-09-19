@@ -2260,7 +2260,15 @@ async function mdView(req, res, url) {
 // body>h1 in CSS). liveN: live-session count badge — only pages that already computed tmuxLive
 // pass it; fleet.js keeps it fresh (id=pnav-live) on pages that carry the island. host: real
 // request Host header — SPEC text mapping ("connected · <host>"), never a hardcoded address.
-function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/agents') {
+// agentsHref defaults to the APP now (2026-09-19). Until this flip every server-rendered page's
+// Agents tab — header and bottom bar — led to the server-rendered /agents, where a chat turn is a
+// form POST, a 303 and "Thinking… reload in a few seconds"; only the SPA shell pointed the tab at
+// /ui/agents. From the home page a person never reached the streaming view at all, and the first
+// real user test read as "the SPA is not working" while three turns streamed fine server-side.
+// The SPA design (§6) shipped both models and deferred this flip until the app was proven; it
+// is — probes in both engines, live turns, memory. /agents/<name> stays reachable by URL and as
+// the <noscript> twin.
+function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/ui/agents') {
   const pnav = `<nav class="pnav">
 <a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
