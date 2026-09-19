@@ -137,7 +137,12 @@ export function CapabilityPanel({ capability: c }) {
           ? html`, and ${money(b.usd_per_day)} per day — the daily cap is checked before a run
               starts, so it does not stop a run already under way`
           : ''}. A chat turn below is capped separately by mows-agent and is not covered by the
-        per-run figure; it carries this same tool list (measured, not assumed).${p.turnCapDisagreement
+        per-run figure; it carries this same tool list (measured, not assumed).${/* measured live:
+        scripts/live-agents.sh — a chat turn with --agent reports the denied tool absent and never
+        produces the file, in every session measured on 2026-09-19; the dated result is in
+        scripts/fixtures/chat-tools-measured.txt and capability-check.mjs prints it. What that run
+        could NOT settle is what the permission regime does with a GRANTED Bash: the auto classifier
+        refused the same in-workdir read in one session and allowed it in the next. */ ''}${p.turnCapDisagreement
           ? html` Its file also sets <b>maxTurns: ${p.maxTurnsDeclared}</b> in the Claude namespace,
               which contradicts the figure above. Measured on this box, the mows figure is the one
               that binds: a run with <code>maxTurns: 2</code> and${' '}<code>--max-turns 20</code>${' '}

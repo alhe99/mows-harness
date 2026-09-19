@@ -50,17 +50,20 @@ Exit: `0` done · `3` failed · `4` budget_exceeded · `5` stalled (no stream ev
 `STALL_MIN` minutes, default 10 — the whole `claude` process group is killed) · `6` refused
 (lint error / already running / daily cap / quota floor) · `64` usage error.
 
-## Chat — a follow-up question against a finished run
+## Chat — a question to the agent, any time
 
 `mows-agent chat <name> [--stream] <message…>` · `--history` · `--clear`
 
-A chat turn is not a new run: it resumes the session id recorded by the newest run that reached
-`done`, so `claude -p --resume` picks the conversation back up days later. It refuses if the
-agent has never run, if every run so far failed or was stopped (there is no session to resume),
-and if a run is in flight (resuming a live session would interleave with it). Each turn is capped
-at `$0.25` and 6 turns — a question, not a work session — and times out at 300 s. The transcript
-`mows-agent` keeps for itself is `~/.local/state/mows-agents/<name>/chat.jsonl`; `--clear` deletes
-that file and leaves the agent's own Claude session untouched.
+A chat turn is not a new run, and since 2026-09-19 it does not resume one either. Each turn is
+a fresh, bounded `claude -p --agent <name>` whose system prompt is extended with the agent's
+memory (see **Memory** below) and the last 12 entries of `chat.jsonl`, each cut at 2000
+characters. The agent knows who it is and what was just said without any Claude session
+surviving between turns — so nothing depends on Claude Code's 30-day transcript retention, and
+nothing grows from turn to turn. It refuses only while a run is in flight (both would write
+`memory.md` when they finish). An agent that has never run can be asked what it would do. Each
+turn is capped at `$0.25` and 6 turns — a question, not a work session — and times out at 300 s.
+The transcript `mows-agent` keeps is `~/.local/state/mows-agents/<name>/chat.jsonl`; `prune`
+keeps its last 200 entries, and `--clear` deletes it and leaves `memory.md` untouched.
 
 **`--stream`** makes the turn emit one compact JSON line per token delta (`{"seq":N,"delta":"…"}`)
 and a final `{"end":true,…}`, instead of printing the finished reply as text. It is recognised
@@ -89,11 +92,39 @@ browser renders. Two consequences worth knowing before a deploy:
   dashboard and this CLI together is covered in "Deploying this change" in
   `../docs/architecture.md`.
 
+## Memory
+
+Each agent has one file: `~/.local/state/mows-agents/<name>/memory.md`. It is injected into
+every run and every chat turn as a `## Your memory` section of the system prompt, and refreshed
+from every reply: the agent ends with a fenced ```` ```mows-memory ```` block and `mows-agent`
+stores the block as the **whole** file. No block leaves it untouched; an empty block clears it
+(logged as `memory cleared by agent`). The agent never writes the file itself and needs no
+`Write` tool for this — both shipped agents deny `Write`, and the alternative would be Bash
+redirection, the exact thing the capability panel exists to warn about.
+
+Hard cap **4096 bytes / 60 lines**, whichever first; overflow is cut at a line boundary, the
+truncated file is still written, and `events.log` gets `memory truncated: <N> bytes / <M> lines
+offered, cap 4096/60`. Every store is logged (`memory stored: <bytes> bytes, <lines> lines`), so
+the Events disclosure on the dashboard is the memory's history. Read it with `cat`, edit it with
+`$EDITOR`; the dashboard shows it read-only under **Memory**. `prune` never touches it.
+
+**A memory can hold a wrong belief, and it will act on it.** Measured live: a turn whose Bash
+command was refused wrote "bash is blocked, no approval surface" into its memory, and the next
+turn read that first and did not try. That is the file doing its job on the wrong fact. When an
+agent seems to have given up on something it can do, read `memory.md` before anything else — and
+fix it there, or have the agent emit an empty `mows-memory` block to start clean.
+
+Before this, `memory: user` in the frontmatter was assumed to make Claude Code persist a
+per-agent memory. It does not — that field scopes Claude Code's *project* memory, keyed by
+working directory — and `harness-reviewer` ran with no memory at all. The field stays (it is a
+real Claude Code setting) but it is not what "your memory" refers to in an agent's task.
+
 ## State dir
 
 `~/.local/state/mows-agents/<name>/`: `last` → symlink to the newest `runs/<run_id>`,
 `runs/<run_id>/{status.json,result.json,stream.jsonl,stderr.log,merge.log}`, `events.log`
-(refusals, stalls, prunes, merge outcomes). `list`/`last`/`logs`/`prune` only ever read this.
+(refusals, stalls, prunes, merge outcomes, memory stores), `memory.md` (see **Memory**),
+`chat.jsonl` (the chat transcript; `prune` keeps its last 200 entries). `list`/`last`/`logs`/`prune` only ever read this.
 
 ## Budget tiers — what each actually enforces
 

@@ -86,9 +86,6 @@ memrun "$(printf '```mows-memory\n%s\n```\n' "$wide")"
 chk "memory: 6250B capped under 4096B"         '[ "$(wc -c < "$M")" -le 4096 ]'
 chk "memory: byte cap cuts at a line boundary" 'tail -c1 "$M" | od -An -c | grep -q "\\\\n" && tail -1 "$M" | grep -qE "^w[0-9]{2} y+$"'
 chk "memory: no .tmp left behind"              '[ ! -e "$M.tmp" ]'
-echo budget > "$CLAUDE_MODE_FILE"; printf 'x' > "$CLAUDE_RESULT_FILE"
-memrun $'```mows-memory\nstored despite budget_exceeded\n```\n'
-# memrun sets mode=memblock; re-assert budget's shape by hand: a result with the block AND a budget state
 printf '%s' $'```mows-memory\nstored despite budget_exceeded\n```\n' > "$CLAUDE_RESULT_FILE"
 echo memblockbudget > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
 chk "memory: stored even when the run ends budget_exceeded" '[ "$(cat "$M")" = "stored despite budget_exceeded" ] && [ "$(jq -r .state "$MOWS_AGENTS_STATE/good/last/status.json")" = budget_exceeded ]'
@@ -683,3 +680,28 @@ Fill the two `<…>` from Task 6's result.
 **Placeholders:** the two `<yes/no>` and `<version>` in Task 7 Step 3 are filled from Task 6's live result, by design; nothing else is deferred.
 
 **Type/name consistency:** `store_memory <name> <text>`, `memory_block <name>`, `memory_instruction`, `chat_history <name>`, `chat_context <name> <profile> <workdir>`; constants `MEM_MAX_BYTES MEM_MAX_LINES CHAT_CTX_TURNS CHAT_CTX_CHARS CHAT_KEEP`; API field `memory`; CSS `.mem`; events `memory stored:` / `memory truncated:` / `memory cleared by agent` / `chat.jsonl trimmed:` — used identically across tasks and tests.
+
+---
+
+## As executed (2026-09-19)
+
+Every task landed as one green commit; where the build departed from the text above, the code
+and the spec addendum are authoritative:
+
+- **Task 2** split the helper into `memory_block` (the section) and `memory_instruction` (the
+  contract), so `run_context` could keep the no-human line *between* them and `chat_context`
+  could put the contract last. Same words, two functions.
+- **Task 3** builds `chat_context` **before** this turn's message is appended to `chat.jsonl` —
+  otherwise the message arrived twice, in the history and as the user turn. The test that caught
+  it: "the message being sent is not in the history".
+- **Task 5's** Memory card distinguishes `null` from `''` in words (never stored / cleared).
+- **Task 6's** control was rewritten three times before it measured anything — a redirect (a
+  write, refused by the regime), a `/tmp` read (outside the workdir, same), and a file named
+  `…token.txt` (declined by the model on credential grounds). The control is an in-workdir read
+  of a random word with an innocuous name. The run-mode baseline is a recorded fact, not an
+  assertion: the model's chosen command (`rtk read`, from the operator's global CLAUDE.md) is the
+  model's to choose. The "reply does not claim to have used Write" regex check was dropped — it
+  matched a sentence *about* Write. The filesystem is the oracle.
+- **Two hazards** surfaced by the measurement and recorded in the spec addendum and SETUP.md:
+  verdicts on an identical command varied across sessions, and a memory that records a failure
+  can stop the next turn from trying.

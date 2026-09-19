@@ -445,6 +445,17 @@ check('the comma-separated string form of tools: is understood',
     /checked before a run starts/.test(joined), joined);
   check('the chat caveat says the tool list carries across a chat turn',
     /carries this same tool list/.test(joined), joined);
+  // That check can only see the SENTENCE. Whether a chat turn actually binds the tool list is a
+  // CLI behaviour, measured by hand in scripts/live-agents.sh (a denied Write that must not
+  // produce a file, beside a granted Bash that must), which writes the date and CLI version
+  // here. A gate that cannot measure something says when it was last measured (spec
+  // 2026-09-19 §6.4) — the alternative is a green line about a sentence, read as a fact.
+  try {
+    const m = readFileSync(new URL('./fixtures/chat-tools-measured.txt', import.meta.url), 'utf8').trim();
+    console.log(`NOTE: chat tool enforcement last measured live: ${m}`);
+  } catch {
+    console.log('NOTE: chat tool enforcement has NEVER been measured live — run scripts/live-agents.sh --yes');
+  }
   check('the per-run figures are shown', /\$1\.50/.test(joined) && /\b40\b/.test(joined), joined);
 }
 // M7 generalised: EVERY fixture that holds authority must warn, and warn above the tool list. A

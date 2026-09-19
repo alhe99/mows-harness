@@ -314,3 +314,51 @@ step 3 writes. A gate that cannot measure something says when it was last measur
   in the transcript and the card, so the mistake is seen the same day.
 - **Cost.** Memory ≤ 4 KB ≈ 1k tokens per call, run and chat. Bounded by construction; the
   live test records the actual delta.
+
+## Addendum — as built, and as measured (2026-09-19)
+
+**Built as specified, with two details worth naming.** Chat extraction reads the result record's
+`.result`, not the concatenated deltas — the block is the model's last text and survives a
+tool-only or partial-delta turn. The Memory card distinguishes `null` (never stored) from `''`
+(cleared by the agent) and says each in words.
+
+**Measured live** (`scripts/live-agents.sh --yes`, seven sessions over the day; claude 2.1.277;
+user `permissions.defaultMode: auto`; `--permission-prompts none`; haiku probe with
+`tools: [Read, Bash]`, `disallowedTools: [Write, Edit, WebFetch]`; workdir = this checkout):
+
+| Question | Result |
+|---|---|
+| Does the tool list bind in a chat turn? | **Yes.** 7/7 sessions: the agent reports Write absent and the file never appears. |
+| Does a *granted* tool run in chat? | **Sometimes.** The same in-workdir `cat` with the same innocuous filename returned the random word in 1 of 4 sessions and was refused in 3 ("bash commands are blocked, no approval surface"). Recorded per run in the fixture, never asserted. See hazard 1. |
+| Bash read outside the workdir | **Denied**, 4/4 (with an innocuous filename). |
+| Bash redirect (a write) | **Denied**, 6/6. |
+| Same read, run mode | **Yes, after one denial, 2/2** — the model first issued `rtk read <file>`, following the operator's `~/.claude/CLAUDE.md` (which `claude -p --agent` loads for agents too); the classifier refused a command it did not know; the model retried with plain `cat` and got the word. Unattended agents inherit the operator's global instructions. |
+| Is the `mows-memory` contract followed by a real model? | **Yes**, every turn of every session, including turns that ended in refusal. |
+
+**What decides a granted Bash is the box's permission regime, not the agent file.** The panel
+already says it "cannot check what the CLI does with `permissionMode`"; this is what the CLI
+does with it: the user-level auto classifier allows `df`/`du`-shaped reads inside the workdir,
+refuses writes and out-of-workdir reads, and refuses commands it does not recognise (`rtk …`).
+The panel's "measured, not assumed" text stands for the tool list, which is what it claims.
+
+**Two hazards found only by measuring:**
+
+1. **Verdicts on an identical command varied across sessions.** Leading explanation, from the
+   run/chat contrast: in both modes the model's *first* command was `rtk read` (denied); in run
+   mode — told "never ask questions, decide and finish" — it retried with `cat` and succeeded,
+   2/2; in chat — told "a human is present… ask a clarifying question if one is genuinely
+   needed" — it stopped and asked, 3/4. If so the flakiness is the human-present line doing its
+   job on a denial, not the classifier. Not isolated (it would cost another paid session per
+   variable), so the control is reported per run, dated, and never averaged:
+   `chat-tools-measured.txt` is one line naming the run it came from.
+2. **Negative memory is sticky.** A turn that fails writes "bash blocked, no approval surface"
+   into `memory.md`; the next turn reads that first and may not try. This is the memory file
+   doing exactly its job on the wrong fact. The remedy is the file: read it, edit it, or have the
+   agent emit an empty block. Recorded in `agents/SETUP.md`.
+
+**Three ways the control was wrong before it was right**, kept here because each is a rule:
+a redirect (a write — refused by the regime, not by chat); a read from `/tmp` (outside the
+workdir — same); and a file named `mows-live-token.txt`, which haiku declined to print on
+credential-protection grounds — a refusal on the model's own judgement, indistinguishable from
+a permission denial by the filesystem alone. **The oracle must be a read, inside the workdir,
+and must not look like a secret.**

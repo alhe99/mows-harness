@@ -214,6 +214,7 @@ scripts/e2e-container
 scripts/e2e-container.sh
 scripts/e2e-infra
 scripts/e2e-infra.sh
+scripts/fixtures/chat-tools-measured.txt
 scripts/fixtures/inherited-tools.json
 scripts/live-agents.sh
 scripts/live-agy.sh
