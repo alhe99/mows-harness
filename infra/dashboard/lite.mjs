@@ -10,24 +10,55 @@
 // "resume in terminal" affordance — this dashboard only drives ONE tmux
 // server, see TMUX_USER: the first non-agent login found).
 // Routes: /            paginated session list (filter: acct, q, page)
+//         /history /system /device /agents   the other server-rendered tabs
 //         /s/<a>/<sid> paginated transcript (newest page first)
 //         /healthz     index stats
 //         /manifest.webmanifest /sw.js /icon-*.png   PWA (installable app)
-// ponytail: no client JS by design — pagination/filtering are plain links, so
-// the app works identically on 2G, with JS disabled, and in text browsers.
-// (sole exception: a one-line service-worker registration; pure enhancement.)
-// The app-shell feel comes from the platform, not a framework: CSS view transitions pin
-// the tab bar across navigations, a speculationrules block prerenders dashboard links on
-// hover/touch (never /term*, ?fresh=1, ?reclaim=1 — those have side effects), bfcache
-// makes back/forward instant (headers are no-cache, never no-store).
+//         /ui /ui/*    the client-rendered app (see uiShellHtml below)
+//         /ui/assets/* content-hashed modules from ./app/, immutable-cached
+//         /api/*       JSON for the app · /stream  one multiplexed SSE per tab
+// ponytail: the server-rendered routes above have no client JS by design —
+// pagination/filtering are plain links, so they work identically on 2G, with
+// JS disabled, and in text browsers. (Sole exception: a one-line service-worker
+// registration; pure enhancement.) Their app-shell feel comes from the platform,
+// not a framework: CSS view transitions pin the tab bar across navigations, a
+// speculationrules block prerenders dashboard links on hover/touch (never /term*,
+// ?fresh=1, ?reclaim=1 — those have side effects, and never /ui*, which owns its
+// own navigation), bfcache makes back/forward instant (no-cache, never no-store).
+//
+// /ui IS client-rendered, and that is the one place the "zero client JS" rule above
+// does not hold (2026-09-16). It exists because a streaming chat transcript and a
+// live run list are state a page reload destroys. It is still zero-DEPENDENCY: four
+// vendored ESM modules under ./app/vendor/ pinned by SHA256SUMS, no npm install, no
+// bundler, no build step.
+//
+// TWO CEILINGS, and it takes both to cover the client. This used to read "preflight caps the
+// whole client at 76,800 B gzipped", which was not true and overstated by a third (final
+// review, M2):
+//   preflight.sh 5b   every .mjs/.css under ./app/, gzip -9, summed   <= 76,800 B
+//   e2e-infra.sh      the SERVED GET /ui document, gzipped            <= 20,480 B
+// The second exists because 5b is a static file gate and cannot see the shell, which inlines
+// the whole CSS constant below -- the SERVER-RENDERED dashboard's entire stylesheet, fleet rows
+// and history and terminal included, of which /ui uses a fraction. That is a third again on top
+// of the gated total, it is re-sent in full on every hard load (the shell is no-cache and its
+// nonce changes per response, so it can never 304), and it grows every time somebody styles an
+// unrelated server-rendered page -- the one direction D3 exists to police, and the one the
+// static gate is blind to. Splitting the CSS is the real fix and is not this branch's; until
+// then the served document is measured rather than assumed.
+// DEPLOY NOTE: this file is no longer self-contained. It imports ./chat-stream.mjs
+// and ./capability.mjs at load, and serves ./app/ at runtime — install all of them
+// together or the unit will not start (missing sibling) or /ui will answer 200 with
+// a blank page (missing app/). See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
 import { promises as fsp, readdirSync, existsSync, readFileSync, statfsSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { gzipSync, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import net from 'node:net';
 import os from 'node:os';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { wireChatStream } from './chat-stream.mjs';
+import { agentCapability } from './capability.mjs';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -595,6 +626,12 @@ const ICO = {
   trash: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
   terminal: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>`,
   plus: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  // The one 44:5 glyph ICO did not already carry. Path data is the Figma export's verbatim, so
+  // it keeps its native viewBox 0 0 16 16 and 1.33333 stroke rather than being redrawn on the
+  // 24-grid the others use — 1.33333/16 is the same ratio as 2/24, so it renders at identical
+  // visual weight beside them. stroke is currentColor (the export baked #18181B); nothing else
+  // was touched.
+  send: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.33333" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.69067 14.4573C9.71599 14.5205 9.76003 14.5743 9.81685 14.6117C9.87367 14.6491 9.94057 14.6682 10.0086 14.6664C10.0766 14.6647 10.1424 14.6422 10.1972 14.602C10.2521 14.5617 10.2933 14.5057 10.3153 14.4413L14.6487 1.77467C14.67 1.7156 14.6741 1.65167 14.6604 1.59037C14.6467 1.52907 14.6159 1.47293 14.5715 1.42852C14.5271 1.38411 14.4709 1.35326 14.4096 1.33959C14.3483 1.32593 14.2844 1.33 14.2253 1.35133L1.55867 5.68467C1.49433 5.70673 1.43828 5.74795 1.39805 5.80278C1.35781 5.85762 1.33531 5.92345 1.33357 5.99144C1.33183 6.05943 1.35093 6.12633 1.38831 6.18315C1.42568 6.23997 1.47954 6.28401 1.54267 6.30933L6.82933 8.42933C6.99646 8.49625 7.1483 8.59631 7.27571 8.72349C7.40312 8.85067 7.50345 9.00233 7.57067 9.16933L9.69067 14.4573Z"/><path d="M14.5693 1.43133L7.276 8.724"/></svg>`,
   wrench: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>`,
   maximize: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`,
@@ -1352,11 +1389,20 @@ const CSS = `
 --fg:#f4f4f5;--fg2:#d4d4d8;--title:#e4e4e7;--mut:#9f9fa9;--dim:#71717b;--dimmer:#52525c;
 --bd:rgba(39,39,42,.6);--bd2:rgba(39,39,42,.8);--hair:#18181b;
 --ring:rgba(161,161,170,.8);
---ok:#00d492;--ok-bg:rgba(0,212,146,.1);--ok-bd:rgba(0,212,146,.4);
---warn:#fbbf24;--bad:#f87171;
+--ok:#00d492;--ok-bg:rgba(0,212,146,.1);--ok-bd:rgba(0,212,146,.2);
+--ok-lt:#5ee9b5;--ok-dk:#00bc7d;--bd3:#3f3f47;
+--warn:#ffb900;--bad:#ff6467;
 --r:10px;--r-lg:16px;
---sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
---mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+--sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* Vendored latin-subset variable faces (infra/dashboard/app/vendor/*.woff2, hash-pinned in
+   SHA256SUMS like every other vendored file). One file per family covers 400-700 — do not
+   add static faces. font-display:swap so a slow font never blanks the page, and the system
+   stacks above stay as the fallback, which is exactly what shipped before this change. */
+@font-face{font-family:'Inter';font-style:normal;font-weight:400 700;font-display:swap;
+src:url(FONT_INTER) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;
+src:url(FONT_MONO) format('woff2')}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{background:var(--bg)}
 body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);padding:12px;max-width:1100px;margin:0 auto;position:relative}
@@ -1876,7 +1922,193 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .st-failed,.st-stalled,.st-budget_exceeded{background:#dc262633}
 .st-never{background:#71717a33}
 .actions{display:flex;gap:8px;margin:8px 0}.actions form{display:inline}
+.chatf{display:flex;gap:8px;align-items:flex-end;margin:10px 0}
+.chatf textarea{flex:1;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font:inherit;resize:vertical}
+.m.me{opacity:.85}.m.me .mh b{color:var(--fg)}
 .runs li{margin:4px 0}
+/* Task 7, the SPA's streaming chat view. Three notes on how this differs from the brief's block:
+   (1) the sticky composer is scoped ".chat .chatf", NOT bare ".chatf". The same class is on the
+   SERVER-rendered /agents/<name> form three rules up, and a bare override would make that page's
+   composer float over its own Runs/Events sections for the whole scroll — a visible regression on
+   a page this task does not touch. The values are the brief's, verbatim; only the selector is
+   narrowed to the SPA wrapper. (2) the brief also restated ".chatf textarea" and ".m.me" with
+   byte-for-byte the same declarations as the rules already above; re-declaring them would only
+   spend bytes against the size ceiling. (3) --kb is set by the view's visualViewport handler. */
+.chat{display:flex;flex-direction:column;gap:8px}
+.chatbox{max-height:60vh;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:10px}
+.chat .chatf{position:sticky;bottom:calc(var(--kb,0px) + env(safe-area-inset-bottom));display:flex;gap:8px;align-items:flex-end;background:var(--bg);padding:6px 0}
+.m.streaming .mh .muted{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.mb pre{white-space:pre-wrap;word-break:break-word}
+.jump{position:sticky;bottom:70px;align-self:center}
+
+/* ---------- agents section, Figma 44:5 (design doc: docs/superpowers/specs/2026-09-17-*) ----------
+   Scoping rules for this whole block, and why:
+   - the two-column layout and the message restyle are scoped to .ag2 / .chat, NOT to bare .m,
+     because the SERVER-rendered /agents/<name> shares the .m/.mh/.mb markup and emits no avatar
+     span. A bare .m override would leave that page with a flex row and nothing to put in it.
+   - body.uiapp carries the comp's own metrics (1024 content + 32 gutter = 1088). The other pages
+     keep the 1024/48 reading column they already had; matching the comp is an /ui statement, not
+     a site-wide one.
+   - icons are CSS masks over data: URIs, so they take currentColor and hover with their button.
+     The path data is ICO's, already in this file — nothing new was drawn. */
+:root{
+--ico-restart:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-3-6.7'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E");
+--ico-activity:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-4l-3 9L9 3l-3 9H2'/%3E%3C/svg%3E");
+--ico-send:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.33333' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.69 14.46a.5.5 0 0 0 .62-.02L14.65 1.77a.33.33 0 0 0-.42-.42L1.56 5.68a.33.33 0 0 0-.02.63l5.29 2.12a2 2 0 0 1 1.13 1.13z'/%3E%3Cpath d='M14.57 1.43 7.28 8.72'/%3E%3C/svg%3E")}
+@media(min-width:701px){body.uiapp{max-width:1088px;padding:32px}}
+.agwrap{display:flex;flex-direction:column;gap:12px}
+.agback{font:12px var(--mono);color:var(--dim)}
+.agback:hover{color:var(--fg2)}
+.ag2{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
+.agchat{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.agh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.agav{width:32px;height:32px;border-radius:8px;background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok);display:flex;align-items:center;justify-content:center;font:700 12px/1 var(--mono);flex-shrink:0}
+.agav::before{content:'>_'}
+.agti{min-width:0;flex:1}
+.agti h1{font:600 16px/1.4 var(--sans);padding:0;display:flex;align-items:center;gap:8px;letter-spacing:-.01em}
+.agti h1::before{display:none}
+.agdot{width:8px;height:8px;border-radius:50%;background:var(--ok-lt);box-shadow:0 0 0 3px rgba(0,188,125,.2);flex-shrink:0}
+.agsub{font:12px/1.25 var(--mono);color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agctl{display:flex;gap:8px;margin:0}
+.cbtn{width:32px;height:32px;min-height:32px;padding:0;border-radius:8px;background:var(--card2);border:1px solid var(--bd3);color:var(--mut);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cbtn::before{content:'';width:14px;height:14px;background:currentColor;-webkit-mask:var(--ico-restart) center/14px no-repeat;mask:var(--ico-restart) center/14px no-repeat}
+.cbtn:hover{background:var(--pop);border-color:var(--ring);color:var(--fg2)}
+/* transcript: SPA only (see scoping note above) */
+.chat{gap:0;flex:1;min-height:0}
+.agchat{height:min(78vh,812px)}
+.chat .chatbox{padding:20px;gap:20px;max-height:none;flex:1;min-height:0}
+.chat .chatf{position:static}
+.chat .m{background:none;border:0;border-radius:0;padding:0;margin:0;display:flex;gap:12px;align-items:flex-start;opacity:1}
+.chat .m.me{flex-direction:row-reverse}
+.chat .mav{width:32px;height:32px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font:700 11px/1 var(--mono)}
+.chat .m.claude .mav{background:var(--ok-bg);border:1px solid var(--ok-bd);color:var(--ok)}
+.chat .m.claude .mav::before{content:'>_'}
+.chat .m.me .mav{background:var(--pop);border:1px solid var(--bd2);color:var(--mut)}
+.chat .m.me .mav::before{content:'U'}
+.chat .mc{min-width:0;flex:1;display:flex;flex-direction:column;gap:6px}
+.chat .m.me .mc{align-items:flex-end}
+.chat .mh{padding:0;font:700 10px/1 var(--mono);letter-spacing:.08em;color:var(--dim);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chat .m.me .mh{justify-content:flex-end}
+.chat .m.claude .mh b{color:var(--ok)}
+.chat .m.me .mb{background:var(--card2);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;max-width:560px}
+.chat .m.claude .mb{max-width:100%;color:var(--fg2)}
+.chat .mb pre{background:rgba(9,9,11,.6);border:1px solid var(--bd);border-radius:8px;padding:12px 14px;font:12px var(--mono);color:var(--ok);overflow-x:auto}
+.chat .mb code{font:12px var(--mono);background:var(--pop);border-radius:4px;padding:1px 5px;color:var(--fg2)}
+.chat .mb pre code{background:none;padding:0;color:inherit}
+/* The agent's memory write-back as it appears in a reply. It IS a code fence — that is how
+   mows-agent extracts it — but an unlabelled green block read as "what is that green text?" the
+   first time a person saw one. So the fence whose info string is mows-memory gets a caption and a
+   green edge. CSS only: marked emits <pre><code class="language-<info>">. */
+.memupd{margin-top:8px}
+.memupd summary{display:inline-flex;align-items:center;gap:6px;font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-bd);border-radius:999px;padding:6px 10px;cursor:pointer;list-style:none}
+.memupd summary::-webkit-details-marker{display:none}
+.memupd summary::before{content:'▸';font-size:9px}
+.memupd[open] summary::before{content:'▾'}
+.memupd[open] summary{margin-bottom:8px}
+.memupd pre{border-color:var(--ok-bd)}
+/* system divider: a run-lifecycle event, interleaved into the transcript */
+.sysdiv{display:flex;align-items:center;gap:12px}
+.sysl{flex:1;height:1px;background:var(--bd)}
+.sysb{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--bd);border-radius:999px;padding:5px 12px;font:11px var(--mono);color:var(--mut);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.sysi{width:14px;height:14px;flex-shrink:0;background:currentColor;-webkit-mask:var(--ico-activity) center/14px no-repeat;mask:var(--ico-activity) center/14px no-repeat}
+/* composer: inside the card, not floating under it */
+.chat .chatf{border-top:1px solid var(--bd);padding:16px 20px;margin:0;gap:12px;align-items:center;background:var(--card2)}
+.chat .chatf textarea{border-radius:12px;padding:12px 14px;min-height:46px;background:var(--bg);border-color:var(--bd3);resize:none;font:13px var(--sans)}
+.chat .chatf textarea::placeholder{color:var(--dimmer)}
+.sendb{width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;background:var(--fg);color:var(--bg);border:0;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sendb::before{content:'';width:16px;height:16px;background:currentColor;-webkit-mask:var(--ico-send) center/16px no-repeat;mask:var(--ico-send) center/16px no-repeat}
+.sendb:hover{background:var(--fg2)}
+.sendb:disabled{background:var(--pop);color:var(--dim);cursor:default}
+.sendb:disabled::before{display:none}
+.chint{font:11px var(--mono);color:var(--dimmer);text-align:center;padding:0 20px 14px;margin:0}
+/* right column */
+.agside{display:flex;flex-direction:column;gap:16px;min-width:0}
+.agside .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);padding:20px;margin:0}
+.cl{font:700 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:0 0 16px}
+.agside .cap h2{display:none}
+.cchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.cchip{font:11px var(--mono);color:var(--fg2);background:var(--card2);border:1px solid var(--bd3);border-radius:6px;padding:4px 8px}
+.capsum-warn{font:12px var(--sans);color:var(--warn);margin:0}
+.capsum-in{font:12px var(--sans);color:var(--warn);margin:0 0 8px}
+.capmore{margin-top:14px;border-top:1px solid var(--bd);padding-top:12px}
+.capmore summary{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer}
+.capmore[open] summary{margin-bottom:10px}
+.agside .cap{font-size:12px}
+.agside .cap p{margin:8px 0}
+.tgrid{display:flex;flex-direction:column;gap:12px}
+.trow{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.tk{font:12px var(--mono);color:var(--dim);flex-shrink:0}
+.tv{font:12px var(--mono);color:var(--fg2);text-align:right;min-width:0;word-break:break-word}
+.rruns{list-style:none;display:flex;flex-direction:column;gap:14px;margin:0;padding:0}
+.rruns li{display:flex;align-items:center;gap:10px;margin:0}
+.rruns .pill{font:700 9px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 7px;border-radius:4px;flex-shrink:0}
+.rruns a{font:12px var(--mono);color:var(--fg2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rcost{font:12px var(--mono);color:var(--fg2);font-variant-numeric:tabular-nums;flex-shrink:0}
+.mem{font:12px/1.5 var(--mono);color:var(--fg2);white-space:pre-wrap;word-break:break-word;margin:0;max-height:320px;overflow:auto}
+.agside .agev{padding:14px 20px}
+.agev summary{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);cursor:pointer}
+.agev .events{margin-top:12px}
+/* Reflow. The comp is a 1024 content column; below it the columns narrow, then stack. The cards
+   go UNDER the chat and not over it because the chat is why this page exists — a phone opening
+   an agent should land on the transcript, not scroll three cards to reach it. Source order
+   already puts .agchat first, so the single-column case needs no reordering. */
+@media(max-width:1087px){.ag2{grid-template-columns:minmax(0,1fr) 300px;gap:16px}}
+@media(max-width:860px){.ag2{grid-template-columns:minmax(0,1fr)}
+.agchat{height:calc(100dvh - 190px)}
+.chatbox{padding:16px;gap:16px}
+.chat .chatf{padding:12px 16px}
+.agh{padding:14px 16px}
+.agside .card{padding:16px}}
+/* A send that never reached the server, or a transcript refetch that failed. Previously both
+   were silent and the composer simply stayed disabled forever (fix round 1). */
+.cherr{color:var(--bad);font-size:13px;margin:0}
+/* Task 8, the capability panel. .cap-warn is a left rule rather than a filled banner on purpose:
+   an agent with Bash is the COMMON case here, and a red box on every agent page teaches the
+   operator to ignore it. It reads first because it is placed first — document order is the whole
+   mechanism, and it is asserted (warnAt < toolsAt) rather than left to CSS. .auth carries the one
+   authority list; it is unbulleted because each item already opens with a bold sentence. */
+.cap{margin:10px 0}.cap p{margin:6px 0}
+.cap-warn{border-left:3px solid var(--warn);padding-left:10px}
+/* Unknown reach is not the same statement as confirmed broad authority and must not look like it.
+   "I cannot classify this tool" rendered in .cap-warn carried the same weight as "it can read and
+   write any file this account can reach", which is the fastest way to teach an operator to scroll
+   past both (re-review, proportionality). Same left rule, muted colour: still a rule, visibly a
+   lesser one. */
+.cap-unknown{border-left:3px solid var(--dim);padding-left:10px;color:var(--mut)}
+.auth{margin:6px 0;padding:0;list-style:none}.auth li{margin:4px 0}
+.policy{margin:6px 0 0 18px}.policy li{margin:4px 0}
+/* /ui carries the same fixed .tabs bar as every other page (final review, H1), and a STICKY
+   element sticks to the scrollport, not to the end of the document — so body's bottom padding,
+   which is what keeps ordinary content clear of the bar, does not move these two. They have to
+   clear it themselves or the composer sits behind the bar on every phone.
+   70px is .termfab's own clearance, this file's one number for "floating thing above the tab
+   bar" (.tabs box height is 59px + safe area; see its comment in the standalone block below).
+   max() rather than a sum, and this is the part worth reading: when the on-screen keyboard is up,
+   --kb already exceeds the bar's height AND the bar is behind the keyboard (WebKit, which ignores
+   interactive-widget=resizes-content) or above it (Chrome, where --kb is ~0 and the bar is the
+   thing to clear). Adding the clearance on top of --kb would leave a 70px dead gap between the
+   composer and the keyboard in the one engine the --kb handler exists for.
+   Scoped below 701px only: .tabs is display:none above it, so there is nothing to clear. */
+@media(max-width:700px){
+.uiapp .chat .chatf{bottom:calc(env(safe-area-inset-bottom,0px) + max(var(--kb,0px),70px))}
+.uiapp .jump{bottom:calc(70px + max(var(--kb,0px),70px))}}
+/* THE THIRD FIXED ELEMENT. The clearance above moved the composer and the jump button and did not
+   consider .termfab, which pageChrome() also puts into the /ui shell and which was not there
+   before. Measured in Chromium AND WebKit at 375x812 and 414x896: the FAB covered 46 of the Send
+   button's 56 px of width and its full 34 px of height, and document.elementFromPoint() at the
+   button's own centre returned the FAB. Tapping Send opened the terminal. It is not phone-only —
+   at 1024 the overlap was still 12x26 (re-review, R1).
+   The fix is layout, not another offset: the FAB sits at most 60px in from the VIEWPORT's right
+   edge (right:14px + 46px wide), and the composer's own right edge is already inset from that edge
+   by body padding, so reserving 60px inside the composer clears it at every width by construction
+   — no arithmetic per breakpoint, nothing to re-derive if the FAB moves closer to the edge. It is
+   deliberately NOT inside the media query above: the desktop overlap is smaller, not absent.
+   Not hiding the FAB on /ui instead: the terminal is an ACTION and was never a nav tab (see the
+   FAB's own comment), so the tab bar does not replace it, and hiding it would make the terminal
+   unreachable from the app. Asserted on GEOMETRY, not markup, by the "layout" mode of
+   docs/qa/probes/probes.mjs — eleven greps over the served HTML could not see this and did not. */
+.uiapp .chat .chatf{padding-right:60px}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2017,19 +2249,43 @@ async function mdView(req, res, url) {
   send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>`, '', '', false, null, req.headers.host));
 }
 
-function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
-  // desktop header (mock 2026-08-29): logo+title/subtitle, centered pill nav, "+ new
-  // session" button; .navdup hides the whole thing <700px where the mobile <h1> + tab
-  // bar rule instead (see body>h1 in CSS). liveN: live-session count badge — only pages
-  // that already computed tmuxLive pass it; fleet.js keeps it fresh (id=pnav-live) on
-  // pages that carry the island. host: real request Host header — SPEC text mapping
-  // ("connected · <host>"), never a hardcoded/placeholder address.
+// ---------- page chrome, shared by BOTH document shapes ----------
+//
+// The desktop header, the pinned bottom tab bar and the terminal FAB, built once and used by
+// page() below (every server-rendered route) AND by uiShellHtml() (the SPA at /ui).
+//
+// Extracted rather than copied, and this is the whole point of it: /ui shipped for an entire
+// branch with NO tab bar at all. Spec §2 lists the pinned bar under "Kept"; what actually shipped
+// was a document containing `<div id="app">` and a `<noscript>`, so with JavaScript on there was
+// no link out of the app to /, /history, /system, /device or /agents — the only way back was the
+// Back button or typing a URL (final review, H1). A second bar written to fix that is how the two
+// disagree six months from now, so there is one bar and one place to change it.
+//
+// agentsHref is the one thing that legitimately differs. During the §6 migration BOTH /agents and
+// /ui/agents are real pages: from a server-rendered page the Agents tab must go to the twin, and
+// from inside the SPA it must keep you in the SPA rather than ejecting you to the twin you just
+// navigated away from. One parameter, defaulting to the server-rendered answer.
+//
+// desktop header (mock 2026-08-29): logo+title/subtitle, centered pill nav, "+ new session"
+// button; .navdup hides the whole thing <700px where the mobile <h1> + tab bar rule instead (see
+// body>h1 in CSS). liveN: live-session count badge — only pages that already computed tmuxLive
+// pass it; fleet.js keeps it fresh (id=pnav-live) on pages that carry the island. host: real
+// request Host header — SPEC text mapping ("connected · <host>"), never a hardcoded address.
+// agentsHref defaults to the APP now (2026-09-19). Until this flip every server-rendered page's
+// Agents tab — header and bottom bar — led to the server-rendered /agents, where a chat turn is a
+// form POST, a 303 and "Thinking… reload in a few seconds"; only the SPA shell pointed the tab at
+// /ui/agents. From the home page a person never reached the streaming view at all, and the first
+// real user test read as "the SPA is not working" while three turns streamed fine server-side.
+// The SPA design (§6) shipped both models and deferred this flip until the app was proven; it
+// is — probes in both engines, live turns, memory. /agents/<name> stays reachable by URL and as
+// the <noscript> twin.
+function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/ui/agents') {
   const pnav = `<nav class="pnav">
 <a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
 <a class="${tab === 'system' ? 'on' : ''}" href="/system">System</a>
 <a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a>
-<a class="${tab === 'agents' ? 'on' : ''}" href="/agents">Agents</a></nav>`;
+<a class="${tab === 'agents' ? 'on' : ''}" href="${agentsHref}">Agents</a></nav>`;
   const hdr = `<header class="hdr navdup">
 <div class="hdl"><span class="hlogo" aria-hidden="true">&gt;_</span><div class="hcol"><div class="htitle">mows control</div><div class="hsub">Connected · ${esc(host || os.hostname())}</div></div></div>
 ${pnav}
@@ -2039,12 +2295,17 @@ ${pnav}
 <a class="tb${tab === 'history' ? ' on' : ''}" href="/history"><span class="ti">${ICO.history}</span>History</a>
 <a class="tb${tab === 'system' ? ' on' : ''}" href="/system"><span class="ti">${ICO.activity}</span>System</a>
 <a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
-<a class="tb${tab === 'agents' ? ' on' : ''}" href="/agents"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
+<a class="tb${tab === 'agents' ? ' on' : ''}" href="${agentsHref}"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
   // terminal is an ACTION (opens the ttyd session picker), not a content page — kept as a
   // persistent floating utility button (every tab, every width) instead of a nav tab of its
   // own (gap #5: nav read sessions·history·system·device, exactly 4, until the Agents tab
   // (2026-09-15) made it five content tabs — terminal is still a FAB, never a 6th).
   const termFab = `<a class="termfab" href="${termHref('menu', '')}" title="open terminal" aria-label="open terminal">${ICO.terminal}</a>`;
+  return { hdr, tabs, termFab };
+}
+
+function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
+  const { hdr, tabs, termFab } = pageChrome(tab, liveN, host);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
@@ -2052,8 +2313,8 @@ ${pnav}
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
-<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun]"}}]},"eagerness":"moderate"}]}</script>
-<title>${esc(title)}</title><style>${CSS}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
+<script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun],a[href^='/ui']"}}]},"eagerness":"moderate"}]}</script>
+<title>${esc(title)}</title><style>${cssText()}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
 ${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
@@ -2155,9 +2416,36 @@ addEventListener('touchend',function(){
 })()</script>${fleetJs ? '<script defer src="/fleet.js"></script>' : ''}
 </body></html>`;
 }
-function send(req, res, status, html, type = 'text/html; charset=utf-8') {
+// The directives that cost NOTHING on a page full of inline styles and inline scripts, applied to
+// every HTML response this server makes (Task 9 review, F7).
+//
+// uiCsp below is the strict policy, and it is scoped to /ui because the server-rendered pages carry
+// dozens of inline style="" attributes and several inline <script> blocks, and CSP3 ignores
+// 'unsafe-inline' the moment a nonce is present — so a script-src/style-src there would break those
+// pages rather than harden them. That argument covers script-src and style-src. It does NOT cover
+// these four, which say nothing about inline anything:
+//
+//   base-uri 'none'        an injected <base> re-points every relative URL on the page
+//   object-src 'none'      <object>/<embed>, which nothing here uses
+//   form-action 'self'     every form on these pages posts to /a/… or /droid/…, all same-origin
+//   frame-ancestors 'self' clickjacking. /app is the persistent terminal launcher, which is the
+//                          page on this site where that is actually interesting. 'self' and not
+//                          'none': the dashboard embeds /vnc/ and the device stream in iframes, and
+//                          while no dashboard PAGE is framed today, matching Caddy's own site-wide
+//                          posture cannot break a same-origin embed if one appears.
+//
+// Deliberately absent: frame-src, which WOULD break those iframes, and img-src, which would break
+// the account avatars and the device stage.
+const BASE_CSP = "base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'self'";
+function send(req, res, status, html, type = 'text/html; charset=utf-8', extra = null) {
   const buf = Buffer.from(html);
   const h = { 'content-type': type, 'cache-control': 'no-cache' };
+  // HTML only: a CSP on the /healthz JSON would be noise. `extra` is applied last so /ui's strict
+  // policy REPLACES this baseline rather than being appended to it — two Content-Security-Policy
+  // headers are enforced as an intersection, and an intersection is far harder to reason about
+  // than one policy that says everything.
+  if (/^text\/html/.test(type)) h['content-security-policy'] = BASE_CSP;
+  Object.assign(h, extra || {});
   if (buf.length > 1024 && /gzip/.test(req.headers['accept-encoding'] || '')) {
     const gz = gzipSync(buf); h['content-encoding'] = 'gzip'; h['content-length'] = gz.length;
     res.writeHead(status, h); res.end(gz);
@@ -2310,7 +2598,15 @@ function fleetEventPayload(fleet) {
   return fleet.map(f => ({ sid8: fleetKey(f), name: f.name, label: f.label || '', proj: f.proj,
                             state: f.state, rel: f.mt, snippet: f.snippet }));
 }
-const SSE_MAX = 8; // this box already runs hot (spec §3) — 9th concurrent client gets 503
+// this box already runs hot (spec §3). PER ENDPOINT, not per box, and the difference matters to
+// anyone tuning it: two independent counters read this constant -- sseClients for /events (the
+// server-rendered pages' feed) and streamClients.size for /stream (the SPA's) -- so the box admits
+// 8 of each, 16 in total, and the 9th client of EITHER kind gets a 503. That split is ruling D4
+// and is deliberate: during the §6 migration both navigation models run at once, and a shared
+// counter would let a few server-rendered tabs lock the SPA out of its own stream. The comment
+// used to say "9th concurrent client gets 503" full stop, which was true when there was one
+// counter and false from Task 3 onward (final review, L2).
+const SSE_MAX = 8;
 let sseClients = 0;
 async function eventsView(req, res) {
   if (sseClients >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many /events clients'); }
@@ -2344,6 +2640,108 @@ async function eventsView(req, res) {
   if (done) return; // disconnected during that first tick — cleanup already ran, don't arm timers
   poll = setInterval(tick, 2000);
   hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 25000); // comment heartbeat, keeps idle proxies from closing the connection
+}
+// ---------- /stream: one multiplexed SSE connection per tab (spec §3) ----------
+// One connection carries every topic a tab needs. The Layer 6 spec already chose multiplexing
+// over a second stream for the same reason: SSE_MAX is small and this box runs hot. A tab now
+// costs one connection no matter how many views it shows.
+const streamClients = new Set(); // {res, topics:Set, id}
+let streamSeq = 0;
+// Replay buffer for the IN-FLIGHT turn only, per agent. A completed turn is already in chat.jsonl
+// and the client refetches it from /api/agents/<name>/chat, so buffering it twice would be
+// memory spent on data we already have.
+//
+// NOT a ring buffer, which is what this comment used to call it (final review, L1). It is an
+// append-only array with no cap and no eviction: `b.deltas.push(...)` below runs once per delta
+// and nothing ever trims it. Spec §3's "capped at the turn's own token count" is satisfied, but
+// by ARITHMETIC rather than by code -- a chat turn is bounded to $0.25 and six turns by
+// mows-agent, so the array cannot grow past what that buys. Calling it a ring is what stops the
+// next reader going to look for the cap and finding there isn't one. Two consequences follow from
+// the same fact and are worth knowing before anyone raises those budget numbers: the entry lives
+// for the life of the process if a turn never produces a chatEnd for its own turn number, and a
+// SECOND concurrent turn on one agent resets the buffer (see the turn check below), discarding the
+// first turn's replay data -- see "Known and unguarded" in docs/architecture.md.
+const chatBuf = new Map(); // agent -> {turn, deltas:[{seq,text}]}
+function streamWrite(c, ev, data, id) {
+  try {
+    if (id) c.res.write(`id: ${id}\n`);
+    c.res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch { /* a dead socket is cleaned up by its own close handler */ }
+}
+function streamSend(ev, data, topic, id) {
+  for (const c of streamClients) if (c.topics.has(topic)) streamWrite(c, ev, data, id);
+}
+function chatBroadcast(agent, turn, seq, delta) {
+  let b = chatBuf.get(agent);
+  if (!b || b.turn !== turn) { b = { turn, deltas: [] }; chatBuf.set(agent, b); }
+  b.deltas.push({ seq, text: delta });
+  streamSend('chat', { agent, turn, seq, delta }, `chat:${agent}`, `${agent}:${turn}:${seq}`);
+}
+function chatEnd(agent, turn, summary) {
+  // Only clear the buffer if it's still THIS turn's. Task 6 made a late second chatEnd call
+  // for the same turn routine (an authoritative `end` line plus a `close` fallback — see
+  // agentAction's chat branch), and an unconditional delete would wipe a NEWER turn's
+  // in-flight replay buffer if that second call arrives after the next turn has already
+  // started (fix round 1, F8).
+  const b = chatBuf.get(agent);
+  if (b && b.turn === turn) chatBuf.delete(agent);
+  streamSend('chatend', { agent, turn, ...summary }, `chat:${agent}`);
+}
+async function streamView(req, res) {
+  if (streamClients.size >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many stream clients'); }
+  const url = new URL(req.url, 'http://x');
+  const topics = new Set((url.searchParams.get('topics') || 'fleet').split(',').map(s => s.trim()).filter(Boolean));
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  // writeHead() only QUEUES the status line/headers — Node doesn't put them on the wire until
+  // the first write()/end(). eventsView never needs this: its `last = ''` sentinel never equals
+  // the real payload, so its first tick always writes, flushing headers as a side effect. Here
+  // a topic set with no eager producer (chat-only, or unknown) writes NOTHING until the 25s
+  // heartbeat, so without this call the client gets no response — not even the 200 — for up to
+  // 25s. Found live: the chat view's own subscription is chat-only, so this is the common case.
+  res.flushHeaders();
+  const c = { res, topics, id: ++streamSeq };
+  streamClients.add(c);
+  let done = false, poll = null, hb = null;
+  const cleanup = () => { if (done) return; done = true; clearInterval(poll); clearInterval(hb); streamClients.delete(c); };
+  // registered BEFORE the first (slow) tick, for the same reason eventsView does it
+  req.on('aborted', cleanup); req.on('close', cleanup); res.on('close', cleanup);
+
+  // Replay: EventSource resends Last-Event-ID on reconnect. Replay only the in-flight turn.
+  const last = req.headers['last-event-id'];
+  if (last) {
+    const [agent, turnS, seqS] = String(last).split(':');
+    // Gate replay on the SAME topic check the live path uses. streamSend() enforces this for
+    // broadcasts, but replay calls streamWrite() directly and so inherits nothing — a client
+    // could name any agent in Last-Event-ID and read its in-flight turn without subscribing.
+    if (agent && topics.has(`chat:${agent}`)) {
+      const b = chatBuf.get(agent);
+      if (b && String(b.turn) === turnS) {
+        for (const d of b.deltas) if (d.seq > Number(seqS)) {
+          streamWrite(c, 'chat', { agent, turn: b.turn, seq: d.seq, delta: d.text }, `${agent}:${b.turn}:${d.seq}`);
+        }
+      }
+    }
+  }
+
+  let lastFleet = '', lastAgents = '';
+  const tick = async () => {
+    if (done) return;
+    try {
+      if (topics.has('fleet')) {
+        const pl = JSON.stringify(fleetEventPayload(await fleetState()));
+        if (pl !== lastFleet) { lastFleet = pl; streamWrite(c, 'fleet', JSON.parse(pl)); }
+      }
+      if (topics.has('agents')) {
+        const list = await agentsIndex();
+        const pl = JSON.stringify(list.map(a => ({ name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null, total: a.total, cost7d: a.cost7d })));
+        if (pl !== lastAgents) { lastAgents = pl; streamWrite(c, 'agents', JSON.parse(pl)); }
+      }
+    } catch { /* one bad tick must not kill the stream */ }
+  };
+  await tick();
+  if (done) return;
+  poll = setInterval(tick, 2000);
+  hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 25000);
 }
 // ---------- /fleet.js: dashboard live-update client island (Fleet Redesign §3) ----------
 // One hand-written file, zero deps, ~200 lines. EventSource + reconnect; patches the
@@ -2496,7 +2894,10 @@ document.addEventListener('keydown',function(e){
 `;
 
 // ---------- views ----------
-// one transcript row — shared by /history's day-grouped list and /'s "today" strip.
+// one transcript row — /history's day-grouped list, and nothing else. It WAS shared with a
+// "today" strip on '/', which the 2026-08-29 fleet reskin deleted (homeView's own header: "no
+// system stats, no today list"). listView() is the only caller; an assertion that curls '/'
+// looking for anything this function emits is looking at the wrong page (see 3b0c26c).
 function sessionRowHtml(e, title, liveBySid, back) {
   const a = BY_ID[e.a], sid8 = e.sid.slice(0, 8);
   const isLive = liveBySid.has(sid8);
@@ -2870,6 +3271,117 @@ ${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seed
 ${fold}`;
   send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
 }
+// Chat transcript for one agent. mows-agent writes it as JSONL, one object per turn, so a
+// half-written last line (a turn landing mid-read) drops that line rather than the whole file.
+const CHAT_MAX = 40; // newest N turns; the file is append-only and never truncated by the dashboard
+async function agentChat(name) {
+  const out = [];
+  try {
+    const raw = await fsp.readFile(`${AGENTS_STATE}/${name}/chat.jsonl`, 'utf8');
+    for (const l of raw.split('\n')) { if (!l.trim()) continue; try { out.push(JSON.parse(l)); } catch {} }
+  } catch {}
+  return out.slice(-CHAT_MAX);
+}
+// ---------- an agent's declared policy: its frontmatter, read by the ONE parser ----------
+// Shelling out to mows-agent-meta rather than parsing YAML here is the point: that script is the
+// validator the CLI already runs (`mows-agent run` refuses a file it lints red), it is the
+// authority on what every mows.* field means, and a second parser in this file would be free to
+// disagree with it about a file that had already been admitted.
+//
+// The agent file is looked up across EVERY profile dir, not just ~/.claude/agents: an agent whose
+// `mows.profile` is `work` lives under ~/.claude-work/agents, and there is no way to read the
+// profile without first finding the file. Same discovery rule as mows-agent's own profiles_json
+// (the default .claude plus every .claude-<suffix>), so the dashboard and the runner look in the
+// same places.
+async function agentFile(name) { // -> absolute path, or null if not found / ambiguous
+  let entries = [];
+  try { entries = await fsp.readdir(TMUX_HOME); } catch { return null; }
+  const dirs = entries.filter(d => d === '.claude' || d.startsWith('.claude-'));
+  const hits = [];
+  for (const d of dirs) {
+    const f = `${TMUX_HOME}/${d}/agents/${name}.md`;
+    // Resolve before de-duplicating: ~/.claude-work/agents symlinked to ~/.claude/agents is a
+    // legitimate setup and finds the same physical file twice — one agent, not an ambiguity.
+    // mows-agent's agent_file() dedupes exactly this way and dies on what is left.
+    try { const r = await fsp.realpath(f); if (!hits.includes(r)) hits.push(r); } catch {}
+  }
+  // Genuinely two files: mows-agent refuses to run such an agent at all, so this page must not
+  // pick one and present its policy as the truth. null becomes an honest "unknown" on the panel.
+  return hits.length === 1 ? hits[0] : null;
+}
+async function agentFrontmatter(name) {
+  const f = await agentFile(name);
+  if (!f) return null;
+  const out = await runAs([], `${TMUX_HOME}/.local/bin/mows-agent-meta`, ['json', f], 10000);
+  try { return JSON.parse(out); } catch { return null; } // '' on any error, including a timeout
+}
+
+// ---------- /api/*: JSON for the SPA (spec §1) ----------
+// These are the existing view functions with the HTML rendering removed — deliberately not new
+// logic, so the server-rendered pages and the app cannot disagree about what is true.
+function sendJson(req, res, status, obj) {
+  send(req, res, status, JSON.stringify(obj), 'application/json; charset=utf-8');
+}
+async function apiView(req, res, rest) {
+  // rest is p.slice(5) from a path that starts '/api/' — e.g. "agents", "agents/<name>",
+  // "agents/<name>/chat", "agents/<name>/runs/<run_id>". Parsed explicitly into segments
+  // rather than one four-group regex: the regex the brief for this task shipped destructured
+  // four capture groups from a three-group pattern (the fourth only ever coming from a
+  // never-added fourth path segment) and needed a separate rest.startsWith('agents') guard
+  // to reject non-agents paths — a guard the regex itself could express directly. Splitting
+  // makes every segment's role explicit and drops the redundant check.
+  const [section, name, kind, id] = rest.split('/').filter(Boolean);
+  if (section !== 'agents') { res.writeHead(404); return res.end(); }
+  if (!name) {
+    // Deliberately no per-agent timer lookup here: agentTimers() spawns systemctl per agent and
+    // is uncached, and the list renders no next-fire time. The detail endpoint does it once,
+    // for the one agent being viewed.
+    const list = await agentsIndex();
+    return sendJson(req, res, 200, { agents: list.map(a => ({
+      name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null,
+      total: a.total, cost7d: a.cost7d,
+    })) });
+  }
+  if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
+  const a = (await agentsIndex()).find(x => x.name === name);
+  if (!a) { res.writeHead(404); return res.end(); }
+  if (!kind) {
+    const timers = await agentTimers(name);
+    // capability is null — NOT an empty capability — whenever the agent file could not be read or
+    // did not parse. The view renders that as "unknown"; an empty object would render as a very
+    // confident "no tools, no budget, no triggers", which is the exact failure this task exists to
+    // prevent. A run record can outlive its agent file (retention_days keeps the record, the file
+    // can be deleted), so this is a reachable state, not a theoretical one.
+    const fm = await agentFrontmatter(name);
+    const capability = fm
+      ? agentCapability(fm, { webhookArmed: !!agentsConfig()[webhookKey(name)] })
+      : null;
+    return sendJson(req, res, 200, {
+      name, recs: a.recs, events: a.events, total: a.total, cost7d: a.cost7d,
+      timers, timer: summarizeTimers(timers), capability,
+      // The agent's own working memory (spec 2026-09-19): mows-agent writes it, this reads it,
+      // nothing here edits it. null when absent — never '' — so the card can tell "no memory
+      // yet" from "memory deliberately cleared" (an empty file), which the agent can do.
+      memory: await fsp.readFile(`${AGENTS_STATE}/${name}/memory.md`, 'utf8').catch(() => null),
+    });
+  }
+  if (kind === 'chat') return sendJson(req, res, 200, { turns: await agentChat(name) });
+  if (kind === 'runs' && id) {
+    if (!RUN_RE.test(id)) { res.writeHead(404); return res.end(); }
+    const dir = `${AGENTS_STATE}/${name}/runs/${id}`;
+    let status = null, text = '';
+    try { status = JSON.parse(await fsp.readFile(`${dir}/status.json`, 'utf8')); }
+    catch { res.writeHead(404); return res.end(); }
+    try {
+      for (const l of (await fsp.readFile(`${dir}/stream.jsonl`, 'utf8')).split('\n')) {
+        if (!l.includes('"type":"assistant"')) continue;
+        try { for (const c of JSON.parse(l).message?.content || []) if (c.type === 'text') text += c.text + '\n\n'; } catch {}
+      }
+    } catch {}
+    return sendJson(req, res, 200, { status, text });
+  }
+  res.writeHead(404); return res.end();
+}
 async function agentDetailView(req, res, name) {
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
   const a = (await agentsIndex()).find(x => x.name === name);
@@ -2885,9 +3397,22 @@ async function agentDetailView(req, res, name) {
     : tsum.state === 'mixed' ? btn('pause', 'Pause') + btn('resume', 'Resume')
     : btn('pause', 'Pause');
   const runs = a.recs.map(r => `<li><a data-norun href="/agents/${esc(name)}/${esc(r.run_id)}">${esc(r.run_id)}</a> ${agentPill(r.state)} <span class="muted">${usd(r.cost_usd)} · ${r.turns} turns · ${r.tool_calls} tools</span></li>`).join('');
+  // No completed-run gate (spec 2026-09-19 §2.4): a chat turn no longer resumes a session, so
+  // an agent that has never run can be asked what it would do. The gate that stood here was
+  // true until the reason for it left; it did not stay on as "harmless extra strictness".
+  const chat = await agentChat(name);
+  const pending = chat.length && chat[chat.length - 1].role === 'user';
+  const bubbles = chat.map(t => `<div class="m ${t.role === 'user' ? 'me' : 'claude'}"><div class="mh"><b>${t.role === 'user' ? 'you' : esc(name)}</b> <span class="muted">${esc((t.at || '').slice(11, 19))}${t.cost_usd ? ' · ' + usd(t.cost_usd) : ''}</span></div><pre>${esc(t.text || '')}</pre></div>`).join('');
+  const chatBox = `${bubbles || '<p class="muted">No messages yet. Ask it anything about its territory.</p>'}
+${pending ? '<p class="muted">Thinking… reload in a few seconds.</p>' : ''}
+<form method="post" action="/a/agent-chat" class="chatf">
+<input type="hidden" name="name" value="${esc(name)}"><input type="hidden" name="back" value="${esc(back)}">
+<textarea name="msg" rows="2" placeholder="Ask ${esc(name)} about its last run…" required></textarea>
+<button>Send</button></form>`;
   const body = `<h1><a href="/agents">← agents</a> <span class="muted">· ${esc(name)}</span></h1>
 <p>${agentPill(a.last?.state)} <span class="muted">7d ${usd(a.cost7d)} · ${a.total} runs · Next: ${esc(tsum.label)}</span></p>
 <div class="actions">${btn('run', 'Run now')}${timerBtns}${a.last?.state === 'working' ? btn('stop', 'Stop') : ''}</div>
+<h2>Chat</h2>${chatBox}
 <h2>Runs</h2><ul class="runs">${runs || '<li class="muted">none</li>'}</ul>
 <h2>Events</h2><pre class="events">${esc(a.events.join('\n') || 'none')}</pre>`;
   send(req, res, 200, page(`${name} · agents`, body, '', '', 'agents', false, null, req.headers.host));
@@ -2925,6 +3450,40 @@ async function agentAction(req, res, act) {
   const bk = b.back || '/agents';
   const back = bk.startsWith('/') && !bk.startsWith('//') ? bk : '/agents';
   if (!AGENT_RE.test(name)) { res.writeHead(400); return res.end('bad name'); }
+  if (act === 'chat') {
+    // A chat turn is a resumed `claude -p` and takes tens of seconds, so it must not be
+    // awaited inside the request — the dashboard is single-process and would stall every
+    // other page. Fire it detached and redirect; mows-agent appends the user's message to
+    // chat.jsonl BEFORE calling claude, so the page shows the question immediately and the
+    // answer appears on the next load. That trailing user turn is what renders "Thinking…".
+    const msg = (b.msg || '').slice(0, 4000).trim();
+    if (!msg) { res.writeHead(400); return res.end('empty message'); }
+    const child = spawn('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
+      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, '--stream', msg],
+      { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const turn = Date.now();
+    // The `end` line, when it arrives, is authoritative (it carries the real is_error); the
+    // `close` handler below is only a fallback for a process that died without ever writing
+    // one. The FIRST end wins, not the last — a naive "close always calls chatEnd" would let
+    // the neutral close-triggered summary (no is_error) overwrite a real failure, discarding
+    // it (fix round 1, F8).
+    let ended = false;
+    const stream = wireChatStream(child.stdout,
+      o => chatBroadcast(name, turn, o.seq, o.delta),
+      o => { ended = true; chatEnd(name, turn, { cost_usd: o.cost_usd, is_error: o.is_error }); });
+    // mows-agent's own operator-visible failure line (`mows-agent: chat turn failed: …`) only
+    // reached events.log before this — stdio was ['ignore','pipe','ignore'], so on the one
+    // production caller of the streaming path it was discarded outright (fix round 1, F11).
+    child.stderr.on('data', d => process.stderr.write(d));
+    child.on('close', () => {
+      if (!ended) chatEnd(name, turn, { closed: true });
+      const drops = stream.drops();
+      if (drops) console.error(`chat ${name}:${turn}: dropped ${drops} malformed stream line(s)`);
+      agentsCache.t = 0;
+    });
+    child.unref();
+    res.writeHead(303, { location: back }); return res.end();
+  }
   if (act === 'run') {
     // Honest failure, not a silent redirect that looks like success: the shared
     // mows-agent@.service unit may never have been installed (SETUP.md's Triggers step is a
@@ -2970,10 +3529,15 @@ function agentsConfig() { // KEY=value lines only; values may be quoted. Read pe
   try { for (const l of readFileSync(AGENTS_CFG, 'utf8').split('\n')) { const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) out[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, '$2'); } } catch {}
   return out;
 }
+// The one place the agent name -> config key mapping is written down. AGENT_RE's header explains
+// why that mapping has to stay injective; the capability panel reads the same key to tell the
+// operator whether a POST to /wh/<name> can start this agent, and two spellings of it could drift
+// into the panel reporting a trigger armed against a key this route never consults.
+const webhookKey = name => 'WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_');
 async function webhookView(req, res, name) {
   if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
   if (!AGENT_RE.test(name)) { res.writeHead(404); return res.end(); }
-  const secret = agentsConfig()['WEBHOOK_SECRET_' + name.toUpperCase().replace(/-/g, '_')];
+  const secret = agentsConfig()[webhookKey(name)];
   if (!secret) { res.writeHead(404); return res.end(); } // same response as a bad name: no agent enumeration
   const chunks = []; let n = 0;
   for await (const c of req) { n += c.length; if (n > 1e6) { res.writeHead(413); return res.end(); } chunks.push(c); }
@@ -2992,6 +3556,193 @@ async function webhookView(req, res, name) {
   res.writeHead(202, { 'content-type': 'text/plain' }); res.end('queued');
 }
 
+// ---------- /ui: the SPA shell and its assets (spec §1) ----------
+// One process, no build step: modules are served straight from disk and wired with an import
+// map, which is a platform feature rather than tooling. Asset URLs carry a content hash so a
+// deploy busts the cache without a bundler.
+// NOTE: this lives at /ui, not /app. /app is already the persistent terminal launcher (below,
+// appView) and the installed PWA's start_url (manifest(), above) — do not reclaim it.
+const UI_DIR = new URL('./app/', import.meta.url).pathname;
+const uiAssets = new Map(); // url-name -> {buf, etag, type}
+function uiAssetName(rel, buf) {
+  // vendor/preact.mjs -> vendor/preact.1a2b3c4d.mjs   (content hash busts the cache on deploy)
+  const dot = rel.lastIndexOf('.');
+  return `${rel.slice(0, dot)}.${crc32(buf).toString(16)}${rel.slice(dot)}`;
+}
+// What app/ is allowed to serve, and the content-type each extension gets. An extension absent
+// from this map is not served at all — the default is refusal, so dropping a stray .DS_Store or
+// an editor backup into app/ can never become a route.
+//
+// COUPLED TO scripts/preflight.sh's client-asset ceiling, which greps app/ with its own find(1)
+// extension list. The two lists must name the same extensions: anything servable here and not
+// measured there ships to browsers without counting against the size budget, and the gate keeps
+// reporting a comfortable number while the payload grows. That is form 3 of this branch's
+// catalogue of hollow checks — a check whose label lies about what it tests. Change both or
+// neither; preflight asserts the agreement (see "asset extension lists agree" there).
+// No svg entry, deliberately: the 44:5 icons are lucide glyphs that ICO already inlines as
+// currentColor SVG, so nothing needs serving as a file. Adding an extension "for later" makes
+// app/ a route surface for anything that lands in it.
+const UI_ASSET_TYPES = {
+  mjs: 'text/javascript; charset=utf-8',
+  css: 'text/css; charset=utf-8',
+  woff2: 'font/woff2',
+};
+async function loadUiAssets() {
+  uiAssets.clear();
+  const walk = async d => {
+    for (const e of await fsp.readdir(d, { withFileTypes: true })) {
+      const full = `${d}/${e.name}`;
+      if (e.isDirectory()) { await walk(full); continue; }
+      const type = UI_ASSET_TYPES[e.name.slice(e.name.lastIndexOf('.') + 1)];
+      if (!type) continue;
+      const rel = full.slice(UI_DIR.length);
+      const buf = await fsp.readFile(full);
+      uiAssets.set(uiAssetName(rel, buf), { buf, rel,
+        etag: '"' + crc32(buf).toString(16) + '"', type });
+    }
+  };
+  try { await walk(UI_DIR.replace(/\/$/, '')); } catch {}
+}
+const uiAssetUrlFor = rel => {
+  for (const [k, v] of uiAssets) if (v.rel === rel) return '/ui/assets/' + k;
+  return '/ui/assets/' + rel;
+};
+// CSS is a module-level literal, so it is built long before the content hashes exist — but an
+// @font-face src must name the HASHED url or the font 404s (uiAssetView keys on the hashed name).
+// Hence two placeholders in CSS, substituted here once assets are loaded, and cached: it is the
+// same two replacements on every response, for both the server-rendered pages and the SPA.
+//
+// Safe because loadUiAssets() now runs at startup, before listen(), so uiAssets is always
+// populated by the time any handler renders a page.
+let cssCache = null;
+const cssText = () => (cssCache ??= CSS
+  .replace('FONT_INTER', uiAssetUrlFor('vendor/inter-var-latin.woff2'))
+  .replace('FONT_MONO', uiAssetUrlFor('vendor/jetbrains-mono-var-latin.woff2')));
+// ---------- Content-Security-Policy for /ui ----------
+//
+// SCOPED TO /ui DELIBERATELY, and this is the whole reason it is cheap. The server-rendered pages
+// at / carry dozens of inline style="" attributes and several inline <script> blocks written over
+// many months; policing them would mean either 'unsafe-inline' (which buys nothing) or hashing
+// every one, and CSP3 ignores 'unsafe-inline' the moment a nonce is present, so a half-measure
+// there would BREAK those pages rather than harden them. The SPA is the surface that renders
+// agent replies — the stored-XSS path this branch actually shipped and fixed — and it was
+// measured to contain no inline style attribute at all (`grep -rn 'style=' infra/dashboard/app/`
+// is empty), so it takes a strict policy with no exceptions: ONE nonce, minted per response and
+// named by both script-src and style-src (not two independent values — an attacker who can read
+// one out of the markup can read the other, so separate values would buy nothing).
+//
+// What each directive is holding up, so nobody loosens one without knowing what they are paying:
+//   default-src 'none'   nothing loads unless a directive below says so; that is what makes the
+//                        absence of a directive a refusal rather than a silence.
+//   script-src           'self' for the hashed module assets, plus the nonce for the ONE inline
+//                        script: the import map. There is no 'unsafe-inline' and no
+//                        'unsafe-eval', so an injected <script> or an onerror= attribute does not
+//                        run even if the escaping in views/chat.mjs is defeated again. That is
+//                        the defence-in-depth this branch was missing when the C1 XSS shipped.
+//   style-src            the nonce only, for the one inline <style>. The view's --kb keyboard
+//                        handler sets a custom property through CSSOM (element.style.setProperty),
+//                        which CSP does not govern, so it is unaffected — verified in both
+//                        engines, not assumed.
+//   img-src              'self' data: https: — markdown replies legitimately carry images, and
+//                        safeHref already restricts their scheme to http/https/mailto.
+//   connect-src 'self'   the EventSource on /stream and every fetch to /api and /a/*.
+//   base-uri 'none'      an injected <base> would re-point every relative import in the map at an
+//                        attacker's origin; nothing on this page needs one.
+//   frame-ancestors      the dashboard is never framed, and this is the clickjacking answer that
+//                        does not need a second header.
+//
+// The nonce is minted per RESPONSE, not per process: a constant nonce is worth roughly nothing,
+// since an attacker who can inject markup can also copy it out of the page. send() sets
+// cache-control: no-cache, so a stored copy is revalidated rather than replayed with a stale one.
+const uiCsp = nonce => [
+  "default-src 'none'",
+  `script-src 'self' 'nonce-${nonce}'`,
+  `style-src 'nonce-${nonce}'`,
+  "img-src 'self' data: https:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "manifest-src 'self'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join('; ');
+// The server-rendered twin of a /ui path, for the <noscript> block. Spec §2 asks for a link to
+// "the server-rendered equivalent", and the block used to be a constant pointing at `/` — from
+// /ui/agents/<name> the equivalent is /agents/<name>, not the fleet page (final review, L3).
+//
+// Allow-listed rather than computed by string surgery, deliberately: this value is interpolated
+// into HTML, and the SPA's router falls through to the agents list for ANY unmatched path
+// (/ui/system renders the list today), so a naive '/' + p.slice(4) would both hand an attacker
+// the shape of the output and promise twins for routes that do not exist. Anything unrecognised
+// gets /agents, which is the twin of what the SPA will actually render. AGENT_RE and RUN_RE are
+// the same patterns the API and the server-rendered routes validate with — reused, not restated,
+// so a twin link can never name a shape those routes would refuse, and nothing that is not
+// [a-z0-9-] or a run id can reach the attribute in the first place.
+function uiTwinPath(p) {
+  let m;
+  if ((m = p.match(/^\/ui\/agents\/([^/]+)\/([^/]+)\/?$/)) && AGENT_RE.test(m[1]) && RUN_RE.test(m[2]))
+    return `/agents/${m[1]}/${m[2]}`;
+  if ((m = p.match(/^\/ui\/agents\/([^/]+)\/?$/)) && AGENT_RE.test(m[1])) return `/agents/${m[1]}`;
+  return '/agents';
+}
+function uiShellHtml(host, nonce, twin = '/agents') {
+  const imports = {
+    preact: uiAssetUrlFor('vendor/preact.mjs'),
+    'preact/hooks': uiAssetUrlFor('vendor/hooks.mjs'),
+    htm: uiAssetUrlFor('vendor/htm.mjs'),
+    marked: uiAssetUrlFor('vendor/marked.mjs'),
+  };
+  // Relative imports between first-party modules resolve against the IMPORTING module's own
+  // (hashed) URL, producing a request for the unhashed path — which uiAssetView 404s. Import
+  // maps remap a relative specifier only AFTER the browser resolves it to an absolute URL, so
+  // a URL-keyed entry per file is what makes `import './ui.mjs'` reach the hashed file.
+  // Verified in Chromium against a server where the unhashed file did not exist at all.
+  // vendor/* is excluded: those files are only ever reached by bare specifier (already mapped
+  // above), never by a relative import, so a URL-keyed entry for them would just bloat the
+  // inline map every page load with a redundant route to the same hashed URL.
+  for (const [k, v] of uiAssets) {
+    if (v.rel.startsWith('vendor/')) continue;
+    const unhashed = '/ui/assets/' + v.rel, hashed = '/ui/assets/' + k;
+    if (unhashed !== hashed) imports[unhashed] = hashed;
+  }
+  // Same chrome as every other page, from the same builder (see pageChrome): the header, the
+  // pinned tab bar and the terminal FAB. The Agents tab points BACK INTO the app rather than at
+  // the server-rendered twin, so tapping the tab you are already on does not eject you from it.
+  // Every other tab is an ordinary cross-document navigation — main.mjs's click handler only
+  // intercepts a[href^="/ui"] — which is exactly right while both models ship (spec §6).
+  const { hdr, tabs, termFab } = pageChrome('agents', null, host, '/ui/agents');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<title>mows control</title>
+<style nonce="${nonce}">${cssText()}</style>
+<script type="importmap" nonce="${nonce}">${JSON.stringify({ imports })}</script>
+</head><body class="uiapp">${hdr}${termFab}
+<div id="app"></div>
+<noscript><p>This view needs JavaScript. The server-rendered version of this page is at <a href="${esc(twin)}">${esc(twin)}</a>.</p></noscript>
+${tabs}
+<script type="module" nonce="${nonce}" src="${uiAssetUrlFor('main.mjs')}"></script>
+</body></html>`;
+}
+async function uiView(req, res, p) {
+  if (!uiAssets.size) await loadUiAssets();
+  // base64url, not hex: a nonce is a CSP base64-value and must survive the header verbatim.
+  const nonce = randomBytes(16).toString('base64url');
+  send(req, res, 200, uiShellHtml(req.headers.host || '', nonce, uiTwinPath(p)), 'text/html; charset=utf-8',
+    { 'content-security-policy': uiCsp(nonce) });
+}
+async function uiAssetView(req, res, name) {
+  if (!uiAssets.size) await loadUiAssets();
+  const a = uiAssets.get(name);
+  if (!a) { res.writeHead(404); return res.end(); }
+  if (req.headers['if-none-match'] === a.etag) { res.writeHead(304, { etag: a.etag }); return res.end(); }
+  res.writeHead(200, { 'content-type': a.type, etag: a.etag,
+    'cache-control': 'public, max-age=31536000, immutable', 'content-length': a.buf.length });
+  res.end(a.buf);
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -2999,7 +3750,32 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
+    if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
+    // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
+    if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
+    if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res, p);
     if (p === '/events') return await eventsView(req, res);
+    if (p === '/stream') return await streamView(req, res);
+    // test-only delta injection, for scripts/stream-replay-check.mjs. Absent unless explicitly
+    // enabled, so it can never be reachable on the real dashboard.
+    if (process.env.MOWS_TEST_HOOKS === '1' && p === '/_test/chat') {
+      const q = url.searchParams;
+      chatBroadcast(q.get('agent'), Number(q.get('turn')), Number(q.get('seq')), q.get('delta'));
+      res.writeHead(204); return res.end();
+    }
+    // The symmetric end injector. Task 7's client guard — ignore a `chatend` whose turn is
+    // older than the one currently streaming — only fires when a DEAD turn's `closed:true`
+    // fallback lands AFTER a newer turn has started. Racing two real chat turns to reproduce
+    // that costs money and is flaky; this makes it a deterministic two-request sequence.
+    // Same MOWS_TEST_HOOKS gate as above, so it is absent on the real dashboard.
+    if (process.env.MOWS_TEST_HOOKS === '1' && p === '/_test/chatend') {
+      const q = url.searchParams;
+      const summary = {};
+      if (q.get('closed')) summary.closed = true;
+      if (q.get('cost_usd')) summary.cost_usd = Number(q.get('cost_usd'));
+      chatEnd(q.get('agent'), Number(q.get('turn')), summary);
+      res.writeHead(204); return res.end();
+    }
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
     if (p === '/agents') return await agentsView(req, res);
     if (p.startsWith('/agents/')) {
@@ -3177,5 +3953,8 @@ if (args.includes('--selftest')) {
   process.exit(0);
 }
 await scan().catch(e => console.error('initial scan:', e.message));
+// Before listen(), not lazily on first /ui hit: cssText() resolves the @font-face urls out of
+// this map synchronously, and every server-rendered page needs them too — not just /ui.
+await loadUiAssets();
 setInterval(freshen, 30000).unref();
 server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));

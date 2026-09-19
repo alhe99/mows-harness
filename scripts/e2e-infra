@@ -8,12 +8,21 @@
 # Google credentials and no DNS, so it proves routing/gating, not certificate issuance.
 #
 #   ./scripts/e2e-infra          # ~5 min, needs docker + network
+#   MOWS_HOST=dash.example.test ./scripts/e2e-infra
+#                               # ...and additionally run the HTTP/2 assertion against that live
+#                               # host; without it that one check SKIPs loudly (see e2e-infra.sh)
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-docker run --rm -v "$PWD":/src:ro -v "$PWD/scripts/e2e-infra.sh":/infra-e2e.sh:ro ubuntu:24.04 bash -c '
+# MOWS_HOST is forwarded rather than baked in: the HTTP/2 assertion inside can only be made
+# against a real TLS endpoint, and this container has neither DNS for one nor a certificate of
+# its own. Without this forwarding that assertion could never run at all, only ever SKIP — and a
+# check that cannot fire is the shape of gate this branch has spent four rounds deleting.
+docker run --rm -e MOWS_HOST="${MOWS_HOST:-}" -v "$PWD":/src:ro -v "$PWD/scripts/e2e-infra.sh":/infra-e2e.sh:ro ubuntu:24.04 bash -c '
 set -e; export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq curl git systemd ttyd ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
+# python3 + python3-yaml: mows-agent-meta is a python script and is what the dashboard shells out
+# to for the declared policy of an agent, so the capability assertions below need both present.
+apt-get install -y -qq curl git jq systemd ttyd ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https python3 python3-yaml >/dev/null 2>&1
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
 apt-get install -y -qq nodejs >/dev/null 2>&1
 curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null

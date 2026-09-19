@@ -3,7 +3,7 @@
 # The Claude Code daemon manages processes; this manages POLICY: lint, budget, refusal,
 # run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
 #   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
-#              prune · render <name>|--all · residents [--json]
+#              chat <name> [--stream] <message…>|--history|--clear · prune · render <name>|--all · residents [--json]
 # Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
 set -uo pipefail
 CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
@@ -33,8 +33,47 @@ profiles_json(){
 MOWS_PROFILES_JSON=$(profiles_json); export MOWS_PROFILES_JSON
 cfg_of(){ jq -r --arg p "$1" '.[$p] // empty' <<<"$MOWS_PROFILES_JSON"; }
 
-# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key
-has_mows(){ awk 'NR==1&&$0!="---"{bad=1} NR>1&&$0=="---"{done=1} !done&&NR>1&&/^mows:/{f=1} END{exit !(f&&!bad)}' "$1"; }
+# an agent = <cfgdir>/agents/<name>.md whose frontmatter has a top-level `mows:` key.
+#
+# THIS IS THE SYSTEM'S SECOND FRONTMATTER READER and it has to agree with the first. The real
+# parse is mows-agent-meta's frontmatter() (Python + PyYAML); this awk exists only as a fast
+# discovery filter, because all_agents() runs it over EVERY *.md in every profile's agents dir --
+# mostly plain Claude Code subagents -- and forking python per file to answer "is this even one of
+# ours" would make `list` and `render --all` pay a full YAML parse for every unrelated subagent.
+#
+# Cheap is fine; DISAGREEING is not, and it used to. mows-agent-meta matches its frontmatter with
+# a regex that tolerates trailing spaces/tabs after EITHER delimiter, over a file opened in Python
+# TEXT mode (so CRLF is translated before the regex sees it), and it REQUIRES the closing
+# delimiter. The old one-liner here demanded line 1 be exactly "---" and never looked for a close.
+# Four shapes diverged (final review, M3), each silently:
+#
+#   opening "--- " or "---<tab>"   python: agent · awk: not an agent  -> dropped from every sweep
+#   CRLF line endings              python: agent · awk: not an agent  -> dropped from every sweep
+#   no closing "---"               python: no frontmatter at all      -> swept in, then errors
+#
+# Dropped from every sweep means: `render --all` never generates its units, so ITS TIMERS NEVER
+# FIRE; `lint --all` never lints it; `list` never shows it; retention never prunes it -- while
+# `mows-agent run <name>` keeps working, because agent_file() deliberately does not filter (see
+# below). An agent that silently never fires is the worst failure mode this layer has, and a file
+# arriving from a Windows editor or carrying one trailing space is not exotic.
+#
+# So: strip a trailing CR from every line, allow [ \t]* after either delimiter, and require the
+# close. Two more shapes went the same silent way and are fixed with the key pattern (re-review,
+# R3) -- `"mows":` / `'mows':` (a quoted top-level key) and `mows :` (a space before the colon) are
+# both ordinary YAML that PyYAML reads as a top-level `mows` key, and a bare /^mows:/ matched
+# neither. Less likely than a trailing space, which is exactly what would have been said about a
+# trailing space.
+#
+# Asserted shape by shape in scripts/e2e-agents.sh against the REAL mows-agent-meta, so the two
+# cannot drift apart again without a red line, and the assertions include three files the pattern
+# must keep REFUSING (`mowsy:`, a nested `mows:` under another key, and "mows:" inside a quoted
+# string value) -- widening a regex is how you trade a false negative for a false positive.
+#
+# Named because the comment previously named only the false positive and not these false negatives,
+# and the false negatives are the direction that silently drops an agent: what awk still cannot do
+# is tell a top-level `mows:` key from the text "mows:" at column 0 inside a quoted multi-line YAML
+# block. That needs a parser, and such a file is caught by lint the moment it is named.
+has_mows(){ awk '{sub(/\r$/,"")} NR==1&&$0!~/^---[ \t]*$/{bad=1;exit} NR>1&&!done&&$0~/^---[ \t]*$/{done=1} NR>1&&!done&&/^["'"'"']?mows["'"'"']?[ \t]*:/{f=1} END{exit !(f&&done&&!bad)}' "$1"; }
 agent_file(){ # prints the single file for <name>; dies on genuine duplicates; empty if none
   # Deliberately does NOT filter on has_mows: a named lookup must still find a file that
   # is missing its mows: block, so lint can report the exact "mows: block is required"
@@ -110,6 +149,98 @@ write_status(){ # write_status <state>  (uses the run globals; atomic)
           turns:$turns,tool_calls:$tools,cost_usd:$cost,permission_denials:$den,pid:$pid,claude_pid:$cpid}' \
         > "$RUNDIR/status.json.tmp" && mv "$RUNDIR/status.json.tmp" "$RUNDIR/status.json"
 }
+# ---------- memory ----------
+# store_memory <name> <reply-text>: the LAST fenced block whose info string is exactly
+# `mows-memory` becomes $STATE_ROOT/<name>/memory.md, whole. No block: the file is left as it
+# is and nothing is logged — silence is the documented "keep". An empty block clears the file
+# and is logged: that is the one way an agent forgets on purpose. The agent never writes this
+# file itself (spec D2): both shipped agents deny Write, and the alternative is Bash redirection,
+# the exact smell the capability panel exists to name.
+#
+# The info-string match is exact (`mows-memory` then only whitespace), so `mows-memory-notes`
+# is not a match; and because a fence opened with four backticks is only closed by four, a
+# three-backtick mows-memory fence quoted inside one is swallowed as that fence's body — the
+# awk below sees a line of exactly three backticks close the INNER fence, then the four-tick
+# line as ordinary text, so the quoted copy never becomes `last`. "Last" is deliberate:
+# harness-reviewer is asked to begin by QUOTING its memory, and the quote must not win.
+store_memory(){
+  local n=$1 dir="$STATE_ROOT/$1" out status body bytes lines orig
+  out=$(awk '
+    /^```mows-memory[ \t]*$/ { inb=1; cur=""; next }
+    inb && /^```[ \t]*$/     { inb=0; have=1; last=cur; next }
+    inb                      { cur = cur $0 "\n" }
+    END { if (have) { print "BLOCK"; printf "%s", last } else print "NONE" }' <<<"$2")
+  status=${out%%$'\n'*}
+  [ "$status" = BLOCK ] || return 0
+  body=${out#BLOCK}; body=${body#$'\n'}
+  mkdir -p "$dir"
+  if [ -z "$body" ]; then
+    : > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
+    event "$n" "memory cleared by agent"; return 0
+  fi
+  bytes=$(printf '%s' "$body" | wc -c); lines=$(printf '%s\n' "$body" | wc -l)
+  if [ "$bytes" -gt "$MEM_MAX_BYTES" ] || [ "$lines" -gt "$MEM_MAX_LINES" ]; then
+    # Keep whole lines while both caps hold. LC_ALL=C so length() is bytes, not characters —
+    # the cap is on what the file weighs, and a UTF-8 memory must not slip past it. A first
+    # line that alone exceeds the byte cap would leave nothing; cut it hard rather than write
+    # an empty file that reads as "cleared".
+    orig=$body
+    body=$(printf '%s\n' "$body" | LC_ALL=C awk -v B="$MEM_MAX_BYTES" -v L="$MEM_MAX_LINES" \
+      '{ n = length($0) + 1; if (tot + n > B || NR > L) exit; tot += n; print }')
+    [ -n "$body" ] || body=$(printf '%s' "$orig" | LC_ALL=C head -c "$((MEM_MAX_BYTES - 1))")
+    event "$n" "memory truncated: $bytes bytes / $lines lines offered, cap $MEM_MAX_BYTES/$MEM_MAX_LINES"
+  fi
+  printf '%s\n' "$body" > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
+  event "$n" "memory stored: $(wc -c < "$dir/memory.md") bytes, $(wc -l < "$dir/memory.md") lines"
+}
+memory_block(){ # memory_block <name>: the "## Your memory" section of an appended prompt (spec §2.1)
+  local f="$STATE_ROOT/$1/memory.md"
+  printf '\n## Your memory\n'
+  # -s, not -f: a cleared memory is an empty file and must read as "none", not as a blank —
+  # harness-reviewer's own tripwire is "state whether a memory record was found".
+  if [ -s "$f" ]; then cat "$f"; else printf '(none — this is your first call, or memory was never recorded)\n'; fi
+}
+memory_instruction(){ # the write-back contract, identical for run and chat (spec §3)
+  cat <<'EOF'
+
+## Updating your memory
+End your reply with your memory for next time, as a fenced block:
+
+    ```mows-memory
+    <what you want to know next time — newest commit reviewed, open concerns, decisions,
+     anything you would otherwise re-derive>
+    ```
+
+Write the WHOLE memory, not a diff: the block replaces the file. Keep it under 40 lines.
+Leave the block out to keep your memory exactly as it is. Nothing else in your reply is stored.
+EOF
+}
+chat_history(){ # chat_history <name>: the last CHAT_CTX_TURNS entries of chat.jsonl, as text (spec §2.3)
+  local n=$1 f="$STATE_ROOT/$1/chat.jsonl"
+  printf '\n## The conversation so far\n'
+  [ -s "$f" ] || { printf '(no conversation yet)\n'; return 0; }
+  # error-role entries (a failed turn) are shown as SYSTEM: the agent should know its last answer
+  # never arrived. Each text is cut at CHAT_CTX_CHARS so one long reply cannot crowd out the rest.
+  tail -n "$CHAT_CTX_TURNS" "$f" | jq -r --arg n "$n" --argjson max "$CHAT_CTX_CHARS" '
+    (if .role == "user" then "USER" elif .role == "error" then "SYSTEM" else ($n | ascii_upcase) end) as $who
+    | (.text // "") as $t
+    | "\($who) (\((.at // "")[11:19])): \(if ($t | length) > $max then $t[:$max] + "[…]" else $t end)"'
+}
+chat_context(){ # chat_context <name> <profile> <workdir>: appended system prompt for ONE chat turn
+  local n=$1 prev
+  prev=$(ls -1d "$STATE_ROOT/$n/runs"/*/ 2>/dev/null | tail -1)
+  printf 'mows-agent chat context\n- agent: %s\n- profile: %s\n- workdir: %s\n' "$n" "$2" "$3"
+  printf -- "- this turn's budget: %s USD, %s turns\n" "$CHAT_USD" "$CHAT_TURNS"
+  if [ -n "$prev" ] && [ -f "$prev/status.json" ]; then
+    printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
+  fi
+  memory_block "$n"
+  chat_history "$n"
+  # The one line where run and chat disagree on purpose (spec §2.3). run_context says there is
+  # no human; that line used to sit in a resumed transcript while a human typed at it.
+  printf '\nA human is present and is asking you this directly. Answer them. Ask a clarifying question if one is genuinely needed; do not pretend to certainty you lack.\n'
+  memory_instruction
+}
 run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
   local prev
   prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
@@ -119,7 +250,9 @@ run_context(){ # appended to the system prompt: who am I, what ran before. Never
     printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
     [ -f "$prev/result.json" ] && printf -- '- previous result: %s\n' "$(jq -r '(.result // "") | .[0:600]' "$prev/result.json")"
   fi
-  printf 'You have no human available: never ask questions, decide and finish within budget.\n'
+  memory_block "$AGENT"
+  printf '\nYou have no human available: never ask questions, decide and finish within budget.\n'
+  memory_instruction
 }
 kill_tree(){ # kill the claude process GROUP. $! is not reliably the pgid leader (setsid execs
   # only when the caller is not already a process-group leader), so read the real pgid.
@@ -148,6 +281,9 @@ tail_loop(){ # stdin = stream-json; $1 = claude pid. Updates status.json; decide
   local st
   if [ -n "$final" ]; then
     printf '%s\n' "$final" > "$RUNDIR/result.json"
+    # Memory is captured from EVERY result record, whatever state the run ends in: a run that
+    # hit its budget and still wrote a block wrote the most useful words it had (spec §3).
+    store_memory "$AGENT" "$(jq -r '.result // ""' <<<"$final")"
     COST=$(jq '.total_cost_usd // 0' <<<"$final"); TURNS=$(jq '.num_turns // 0' <<<"$final")
     DENIALS=$(jq '(.permission_denials // []) | length' <<<"$final"); SID=$(jq -r '.session_id // empty' <<<"$final")
     case "$(jq -r '[.subtype // "", .terminal_reason // "", (.is_error|tostring)] | join("|")' <<<"$final")" in
@@ -237,7 +373,7 @@ cmd_run(){
   CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
       --output-format stream-json --verbose --permission-prompts none \
       --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
-      --append-system-prompt "$(run_context)" "$task" \
+      --append-system-prompt "$(run_context)" -- "$task" \
       > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
   CPID=$!; write_status working
   # This trap covers an INTERACTIVE Ctrl-C only. A tty delivers SIGINT to the whole foreground
@@ -295,11 +431,195 @@ cmd_logs(){
   else jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' "$d/stream.jsonl"; fi
 }
 
+# ---------- chat ----------
+# One conversation turn against an agent's most recent run, by resuming its session id.
+# A chat turn is one bounded `claude -p --agent <name>` with the agent's memory and the recent
+# conversation appended to its system prompt (spec 2026-09-19 D1). It shares run mode's exact
+# shape and differs in three things: the budget (CHAT_USD/CHAT_TURNS, sized for one question),
+# the appended context (chat_context, which says a human is present), and the user turn (the
+# message). No --resume: there is no session to expire at cleanupPeriodDays, none to outgrow,
+# and no completed run is needed before the first question. We store our own transcript.
+CHAT_USD="${CHAT_USD:-0.25}"   # per-turn cap; a chat turn is one question, not a work session
+CHAT_TURNS="${CHAT_TURNS:-6}"  # enough for a lookup or two, not enough to run a whole task
+# Overridable (not just a literal `timeout 300` below) so a real `timeout` kill — the specific
+# failure the __mows_rc= sentinel exists to catch — can be driven hermetically in ~1s instead
+# of needing an actual 300s wait (fix round 1, F4).
+CHAT_TIMEOUT_SEC="${CHAT_TIMEOUT_SEC:-300}"
+# ---------- memory (spec 2026-09-19 D1/D5): a file, bounded, owned by this script ----------
+MEM_MAX_BYTES="${MEM_MAX_BYTES:-4096}"   # hard cap; the instruction asks the agent for < 40 lines
+MEM_MAX_LINES="${MEM_MAX_LINES:-60}"
+CHAT_CTX_TURNS="${CHAT_CTX_TURNS:-12}"   # chat.jsonl entries injected into a chat turn
+CHAT_CTX_CHARS="${CHAT_CTX_CHARS:-2000}" # per-entry cut inside that injection
+CHAT_KEEP="${CHAT_KEEP:-200}"            # chat.jsonl ceiling, enforced by prune
+cmd_chat(){
+  local n=${1:-}; [ -n "$n" ] || die "usage: mows-agent chat <name> [--stream] <message…>  ·  --history  ·  --clear"
+  shift
+  local f; f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"
+  local dir="$STATE_ROOT/$n" log="$STATE_ROOT/$n/chat.jsonl"
+  case "${1:-}" in
+    --history) [ -f "$log" ] && jq -r '"\(.at)  \(.role|ascii_upcase): \(.text)"' "$log" || echo "(no chat yet)"; return 0;;
+    --clear)   rm -f "$log"; echo "cleared chat transcript for $n (the agent's own session is untouched)"; return 0;;
+  esac
+  local stream=0
+  # --stream is recognised ONLY as the very first argument after <name> — exactly as
+  # positional as the --history/--clear check above. A typo (--strem) or --stream given
+  # AFTER the message is silently treated as ordinary message text, not an error (fix round
+  # 1, F9): a message can legitimately start with `--` (see the guard below), so a parser
+  # that rejected an unrecognised leading `--token` here would also have to reject that —
+  # reintroducing the exact vulnerability the `--` guard exists to prevent. Documented
+  # rather than "fixed" for that reason.
+  case "${1:-}" in --stream) stream=1; shift;; esac
+  local msg="$*"; [ -n "$msg" ] || die "usage: mows-agent chat <name> [--stream] <message…>  (--stream is recognised only immediately after <name>)"
+  # The message is attacker-reachable: the dashboard's POST /a/agent-chat passes a form field
+  # straight through. Without a guard, a message starting with '-' is parsed by claude as a
+  # FLAG, not text — verified: `claude -p "--output-format"` errors with "argument missing",
+  # so a caller could smuggle --permission-prompts, --max-budget-usd, and friends. The `--`
+  # before "$msg" below is the real fix; this leading space is defence in depth for any CLI
+  # that does not honour `--`, and costs nothing since it is invisible in a chat message.
+  case $msg in -*) msg=" $msg";; esac
+
+  # No --resume (spec 2026-09-19 D1), so no completed run is required and no session id is looked
+  # up. Two claude processes may not hold the pen at once, though: a run in progress will write
+  # memory.md when it ends, and so would this turn — whichever finishes second wins silently.
+  if [ -f "$dir/last/status.json" ] && [ "$(jq -r .state "$dir/last/status.json")" = working ]; then
+    die "$n is mid-run; its memory write-back would race this turn's. Wait for it to finish."
+  fi
+
+  check_version
+  local m; m=$(meta "$f")
+  local cfg; cfg=$(cfg_of "$(mget "$m" .mows.profile)")
+  local wd; wd=$(expand_tilde "$(mget "$m" .mows.workdir)")
+  local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+
+  mkdir -p "$dir"
+  # Built BEFORE this turn's message is appended below, so the history the model sees is the
+  # conversation up to now and the message arrives once, as the user turn — not twice.
+  local ctx; ctx=$(chat_context "$n" "$(mget "$m" .mows.profile)" "$wd")
+  jq -nc --arg r user --arg t "$msg" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+
+  if [ "$stream" = 1 ]; then
+    # Chat turns stream; unattended runs deliberately do not (spec: the flag is per-mode,
+    # because it multiplies stream lines for no run-record value).
+    local seq=0 reply="" cost=0 iserr=false rc=0 sawres=0 notice="" resline="" line t rtype out
+    while IFS= read -r line; do
+      # The sentinel below is how a process substitution's exit status reaches us at all:
+      # `done < <(cmd)` discards it, so a plain `timeout` kill or a non-zero claude exit
+      # would otherwise look identical to a clean empty reply.
+      case $line in __mows_rc=*) rc=${line#__mows_rc=}; continue;; esac
+      # One jq call gets both the record type and any delta text, and its own exit status
+      # doubles as the JSON-validity check that used to be a separate `jq -e .` fork — this
+      # also replaces a raw substring match on the record type (fix round 1, F6/F13: down
+      # from up to 4 forks per line to 1 for an ordinary delta). The delta text is joined
+      # with -j (raw, unescaped) rather than read back through ordinary command substitution:
+      # `t=$(jq -r …)` strips ALL trailing newlines from its capture, so a delta that is
+      # exactly "\n\n" (a paragraph break — a common single chunk from the real API) silently
+      # disappears, and any delta ending in "\n" loses it (fix round 1, F1). Terminating the
+      # jq program with a non-newline separator (".") means nothing in the capture is a
+      # TRAILING newline, so command substitution strips nothing. The separator does NOT have
+      # to be absent from the delta text — re-review round 1 confirmed this by construction:
+      # the split below is POSITIONAL, not delimiter-uniqueness-dependent. `%%` takes the
+      # prefix before the FIRST "." (the record type, which the CLI controls and which is
+      # always a bare word with no punctuation), and the final `%` strips exactly the LAST
+      # character, which is always the terminator jq just wrote — regardless of how many
+      # periods appear earlier in the delta text itself. A delta containing, ending in, or
+      # consisting entirely of "." round-trips unchanged. A printable separator was chosen
+      # over a control byte (this file's own history: a tool once silently rewrote a raw
+      # control byte named in source into something else entirely) — nothing here depends on
+      # unlikeliness, so there is no reason to pay that price. The one residual, inherent to
+      # `$(…)` and not to this framing: a literal NUL in the delta text is silently dropped by
+      # command substitution regardless of separator choice.
+      if ! out=$(jq -j '(.type // ""), ".", (.event.delta.text // empty), "."' <<<"$line" 2>/dev/null); then
+        # claude exits 0 and prints a plain-text notice ("No conversation found with session
+        # ID: …") when a session cannot be resumed. The non-streaming path above guards
+        # against exactly this; dropping the line here reports a failure as an empty success.
+        [ -n "$line" ] && notice="${notice:-$line}"
+        continue
+      fi
+      rtype=${out%%.*}       # everything before the first "."
+      t=${out#*.}; t=${t%.}  # everything after the first ".", minus the trailing "."
+      if [ "$rtype" = result ]; then
+        sawres=1; resline="$line"
+        cost=$(jq -r '.total_cost_usd // 0' <<<"$line")
+        iserr=$(jq -r '(.is_error // false)|tostring' <<<"$line")
+      fi
+      if [ -n "$t" ]; then
+        seq=$((seq + 1)); reply="$reply$t"
+        jq -nc --argjson s "$seq" --arg d "$t" '{seq:$s,delta:$d}'
+      fi
+    done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
+              --agent "$n" --append-system-prompt "$ctx" \
+              --output-format stream-json --verbose --include-partial-messages \
+              --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+              --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+              -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
+    if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
+      local why="${notice:-claude exited $rc with no result record}"
+      [ "$rc" = 124 ] && why="timed out after ${CHAT_TIMEOUT_SEC}s"
+      jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+      jq -nc --arg t "$why" '{end:true,cost_usd:0,is_error:true,error:$t}'
+      event "$n" "chat failed: $why"
+      echo "mows-agent: chat turn failed: $why" >&2
+      return 64
+    fi
+    # A turn can succeed with no deltas at all — a tool-only turn, a CLI version that omits
+    # partial messages for some content type — so fall back to the result record's own text
+    # rather than silently persisting an empty reply as a success (fix round 1, F7).
+    [ -z "$reply" ] && reply=$(jq -r '.result // ""' <<<"$resline")
+    jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$iserr" \
+       '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+    # From the RESULT record's text, not the concatenated deltas: the block is the model's last
+    # words and survives a tool-only or partial-delta turn that never streamed it.
+    store_memory "$n" "$(jq -r '.result // ""' <<<"$resline")"
+    jq -nc --argjson c "$cost" --arg e "$iserr" '{end:true,cost_usd:$c,is_error:($e=="true")}'
+    event "$n" "chat turn (streamed): \$$cost"
+    [ "$iserr" = true ] && return 3; return 0
+  fi
+
+  local out rc
+  out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
+        --agent "$n" --append-system-prompt "$ctx" --output-format json \
+        --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+        --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+        -- "$msg" 2>/dev/null)
+  rc=$?
+  # claude exits 0 and prints a plain-text notice (not JSON) when a session cannot be resumed,
+  # so a non-zero code is not the only failure shape to check for.
+  if [ $rc -ne 0 ] || [ -z "$out" ] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
+    local why="claude exited $rc"
+    [ $rc -eq 124 ] && why="timed out after ${CHAT_TIMEOUT_SEC}s"
+    [ -n "$out" ] && ! jq -e . >/dev/null 2>&1 <<<"$out" && why="$(printf '%s' "$out" | head -1)"
+    jq -nc --arg r error --arg t "$why" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
+    event "$n" "chat failed: $why"
+    die "chat turn failed: $why"
+  fi
+  local reply cost err
+  reply=$(jq -r '.result // ""' <<<"$out")
+  cost=$(jq -r '.total_cost_usd // 0' <<<"$out")
+  err=$(jq -r '(.is_error // false)|tostring' <<<"$out")
+  jq -nc --arg r assistant --arg t "$reply" --arg a "$(date -Is)" --argjson c "$cost" --arg e "$err" \
+     '{at:$a,role:$r,text:$t,cost_usd:$c,is_error:($e=="true")}' >> "$log"
+  store_memory "$n" "$reply"
+  event "$n" "chat turn: \$$cost"
+  printf '%s\n' "$reply"
+  [ "$err" = true ] && return 3; return 0
+}
+
 # ---------- prune ----------
-cmd_prune(){ # delete run dirs older than retention_days per agent; never the `last` target
-  local n f m days d keep r
+cmd_prune(){ # per agent: delete run dirs older than retention_days (never the `last` target);
+             # cap chat.jsonl at CHAT_KEEP entries. memory.md is never touched (spec 2026-09-19 §1).
+  local n f m days d keep r c have
   while IFS=$'\t' read -r n f; do
     m=$(meta "$f") || continue; days=$(mget "$m" .mows.retention_days); days=${days:-30}
+    # chat.jsonl has no other ceiling (spec §1.1). CHAT_KEEP is far above the CHAT_CTX_TURNS
+    # ever injected and above what the dashboard shows: a ceiling, not a window. Before the
+    # runs/ check on purpose — an agent can have a transcript and no runs.
+    c="$STATE_ROOT/$n/chat.jsonl"
+    if [ -f "$c" ]; then
+      have=$(wc -l < "$c")
+      if [ "$have" -gt "$CHAT_KEEP" ]; then
+        tail -n "$CHAT_KEEP" "$c" > "$c.tmp" && mv "$c.tmp" "$c" && event "$n" "chat.jsonl trimmed: $((have - CHAT_KEEP)) entries dropped"
+      fi
+    fi
     d="$STATE_ROOT/$n/runs"; [ -d "$d" ] || continue
     keep=$(readlink "$STATE_ROOT/$n/last" 2>/dev/null); keep=${keep#runs/}
     while IFS= read -r r; do
@@ -457,8 +777,9 @@ case "${1:-}" in
   list)  cmd_list;;
   last)  shift; cmd_last "$@";;
   logs)  shift; cmd_logs "$@";;
+  chat)  shift; cmd_chat "$@";;
   prune) cmd_prune;;
   render) shift; cmd_render "$@";;
   residents) shift; cmd_residents "$@";;
-  *) die "usage: mows-agent lint|run|list|last|logs|prune|render|residents …";;
+  *) die "usage: mows-agent lint|run|chat|list|last|logs|prune|render|residents …";;
 esac

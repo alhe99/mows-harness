@@ -1,0 +1,1 @@
+2026-09-19 claude 2.1.277 user-defaultMode=auto tools-bound=yes write-denied=yes bash-read-run=yes bash-read-chat=denied bash-read-outside=denied bash-redirect-denied=yes memory-contract=yes

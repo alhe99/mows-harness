@@ -53,12 +53,40 @@ def frontmatter(path):
 
 
 def as_list(v):
-    """Claude accepts `tools: Read, Grep` (string) and `tools: [Read, Grep]` (list)."""
+    """Claude accepts `tools: Read, Grep` (string) and `tools: [Read, Grep]` (list).
+
+    BOTH BRANCHES STRIP, and a list carrying a non-string is not a tool list. This used to be
+    `list(v) if isinstance(v, list) else None`, which was wrong twice over (Task 9 fix round 1):
+
+      - `tools: ["Read", "Bash "]` kept the trailing space, so `WRITE_CAPABLE_TOOLS & set(tools)`
+        below missed it and a write-capable agent linted clean. The string form of the SAME
+        declaration stripped and was flagged. One trailing space and the answer flipped, in the
+        permissive direction.
+      - `- Bash:` instead of `- Bash` is an ordinary typo; YAML parses it as {"Bash": None}, and
+        the `set(tools)` on the can_write line below then raised an unhandled
+        `TypeError: unhashable type: 'dict'`. The operator got a Python traceback from the one
+        tool whose whole job is explaining what is wrong with their file. It failed CLOSED
+        (mows-agent:210 refuses the run on a non-zero lint), so this is robustness rather than
+        safety -- but a traceback is not a lint message.
+
+    Returning None routes both into the existing "tools must be a list or comma-separated string"
+    error, which is what an unreadable value should have produced all along.
+
+    Kept deliberately identical to asList() in infra/dashboard/capability.mjs, so the validator and
+    the dashboard cannot disagree about what a tools: field says. They are separate programs in
+    separate languages and neither can import the other, so the agreement is asserted instead:
+    scripts/e2e-agents.sh drives THIS function and scripts/capability-check.mjs drives that one,
+    over the same table of inputs.
+    """
     if v is None:
         return []
     if isinstance(v, str):
         return [t.strip() for t in v.split(",") if t.strip()]
-    return list(v) if isinstance(v, list) else None
+    if isinstance(v, list):
+        if not all(isinstance(t, str) for t in v):
+            return None
+        return [t.strip() for t in v if t.strip()]
+    return None
 
 
 def is_int(v):
@@ -108,7 +136,29 @@ def lint(path):
     # "Read-only" from disallowedTools alone is a lie if the agent also has Bash or Task:
     # a shell writes fine through redirection, and Task can hand a subagent its own tools —
     # neither is stopped by disallowing Write/Edit on the parent (SETUP.md's safety posture).
-    can_write = not ({"Write", "Edit"} <= set(dis or [])) or bool(WRITE_CAPABLE_TOOLS & set(tools or []))
+    #
+    # AN ABSENT `tools:` KEY INHERITS EVERYTHING, INCLUDING Bash (Task 9 fix round 2, review F4).
+    # `as_list(None)` returns [] for an absent key and for `tools: null` alike, so `set(tools or [])`
+    # was empty and this line reported precisely the lie the comment above warns about:
+    #
+    #   no tools: key, disallowedTools: [Write, Edit]   -> can_write False -> "read-only"
+    #   tools: [Bash],  disallowedTools: [Write, Edit]  -> can_write True
+    #
+    # Two agents with identical capability, opposite verdicts, and the flattering one goes to the
+    # agent whose file says the least. It suppressed the webhook warning below — an untrusted
+    # external trigger on an agent that can run shell commands, which is the single combination that
+    # warning exists to catch — and it wrongly errored on `merge.policy: pr` (that one fails closed).
+    # infra/dashboard/capability.mjs has always read an absent key as `inherits`; this is the same
+    # ruling, one layer down, in the program that decides whether the file is ACCEPTED.
+    #
+    # An UNREADABLE tools: value (as_list -> None) inherits here too. It is already a lint error two
+    # lines above, so this only decides what the warnings say about a file that is being rejected —
+    # and saying "it may hold every tool" about a file nobody could parse is the same direction
+    # capability.mjs rounds in, for the same reason.
+    inherits_tools = fm.get("tools") is None or tools is None
+    can_write = (not ({"Write", "Edit"} <= set(dis or []))
+                 or inherits_tools
+                 or bool(WRITE_CAPABLE_TOOLS & set(tools or [])))
 
     # ---- mows namespace ----
     mows = fm.get("mows")
@@ -140,6 +190,19 @@ def lint(path):
             E.append("mows.budget.usd_per_run must be a number > 0")
         if not (is_int(b.get("max_turns")) and b["max_turns"] > 0):
             E.append("mows.budget.max_turns must be a positive integer")
+        # An agent file carries TWO turn limits: `maxTurns` in the Claude namespace, which the CLI
+        # reads out of this file, and mows.budget.max_turns, which mows-agent passes as --max-turns.
+        # Until now this validator range-checked each and compared them never, so `maxTurns: 100`
+        # beside `max_turns: 5` passed clean and the contradiction surfaced only on the dashboard's
+        # capability panel -- which means an agent nobody opens in the dashboard keeps it forever.
+        # Measured on this box: the flag wins (a run with maxTurns: 2 and --max-turns 20 took four
+        # turns), so the Claude-namespace figure is the one that silently does nothing, and an
+        # operator who wrote it believes in a cap they do not have.
+        if is_int(fm.get("maxTurns")) and is_int(b.get("max_turns")) and fm["maxTurns"] != b["max_turns"]:
+            E.append(f"maxTurns ({fm['maxTurns']}) and mows.budget.max_turns ({b['max_turns']}) "
+                     "disagree; mows-agent passes the mows figure as --max-turns and it is the one "
+                     "that binds, so the maxTurns value would silently do nothing. Make them equal "
+                     "or drop maxTurns.")
         if "usd_per_day" in b and not (is_num(b["usd_per_day"]) and b["usd_per_day"] > 0):
             E.append("mows.budget.usd_per_day must be a number > 0")
         if "quota_floor" in b and not (is_int(b["quota_floor"]) and 0 <= b["quota_floor"] <= 100):
