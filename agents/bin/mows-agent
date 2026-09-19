@@ -193,6 +193,28 @@ store_memory(){
   printf '%s\n' "$body" > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
   event "$n" "memory stored: $(wc -c < "$dir/memory.md") bytes, $(wc -l < "$dir/memory.md") lines"
 }
+memory_block(){ # memory_block <name>: the "## Your memory" section of an appended prompt (spec §2.1)
+  local f="$STATE_ROOT/$1/memory.md"
+  printf '\n## Your memory\n'
+  # -s, not -f: a cleared memory is an empty file and must read as "none", not as a blank —
+  # harness-reviewer's own tripwire is "state whether a memory record was found".
+  if [ -s "$f" ]; then cat "$f"; else printf '(none — this is your first call, or memory was never recorded)\n'; fi
+}
+memory_instruction(){ # the write-back contract, identical for run and chat (spec §3)
+  cat <<'EOF'
+
+## Updating your memory
+End your reply with your memory for next time, as a fenced block:
+
+    ```mows-memory
+    <what you want to know next time — newest commit reviewed, open concerns, decisions,
+     anything you would otherwise re-derive>
+    ```
+
+Write the WHOLE memory, not a diff: the block replaces the file. Keep it under 40 lines.
+Leave the block out to keep your memory exactly as it is. Nothing else in your reply is stored.
+EOF
+}
 run_context(){ # appended to the system prompt: who am I, what ran before. Never written into the agent file.
   local prev
   prev=$(ls -1d "$STATE_ROOT/$AGENT/runs"/*/ 2>/dev/null | grep -v "/$RUN_ID/" | tail -1)
@@ -202,7 +224,9 @@ run_context(){ # appended to the system prompt: who am I, what ran before. Never
     printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
     [ -f "$prev/result.json" ] && printf -- '- previous result: %s\n' "$(jq -r '(.result // "") | .[0:600]' "$prev/result.json")"
   fi
-  printf 'You have no human available: never ask questions, decide and finish within budget.\n'
+  memory_block "$AGENT"
+  printf '\nYou have no human available: never ask questions, decide and finish within budget.\n'
+  memory_instruction
 }
 kill_tree(){ # kill the claude process GROUP. $! is not reliably the pgid leader (setsid execs
   # only when the caller is not already a process-group leader), so read the real pgid.

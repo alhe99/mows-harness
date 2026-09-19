@@ -568,6 +568,21 @@ echo memblockbudget > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
 chk "memory: stored even when the run ends budget_exceeded" '[ "$(cat "$M")" = "stored despite budget_exceeded" ] && [ "$(jq -r .state "$MOWS_AGENTS_STATE/good/last/status.json")" = budget_exceeded ]'
 echo ok > "$CLAUDE_MODE_FILE"
 
+echo "### memory: injected into run_context (spec §2.1, §2.2)"
+printf 'newest: abc123\nopen: one thing\n' > "$M"
+echo ok > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
+chk "run: appended prompt has the memory heading"     'grep -qx "## Your memory" "$CLAUDE_ARGS_FILE"'
+chk "run: appended prompt carries memory.md verbatim" 'grep -qx "newest: abc123" "$CLAUDE_ARGS_FILE" && grep -qx "open: one thing" "$CLAUDE_ARGS_FILE"'
+chk "run: appended prompt carries the write-back instruction" 'grep -qx "## Updating your memory" "$CLAUDE_ARGS_FILE" && grep -qF "\`\`\`mows-memory" "$CLAUDE_ARGS_FILE"'
+chk "run: memory comes before the no-human line"      '[ "$(grep -nx "## Your memory" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" -lt "$(grep -n "no human available" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" ]'
+chk "run: the no-human line is still there"           'grep -q "You have no human available" "$CLAUDE_ARGS_FILE"'
+chk "run: previous-result line survives"              'grep -q "^- previous result: " "$CLAUDE_ARGS_FILE"'
+rm -f "$M"; mows-agent run good >/dev/null 2>&1
+chk "run: absent memory is stated as none"            'grep -qx "(none — this is your first call, or memory was never recorded)" "$CLAUDE_ARGS_FILE"'
+: > "$M"; mows-agent run good >/dev/null 2>&1
+chk "run: empty (cleared) memory reads as none too"   'grep -q "^(none — this is your first call" "$CLAUDE_ARGS_FILE"'
+rm -f "$M"
+
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
 chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
   'node scripts/chat-stream-utf8-check.mjs'
