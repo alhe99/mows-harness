@@ -511,6 +511,8 @@ async function layout() {
         const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; })(),
       hdrShown: (() => { const e = document.querySelector('header.hdr'); if (!e) return null;
         const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; })(),
+      backShown: (() => { const e = document.querySelector('.agback-in'); if (!e) return null;
+        const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; })(),
     };
   });
 
@@ -529,9 +531,10 @@ async function layout() {
     const phone = regime === 'phone';
 
     if (phone) {
-      check(`${w}x${h}: the chat card ends above the FAB's band (precondition, by construction)`,
-        !!(m.card && m.fab) && m.card.bottom <= m.fab.top,
-        { cardBottom: m.card && Math.round(m.card.bottom), fabTop: m.fab && Math.round(m.fab.top) });
+      // On a phone the agent page owns the screen (html.agent-view): the FAB is not rendered at
+      // all, so it cannot be under anything. Asserted as "not rendered", not "far away".
+      check(`${w}x${h}: the terminal FAB is not rendered on the agent page (precondition, by construction)`,
+        !!m.fab && m.fab.w === 0 && m.fab.h === 0, { fab: m.fab });
     } else {
       check(`${w}x${h}: Send ends left of the FAB's column (precondition, by construction)`,
         !!(m.send && m.fab) && m.send.right <= m.fab.left,
@@ -544,10 +547,13 @@ async function layout() {
       m.hitIsSend === true, m.hitClass);
     // Which nav is the ONLY navigation at this width. Asserted in both directions, because a
     // media-query change that hid both would otherwise read as a pass on the half it still had.
-    check(`${w}x${h}: the ${phone ? 'tab bar is' : 'pill-nav header is'} the rendered navigation`,
-      phone ? (m.tabsShown === true && m.hdrShown === false)
+    // On a phone the agent page renders NEITHER nav — the tab bar hides with html.agent-view and the
+    // pill-nav header is phone-hidden as everywhere — and the header's ← is the navigation; that is
+    // asserted as rendered. Above 700 the pill-nav header must be the only nav, as before.
+    check(`${w}x${h}: the ${phone ? 'header ← is' : 'pill-nav header is'} the rendered navigation`,
+      phone ? (m.tabsShown === false && m.hdrShown === false && m.backShown === true)
             : (m.hdrShown === true && m.tabsShown === false),
-      { tabsShown: m.tabsShown, hdrShown: m.hdrShown });
+      { tabsShown: m.tabsShown, hdrShown: m.hdrShown, backShown: m.backShown });
   }
   await page.setViewportSize({ width: 900, height: 800 });
 }

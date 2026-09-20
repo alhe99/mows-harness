@@ -70,9 +70,10 @@ four viewports against the broken code. The precondition changed with the 2026-0
 the composer used to be a page-level `position:sticky` bar that only reached the FAB once its
 containing block extended past the fold, and the probe asserted that sticky state. The composer is
 now the static foot of a fixed-height chat card, so the precondition is the geometric guarantee each
-regime's CSS is built to hold — on a phone the card *ends above* the FAB's band; in the 701–860
-single-column band the form reserves the FAB's width so Send ends left of it; above 860 the composer
-is in the left column and the FAB hangs over the right. The transcript is still grown through CSSOM
+regime's CSS is built to hold — on a phone the agent page owns the screen (`html.agent-view`): the
+tab bar and the FAB are *not rendered* and the header's ← is the navigation, so nothing fixed exists
+to cover Send; in the 701–860 single-column band the form reserves the FAB's width so Send ends
+left of it; above 860 the composer is in the left column and the FAB hangs over the right. The transcript is still grown through CSSOM
 first, so a two-line fixture cannot make the card shorter than a real chat and pass by accident. That
 precondition was red, unnoticed, for the day between the redesign and this rewrite: `layout` was the
 one mode not run in that day's probe passes. Run `all`.

@@ -96,6 +96,16 @@ function CapSummary({ capability: c }) {
 export function AgentDetail({ name }) {
   const [d, setD] = useState(null);
   useEffect(() => { setD(null); getJSON(`/api/agents/${name}`).then(setD).catch(() => setD(false)); }, [name]);
+  // This page is a chat screen. On a phone it owns the whole viewport, like any messaging app: the
+  // stylesheet hides the tab bar and the terminal FAB while html.agent-view is set, and the header's
+  // ← is the way out. A class, not a style (CSP). It also ends the iOS keyboard problem at its root —
+  // iOS lifts position:fixed;bottom:0 chrome to sit above the keyboard, and in the installed PWA it
+  // pans the page rather than resizing the visual viewport, so a "hide while the keyboard is up"
+  // handler never fired there. With no fixed bottom chrome on this page there is nothing to lift.
+  useEffect(() => {
+    document.documentElement.classList.add('agent-view');
+    return () => document.documentElement.classList.remove('agent-view');
+  }, []);
   if (d === false) return html`<p class="muted">No such agent.</p>`;
   if (!d) return html`<p class="muted">Loading…</p>`;
   const live = d.recs?.[0]?.state === 'working';
