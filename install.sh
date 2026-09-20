@@ -17,7 +17,8 @@
 #                 claude-quota, agy-notify) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
 #   --agents      purpose-scoped agent CLIs (agents/bin/*: mows-agent, mows-agent-meta) into
 #                 ~/.local/bin; config seeded at ~/.config/mows-agents/config; example agent
-#                 seeded at ~/.claude/agents/harness-reviewer.md.
+#                 seeded at ~/.claude/agents/harness-reviewer.md; souls (agents/souls/*) installed to
+#                 ~/.claude/agents/souls/ and the pr-reviewer-* instances seeded beside them.
 #   --all         all six of the above.
 #   --non-interactive   never prompt: use env vars for every value, leave the rest as
 #                 sanctioned double-brace placeholders in rendered output and warn about it.
@@ -448,7 +449,7 @@ layer_agy(){
 
 layer_agents(){
   echo "== agents (purpose-scoped agents, Layer 6) =="
-  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agents" "$HOME/.local/state/mows-agents" "$HOME/.claude/agents"
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agents" "$HOME/.local/state/mows-agents" "$HOME/.claude/agents" "$HOME/.claude/agents/souls"
   install -m755 agents/bin/mows-agent agents/bin/mows-agent-meta "$HOME/.local/bin/"
   if [ ! -f "$HOME/.config/mows-agents/config" ]; then
     install -m600 agents/config.example "$HOME/.config/mows-agents/config"
@@ -459,6 +460,16 @@ layer_agents(){
     install -m644 agents/examples/harness-reviewer.md "$HOME/.claude/agents/harness-reviewer.md"
     echo "seeded ~/.claude/agents/harness-reviewer.md — edit mows.workdir if this repo lives elsewhere"
   fi
+  # Souls are shared role files (spec 2026-09-20): versioned here, installed ALWAYS — a soul is
+  # code, not a per-box setting, and an edit must reach every instance that names it.
+  install -m644 agents/souls/*.md "$HOME/.claude/agents/souls/"
+  echo "installed souls: $(ls agents/souls | tr '\n' ' ')"
+  # Instances are seeded only when absent, like harness-reviewer: their frontmatter is the
+  # operator's to tune (budget, profile) and must not be overwritten by a reinstall.
+  for f in agents/examples/pr-reviewer-*.md; do
+    b=$(basename "$f")
+    [ -f "$HOME/.claude/agents/$b" ] || { install -m644 "$f" "$HOME/.claude/agents/$b"; echo "seeded ~/.claude/agents/$b"; }
+  done
   echo "installed: mows-agent mows-agent-meta -> ~/.local/bin"
   command -v jq >/dev/null 2>&1 || echo "WARN: jq not found — mows-agent requires jq: sudo apt-get install -y jq"
   python3 -c 'import yaml' 2>/dev/null || echo "WARN: python3 yaml missing — mows-agent lint requires it: sudo apt-get install -y python3-yaml"
