@@ -460,7 +460,9 @@ export function Chat({ name, events, tools }) {
     ${!atBottom && html`<button class="jump" onClick=${() => setAtBottom(true)}>Jump to latest</button>`}
     ${err && html`<p class="cherr" role="alert">${err}</p>`}
     <form class="chatf" onSubmit=${send}>
-      <textarea ref=${taRef} rows="2" placeholder=${`Ask ${name} to analyze or run commands…`}
+      ${/* A phone-width placeholder that wraps to two lines makes the composer look mid-edit. Read
+            once at render; a resize across 500px mid-conversation is not a case worth a listener. */ ''}
+      <textarea ref=${taRef} rows="2" placeholder=${matchMedia('(max-width: 500px)').matches ? `Ask ${name}…` : `Ask ${name} to analyze or run commands…`}
         onKeyDown=${e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) send(e); }} required></textarea>
       ${/* The label is an aria-label, not a text node: the comp's send control is a 40px circle
             and "Send" does not fit in one. The busy state keeps a visible "…" because a disabled

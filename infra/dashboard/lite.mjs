@@ -2054,12 +2054,22 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    an agent should land on the transcript, not scroll three cards to reach it. Source order
    already puts .agchat first, so the single-column case needs no reordering. */
 @media(max-width:1087px){.ag2{grid-template-columns:minmax(0,1fr) 300px;gap:16px}}
-@media(max-width:860px){.ag2{grid-template-columns:minmax(0,1fr)}
-.agchat{height:calc(100dvh - 190px)}
-.chatbox{padding:16px;gap:16px}
-.chat .chatf{padding:12px 16px}
-.agh{padding:14px 16px}
-.agside .card{padding:16px}}
+@media(max-width:860px){.ag2{grid-template-columns:minmax(0,1fr);gap:12px}
+.agwrap{gap:8px}
+/* The back link was a bare 12px mono line sitting on the safe-area blur band's edge, half faded
+   and not a tap target. A 36px row with a little air below the band. */
+.agback{display:inline-flex;align-items:center;min-height:36px;padding:0 2px;margin-top:2px}
+/* The card fills the space between that row and the tab bar, with the insets subtracted by name
+   rather than folded into a magic number: body already pads max(8px, safe-top) above and
+   72px + safe-bottom below; the row is 36px + 8px gap; ~20px of air stays above the bar. */
+.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 120px)}
+.chatbox{padding:14px;gap:16px}
+.chat .chatf{padding:10px 12px}
+.agh{padding:12px 14px}
+.agside .card{padding:16px}
+/* The terminal FAB is fixed bottom-right, over this card's hint line. Left-align the hint and leave
+   the FAB's column empty, rather than hide a global control on one page. */
+.chint{text-align:left;padding:0 76px 12px 14px}}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}
