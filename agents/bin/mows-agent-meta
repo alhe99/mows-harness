@@ -26,8 +26,9 @@ PERM = {"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
 MEM = {"user", "project", "local"}
 ISO = {"worktree", "none"}
 MODEL_ALIAS = {"sonnet", "opus", "haiku", "inherit"}
-MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days"}
-BUDGET_KEYS = {"usd_per_run", "max_turns", "usd_per_day", "quota_floor"}
+MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days", "soul"}
+BUDGET_KEYS = {"usd_per_run", "max_turns", "usd_per_day", "quota_floor", "chat_usd", "chat_turns"}
+SOUL_MAX_BYTES = 16384  # a soul is a role, not a manual (spec 2026-09-20 D3)
 TRIGGER_TYPES = {"cron", "path", "webhook"}
 # The agent name is simultaneously a systemd instance name, a unit filename, a config key
 # (WEBHOOK_SECRET_<NAME>) and a URL path segment (/agents/<name>, /wh/<name>). This is the
@@ -178,6 +179,24 @@ def lint(path):
         E.append("mows.workdir is required")
     elif not os.path.isdir(os.path.expanduser(wd)):
         E.append(f"mows.workdir does not exist: {wd}")
+    # A soul (spec 2026-09-20 D1/D3): a shared role file appended to every run and chat turn. It
+    # is optional; when named it must exist, be a regular file, be non-empty and stay under
+    # SOUL_MAX_BYTES — a missing one must fail here rather than produce an agent that quietly does
+    # not know what it is.
+    soul = mows.get("soul")
+    if soul is not None:
+        if not isinstance(soul, str) or not soul.strip():
+            E.append("mows.soul must be a non-empty path string")
+        else:
+            sp = os.path.expanduser(soul)
+            if not os.path.exists(sp):
+                E.append(f"mows.soul does not exist: {soul}")
+            elif not os.path.isfile(sp):
+                E.append(f"mows.soul must be a regular file: {soul}")
+            elif os.path.getsize(sp) == 0:
+                E.append(f"mows.soul is empty: {soul}")
+            elif os.path.getsize(sp) > SOUL_MAX_BYTES:
+                E.append(f"mows.soul is {os.path.getsize(sp)} bytes; the limit is {SOUL_MAX_BYTES}")
     if not isinstance(mows.get("task"), str) or not mows["task"].strip():
         E.append("mows.task is required (the default prompt of a run)")
     b = mows.get("budget")
@@ -207,6 +226,11 @@ def lint(path):
             E.append("mows.budget.usd_per_day must be a number > 0")
         if "quota_floor" in b and not (is_int(b["quota_floor"]) and 0 <= b["quota_floor"] <= 100):
             E.append("mows.budget.quota_floor must be an integer 0..100")
+        # Per-agent chat caps (spec 2026-09-20 D7); absent means the runner's global defaults.
+        if "chat_usd" in b and not (is_num(b["chat_usd"]) and 0 < b["chat_usd"] <= 10):
+            E.append("mows.budget.chat_usd must be a number in (0, 10]")
+        if "chat_turns" in b and not (is_int(b["chat_turns"]) and 1 <= b["chat_turns"] <= 40):
+            E.append("mows.budget.chat_turns must be an integer 1..40")
     trig = mows.get("triggers", [])
     has_webhook = False
     if not isinstance(trig, list):

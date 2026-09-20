@@ -169,6 +169,30 @@ mkagent "$A/badturns.md" "$MOWS_BLOCK_OK"; sed -i 's/^maxTurns: 40/maxTurns: "ab
 chk "lint: maxTurns string is an error"   'mows-agent lint badturns 2>&1 | grep -q "maxTurns must be"'
 mkagent "$A/badmem.md" "$MOWS_BLOCK_OK"; sed -i 's/^memory: user/memory: nonsense/' "$A/badmem.md"
 chk "lint: memory enum"                   'mows-agent lint badmem 2>&1 | grep -q "memory must be"'
+# souls (spec 2026-09-20 D3): a path, tilde-expanded, that must be a non-empty regular file <= 16 KB
+printf 'You are a test soul.\nSecond line.\n' > "$T/soul.md"
+: > "$T/soul-empty.md"
+python3 -c 'print("x" * 20000)' > "$T/soul-big.md"
+mkagent "$A/souled.md"    "$(printf '%s\n  soul: %s' "$MOWS_BLOCK_OK" "$T/soul.md")"
+mkagent "$A/soulmiss.md"  "$(printf '%s\n  soul: %s' "$MOWS_BLOCK_OK" "$T/nope.md")"
+mkagent "$A/soulempty.md" "$(printf '%s\n  soul: %s' "$MOWS_BLOCK_OK" "$T/soul-empty.md")"
+mkagent "$A/soulbig.md"   "$(printf '%s\n  soul: %s' "$MOWS_BLOCK_OK" "$T/soul-big.md")"
+mkagent "$A/souldir.md"   "$(printf '%s\n  soul: %s' "$MOWS_BLOCK_OK" "$T")"
+chk "lint: soul present and readable"      'mows-agent lint souled'
+chk "lint: soul absent is fine (optional)" 'mows-agent lint good'
+chk "lint: soul missing file is an error"  'mows-agent lint soulmiss 2>&1 | grep -q "mows.soul.*does not exist"'
+chk "lint: soul empty file is an error"    'mows-agent lint soulempty 2>&1 | grep -q "mows.soul.*empty"'
+chk "lint: soul over 16 KB is an error"    'mows-agent lint soulbig 2>&1 | grep -q "16384"'
+chk "lint: soul directory is an error"     'mows-agent lint souldir 2>&1 | grep -q "mows.soul.*regular file"'
+# chat budget (spec D7): optional per-agent caps; the runner falls back to the global defaults
+mkagent "$A/chatb.md"  "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, chat_usd: 1.00, chat_turns: 12 }/' <<<"$MOWS_BLOCK_OK")"
+mkagent "$A/chatb0.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, chat_usd: 0 }/' <<<"$MOWS_BLOCK_OK")"
+mkagent "$A/chatt0.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, chat_turns: 0 }/' <<<"$MOWS_BLOCK_OK")"
+mkagent "$A/chattx.md" "$(sed 's/budget: .*/budget: { usd_per_run: 1.5, max_turns: 40, chat_turns: "x" }/' <<<"$MOWS_BLOCK_OK")"
+chk "lint: chat budget accepted"           'mows-agent lint chatb'
+chk "lint: chat_usd 0 rejected"            'mows-agent lint chatb0 2>&1 | grep -q "chat_usd"'
+chk "lint: chat_turns 0 rejected"          'mows-agent lint chatt0 2>&1 | grep -q "chat_turns"'
+chk "lint: chat_turns non-int rejected"    'mows-agent lint chattx 2>&1 | grep -q "chat_turns"'
 mkagent "$A/bypass.md" "$MOWS_BLOCK_OK" "permissionMode: bypassPermissions"
 chk "lint: bypassPermissions forbidden"   'mows-agent lint bypass 2>&1 | grep -q "bypassPermissions is forbidden"'
 mkagent "$A/unknownkey.md" "$(printf '%s\n  bogus_key: 1' "$MOWS_BLOCK_OK")"
