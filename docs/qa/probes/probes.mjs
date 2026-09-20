@@ -547,11 +547,11 @@ async function layout() {
       m.hitIsSend === true, m.hitClass);
     // Which nav is the ONLY navigation at this width. Asserted in both directions, because a
     // media-query change that hid both would otherwise read as a pass on the half it still had.
-    // On a phone the agent page renders NEITHER nav — the tab bar hides with html.agent-view and the
-    // pill-nav header is phone-hidden as everywhere — and the header's ← is the navigation; that is
-    // asserted as rendered. Above 700 the pill-nav header must be the only nav, as before.
-    check(`${w}x${h}: the ${phone ? 'header ← is' : 'pill-nav header is'} the rendered navigation`,
-      phone ? (m.tabsShown === false && m.hdrShown === false && m.backShown === true)
+    // On a phone the tab bar is the navigation and the header's ← is the way back; both rendered.
+    // (The tab bar hides only while the composer is focused — html.kb-open — which this probe does
+    // not do.) Above 700 the pill-nav header must be the only nav, as before.
+    check(`${w}x${h}: the ${phone ? 'tab bar (and the header ←) is' : 'pill-nav header is'} the rendered navigation`,
+      phone ? (m.tabsShown === true && m.hdrShown === false && m.backShown === true)
             : (m.hdrShown === true && m.tabsShown === false),
       { tabsShown: m.tabsShown, hdrShown: m.hdrShown, backShown: m.backShown });
   }

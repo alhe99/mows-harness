@@ -2086,16 +2086,17 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    FAB top is 116px + safe-bottom from the viewport bottom; 132 leaves 16px of air. */
 @media(max-width:700px){.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 132px)}
 .chint{padding:0 14px 12px}
-/* The agent page is a chat screen: on a phone it owns the whole viewport, like any messaging app.
-   The view sets html.agent-view while mounted; the tab bar and the terminal FAB hide, body gives
-   back the room it reserved for the bar, the card grows into it, and the header's ← is the way out.
-   This ends the iOS keyboard problem at its root: iOS lifts position:fixed;bottom:0 chrome to sit
-   above the keyboard, and with none left on this page there is nothing to lift. (A visualViewport
-   "hide while the keyboard is up" flag was tried first; in the installed PWA iOS pans the page
-   instead of resizing the visual viewport, so it never fired.) */
-html.agent-view .tabs,html.agent-view .termfab{display:none}
-html.agent-view body{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
-html.agent-view .agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 28px)}}
+/* The agent page is a chat screen. On a phone (html.agent-view, set by the view while mounted):
+   - the terminal FAB is hidden outright — it has no business over a composer, and iOS lifts any
+     position:fixed;bottom:0 element to sit above the keyboard, so it would float mid-page;
+   - the tab bar stays, and hides only while the composer is FOCUSED (html.kb-open, set on focus and
+     cleared on blur). Focus is the signal because it is the one iOS reports everywhere: in the
+     installed PWA the keyboard pans the page instead of resizing the visual viewport, so a
+     viewport-based "keyboard is up" never fired there.
+   With no FAB the card needs only the tab bar's 54px + safe-bottom below it, plus 16px of air. */
+html.agent-view .termfab{display:none}
+html.kb-open .tabs{display:none}
+html.agent-view .agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 70px)}}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}

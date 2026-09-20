@@ -393,12 +393,15 @@ export function Chat({ name, events, tools }) {
   // Keep the composer above the on-screen keyboard. 100vh does not account for it.
   useEffect(() => {
     const vv = window.visualViewport; if (!vv) return;
-    // (A kb-open class was set here for one commit to hide the tab bar while typing. In the
-    // installed PWA iOS pans the page for the keyboard instead of resizing the visual viewport, so
-    // it never fired; the agent view now hides its bottom chrome outright — see agents.mjs.)
+    // (kb-open is set from the composer's focus/blur below, not from here: in the installed PWA iOS
+    // pans the page for the keyboard instead of resizing the visual viewport, so this handler
+    // measures 0 there and a viewport-based flag never fired.)
     const fit = () => document.documentElement.style.setProperty('--kb', (window.innerHeight - vv.height - vv.offsetTop) + 'px');
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
-    return () => { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); };
+    return () => {
+      vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit);
+      document.documentElement.classList.remove('kb-open'); // unmounting mid-focus must not leave the bar hidden
+    };
   }, []);
 
   const send = async e => {
@@ -466,6 +469,12 @@ export function Chat({ name, events, tools }) {
       ${/* A phone-width placeholder that wraps to two lines makes the composer look mid-edit. Read
             once at render; a resize across 500px mid-conversation is not a case worth a listener. */ ''}
       <textarea ref=${taRef} rows="2" placeholder=${matchMedia('(max-width: 500px)').matches ? `Ask ${name}…` : `Ask ${name} to analyze or run commands…`}
+        ${/* Focus is the keyboard signal iOS reports everywhere (the installed PWA pans the page for
+              the keyboard instead of resizing the visual viewport). html.kb-open hides the phone tab
+              bar while set; a class, not a style, for CSP. Cleared on blur — Done, a tap elsewhere,
+              or Send, which moves focus to the button. */ ''}
+        onFocus=${() => document.documentElement.classList.add('kb-open')}
+        onBlur=${() => document.documentElement.classList.remove('kb-open')}
         onKeyDown=${e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !busy) send(e); }} required></textarea>
       ${/* The label is an aria-label, not a text node: the comp's send control is a 40px circle
             and "Send" does not fit in one. The busy state keeps a visible "…" because a disabled
