@@ -1,0 +1,259 @@
+# Agent souls, and three PR reviewers — design
+
+**Builds on:** `2026-09-15-agents-layer-design.md` (Layer 6) and `2026-09-19-agent-memory-and-identity-design.md`
+(memory, chat as run mode's shape). Retires the latter's D6 deferral partway: not plugin-per-agent,
+but the first shared definition.
+**Code this touches:** `agents/bin/mows-agent` (`run_context`, `chat_context`, `cmd_chat` budget),
+`agents/bin/mows-agent-meta` (two new keys), `infra/dashboard/capability.mjs` (one field),
+`infra/dashboard/app/views/agents.mjs` (one telemetry row), `scripts/e2e-agents.sh`,
+`agents/SETUP.md`, `install.sh` (soul install), new `agents/souls/pr-reviewer.md`, three new
+instance files under `agents/examples/`.
+
+## Problem
+
+An agent today is one `.md` file carrying its whole body. Three reviewers with the same
+responsibilities across three GitHub orgs would be three copies of the same soul, and nothing —
+not the linter, not the dashboard — could tell they were meant to match. They would drift the
+first time one was edited.
+
+What is wanted is the opposite shape: **one soul, several scopes.** The responsibilities are
+written once; each instance says only where it works, keeps its own memory, spends its own
+budget, and can be added or removed without touching the others.
+
+The first soul is a **PR reviewer**, and the three scopes are the GitHub orgs this box's `gh`
+belongs to and that hold work: `h4b-dev` (22 PRs authored by the operator, 15 review-requested,
+today), `ffwd-org` (3 authored), `Paytix` (0 today). Decided 2026-09-20 with the operator:
+
+| | Decision |
+|---|---|
+| Scope | PRs the operator **authored or is review-requested on**, in the instance's org. Not every PR in the org. |
+| Output | **Dashboard and memory only.** Nothing posted to GitHub. The operator reads, decides, comments. |
+| Trigger | **Manual.** The dashboard's Run now, or chat. No cron, no webhook. |
+
+## Decisions locked
+
+| | Decision | Why |
+|---|---|---|
+| **D1** | **A soul is a Markdown file, referenced by path from an instance's frontmatter (`mows.soul`), and appended to the system prompt on every run and chat turn.** | It rides the injection path memory already uses (`--append-system-prompt`), so it is re-asserted every call and cannot live only in a transcript. One file, N references. |
+| **D2** | **The instance body is scope only.** | If the body says anything a second instance would also need to say, it belongs in the soul. The test of a good instance file is that it fits on one screen. |
+| **D3** | **Lint refuses a `mows.soul` that does not resolve to a non-empty regular file under 16 KB.** | A missing soul must fail the run before it starts, not produce an agent that quietly has no idea what it is. 16 KB bounds the injection — a soul is a role, not a manual. |
+| **D4** | **The reviewer is read-only against GitHub, by instruction AND by measurement.** | The token has `repo` scope, so `gh pr review` would work. The soul forbids every write; the first live run records whether the unattended permission regime would even allow the reads. Output goes to the run result, memory and Discord. |
+| **D5** | **A run reviews at most 5 PRs, most recently updated first, skipping any whose head SHA memory already holds.** | h4b-dev has 37 candidate PRs today. Unbounded, a first run would cost tens of dollars and blow the budget mid-review. Bounded, every run costs about the same, and memory carries the rest to the next. |
+| **D6** | **Memory is one line per open PR: `owner/repo#n @sha7 verdict`.** Merged and closed PRs are dropped each run. | 37 lines fit the 60-line cap with room for a header and a few concerns. Anything wordier does not. |
+| **D7** | **Chat gets a per-agent budget: `mows.budget.chat_usd` / `chat_turns`, defaulting to today's `$0.25 / 6`.** | "Look at #519" is a review, not a question; the global chat cap was sized for questions. The default is unchanged so no existing agent's chat changes. |
+| **D8** | **`profile: work`.** | Company orgs on the company account (34% weekly at time of writing), not the operator's personal subscription. |
+| **D9** | **The `mows-agent@.service` template gets installed on this box as part of this work.** | It never was here. Without it the dashboard's Run now — the trigger the operator chose — answers 409. |
+
+## 1. Souls
+
+`agents/souls/<name>.md` in the repo; installed to `~/.claude/agents/souls/<name>.md` by
+`install.sh --agents` beside the agent files. Plain Markdown, no frontmatter. Not discovered as an
+agent: `all_agents()` globs `agents/*.md`, not subdirectories, and a soul has no `mows:` key.
+
+An instance references it as `mows.soul: ~/.claude/agents/souls/pr-reviewer.md` (tilde expanded,
+same as `workdir`). Lint (D3) resolves the path, requires a regular file, non-empty, ≤ 16384 bytes.
+
+**Injection.** Both `run_context()` and `chat_context()` gain, before the memory section:
+
+```
+## Your role
+<soul file, verbatim>
+```
+
+The order in the appended prompt is therefore: run/chat facts → role → memory → (chat: history)
+→ the human/no-human line → the memory contract. The instance body (what `--agent` loads as the
+system prompt) comes first of all, so the model reads its scope, then its role, then what it
+remembers.
+
+An instance without `mows.soul` behaves exactly as today. Souls are optional; `disk-watch` and
+`harness-reviewer` do not change.
+
+## 2. The soul: `pr-reviewer`
+
+`agents/souls/pr-reviewer.md`, verbatim:
+
+```markdown
+You are a standing pull-request reviewer for one GitHub organisation. Your instance file names
+the organisation; nothing below is specific to any one org.
+
+## What you review
+Open pull requests in your org that the operator (`gh` is authenticated as them) either
+authored or is requested to review. Find them with:
+
+    gh search prs --owner <org> --state open --author @me --json repository,number,title,updatedAt
+    gh search prs --owner <org> --state open --review-requested @me --json repository,number,title,updatedAt
+
+Merge the two lists. For each PR read its head SHA (`gh pr view <n> --repo <owner/repo> --json
+headRefOid,title,body,reviewDecision,additions,deletions,changedFiles,updatedAt`). **Skip any PR
+whose `owner/repo#n @sha7` already appears in your memory** — you reviewed that exact head.
+Of the rest, take the **five most recently updated**. Never more than five per run; the others
+wait for the next run and your memory says so.
+
+## How you review one PR
+Read, in this order: the title and body (intent), `gh pr diff <n> --repo <owner/repo>` (what
+actually changed), `gh pr checks <n> --repo <owner/repo>` (CI state). If a local checkout of the
+repo exists under the working directory, read surrounding code there for context; do not clone.
+
+Judge, in this order of severity:
+1. **Correctness** — does the diff do what the description says? Edge cases, error paths,
+   nulls, off-by-ones, races.
+2. **Security and PCI** — these are payments organisations. Secrets or tokens in code or
+   config; card data, PANs or credentials reaching a log, a database or a response; auth or
+   permission checks removed or weakened; redaction bypassed. Any of these is **blocking**.
+3. **Tests** — changed behaviour without a changed test; a test that cannot fail.
+4. **CI** — failing or missing required checks (SonarCloud, Trivy, unit tests) and whether the
+   failure is caused by this diff.
+5. **Clarity** — naming, dead code, misleading comments. Nits, never blocking.
+
+Report each finding as `path:line — what is wrong — why it matters`, then a one-word verdict per
+PR: **blocking**, **should-fix**, **nits**, or **clean**. Say what you did NOT read (a diff you
+truncated, a check you could not fetch). Prefer three precise findings to ten vague ones.
+
+## What you never do
+You are read-only against GitHub and the filesystem. Never `gh pr review`, `gh pr comment`,
+`gh pr merge`, `gh pr edit`, `gh api` with a method other than GET, `git push`, `git commit`, or
+any write. Never clone. Never approve or request changes on anyone's behalf — the operator reads
+your findings on the dashboard and decides. If you cannot review something read-only, say so.
+
+## Your memory
+End every reply with a `mows-memory` block holding: one header line with the run date; then
+**one line per open PR you have reviewed**, exactly `owner/repo#n @sha7 verdict`; then at most
+five open concerns across PRs, one line each. Drop PRs that are merged or closed. Nothing else —
+the block must stay under 40 lines, and it will be cut at 60.
+
+## Escalation
+A **blocking** finding on any PR is worth the operator's attention now: state it in the first
+line of your reply, prefixed `BLOCKING:`, so the run's escalation can carry it.
+```
+
+## 3. The instances
+
+Three files under `agents/examples/`, installed to `~/.claude/agents/`. `pr-reviewer-h4b.md`
+verbatim; the other two differ only in `name`, `description`, and the org named in the body.
+
+```markdown
+---
+name: pr-reviewer-h4b
+description: Reviews the operator's open PRs in the h4b-dev GitHub org — read-only, on demand
+model: sonnet
+effort: high
+tools: [Bash, Read, Glob, Grep]
+disallowedTools: [Write, Edit, WebFetch, NotebookEdit]
+permissionMode: default
+maxTurns: 40
+memory: user
+mows:
+  profile: work
+  workdir: ~/Documents/Projects
+  soul: ~/.claude/agents/souls/pr-reviewer.md
+  task: >-
+    Review my open pull requests in the h4b-dev organisation that are not yet in your memory,
+    newest-updated first, at most five. Report findings and a verdict per PR, then update your
+    memory.
+  budget:
+    usd_per_run: 2.00
+    max_turns: 40
+    usd_per_day: 6.00
+    quota_floor: 20
+    chat_usd: 1.00
+    chat_turns: 12
+  escalate:
+    via: discord
+  retention_days: 30
+---
+Your organisation is **h4b-dev**. Its repositories are payment processors, ledgers, issuing and
+merchant systems; treat every diff as PCI-relevant until you have read it. Local checkouts of many
+of its repositories are under the working directory, in `payments/` and `n1/`.
+```
+
+`pr-reviewer-ffwd`: org **ffwd-org**, checkouts under `paytix/` and `fun/`.
+`pr-reviewer-paytix`: org **Paytix** (capital P, as GitHub spells it), checkouts under `paytix/`.
+
+The body is three sentences. That is D2 holding.
+
+## 4. Chat budget (D7)
+
+`mows-agent-meta`: `BUDGET_KEYS` gains `chat_usd` (number, 0 < x ≤ 10) and `chat_turns`
+(integer, 1..40). `cmd_chat` reads them from the agent's `mows.budget` and falls back to the
+`CHAT_USD` / `CHAT_TURNS` environment defaults, which keep today's values. `chat_context()`'s
+"this turn's budget" line prints the effective values.
+
+## 5. Dashboard
+
+`capability.mjs` `policy` gains `soul: <basename without .md> | null`. The Telemetry card gains a
+**Soul** row when present (`pr-reviewer`), between Profile and Target. The chat header's hint line
+is unchanged. No new endpoint.
+
+## 6. Manual trigger (D9)
+
+`mows-agent render --all`, then the documented install:
+
+    sudo install -m644 rendered/mows-agent@.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+
+No timers — these agents have no triggers. The dashboard's Run now (`/a/agent-run` →
+`systemctl start mows-agent@<name>`) is the manual trigger, and chat is the other.
+
+## 7. Test strategy
+
+`scripts/e2e-agents.sh`, stub-driven unless marked **live**:
+
+**Lint**
+- `soul:` pointing at an existing non-empty file → clean.
+- `soul:` absent → clean (optional).
+- `soul:` pointing at a missing file → error names the path.
+- `soul:` pointing at an empty file → error.
+- `soul:` pointing at a 20 KB file → error names the 16384-byte limit.
+- `soul:` pointing at a directory → error.
+- `budget.chat_usd: 1.00`, `chat_turns: 12` → clean; `chat_usd: 0`, `chat_turns: 0`, `chat_turns: "x"` → errors.
+
+**Injection**
+- run with a soul → appended prompt contains `## Your role` followed by the soul's first line,
+  and it precedes `## Your memory`.
+- chat with a soul → same, and `## Your role` precedes `## The conversation so far`.
+- run without a soul → no `## Your role`.
+
+**Chat budget**
+- agent with `chat_usd: 1.00 / chat_turns: 12` → chat argv has `--max-budget-usd 1.00`,
+  `--max-turns 12`; the appended prompt's budget line says `1.00 USD, 12 turns`.
+- agent without → argv has the defaults (`0.25`, `6`).
+
+**Live** (`scripts/live-agents.sh`, never CI) — the measurement D4 needs:
+1. `mows-agent run pr-reviewer-ffwd` on the real box (3 PRs, cheapest scope). Record: state,
+   cost, `permission_denials` (does the unattended regime allow `gh search`/`gh pr view`/`gh pr
+   diff`?), whether memory was written in the `owner/repo#n @sha7 verdict` shape, and whether any
+   write-shaped `gh` call appeared in the stream (it must not).
+2. Its result is written into this spec's addendum with the date and CLI version before
+   `pr-reviewer-h4b` is run at all.
+
+## 8. Not doing (explicitly)
+
+- **Posting to GitHub.** Reviews, comments, approvals. Revisit only after a week of reading the
+  reviewer's findings on the dashboard; it is a separate spec with a separate switch.
+- **Cron or webhook triggers.** Manual was the decision. Either is one frontmatter line later.
+- **Cloning repositories.** Local checkouts under the workdir are context; `gh pr diff` is the
+  review surface.
+- **Instances for `fcdevx` and `po1nt-dev`.** Each is one copy of a three-sentence file when wanted.
+- **Plugin-per-agent.** The soul file is the shared definition this repo needed; a plugin
+  packaging step is still deferred to the first agent that needs a skill or an MCP server.
+- **Souls for `disk-watch` and `harness-reviewer`.** They are single-scope and their bodies are
+  their souls. Refactoring them buys nothing.
+
+## Risks
+
+- **The regime denies `gh` network reads unattended.** Then the reviewer cannot work from a
+  scheduled or Run-now context at all, only from chat where a human is present to be asked. The
+  live measurement (§7) settles this before the h4b instance exists; the fallback is documented
+  as a known limit, not worked around with permission changes this spec does not own.
+- **The first h4b run is expensive.** D5 caps it at five PRs; `usd_per_run: 2.00` caps it in
+  dollars; memory carries the queue. Stated in the task text so the model does not try to be
+  thorough across 37 PRs.
+- **Memory outgrows 60 lines.** 37 open PRs + header + 5 concerns = 43 today. If h4b's open
+  count passes ~50, the soul's "one line per PR" rule breaks the cap and truncation drops the
+  oldest concerns — visible in Events as `memory truncated`. The fix then is to keep only PRs
+  updated in the last 30 days, a one-line change to the soul.
+- **Soul drift the other way.** One soul edit now changes three agents at once. That is the
+  point, and also a blast radius: the soul file gets the same review discipline as `mows-agent`.
+- **Token scope is wider than the soul.** `repo` scope can write. D4's instruction is the guard;
+  the live run's stream is checked for write-shaped `gh` calls; a scoped read-only token is the
+  operator's call and outside this spec.
