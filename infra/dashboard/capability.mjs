@@ -174,6 +174,9 @@ export function agentCapability(fm, opts = {}) {
       // precedence question this page cannot answer, and the same rule the turn-cap
       // disagreement follows applies here: report what the file says, invent nothing.
       model: typeof fm?.model === 'string' ? fm.model : null,
+      // The shared role file this agent names (spec 2026-09-20), as its basename without .md, or
+      // null. A name, not the path: the panel says which soul; the operator knows where they live.
+      soul: typeof m.soul === 'string' ? m.soul.replace(/^.*\//, '').replace(/\.md$/, '') : null,
       // Stated rather than silently ignored (review F2). `plan` is lint-accepted and would make the
       // authority list above wrong; `bypassPermissions` is refused by the linter. The panel cannot
       // verify that the CLI honours any of them, and says so rather than implying it checked.

@@ -62,6 +62,7 @@ function Telemetry({ policy }) {
   const daily = b.usd_per_day != null ? `$${(+b.usd_per_day).toFixed(2)} per day` : null;
   return html`<div class="tgrid">
     <${Row} k="Profile" v=${policy.profile} />
+    <${Row} k="Soul" v=${policy.soul} />
     <${Row} k="Target" v=${policy.workdir} />
     <${Row} k="Trigger" v=${policy.triggerTypes?.join(', ')} />
     <${Row} k="Budget" v=${budget} />
