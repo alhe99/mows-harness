@@ -610,6 +610,26 @@ echo memblockbudget > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1
 chk "memory: stored even when the run ends budget_exceeded" '[ "$(cat "$M")" = "stored despite budget_exceeded" ] && [ "$(jq -r .state "$MOWS_AGENTS_STATE/good/last/status.json")" = budget_exceeded ]'
 echo ok > "$CLAUDE_MODE_FILE"
 
+echo "### escalation: a BLOCKING: first line reaches the operator (spec 2026-09-20 §2 Escalation)"
+# The pr-reviewer soul promises that a reply whose first line starts with BLOCKING: is carried by
+# the run's escalation. Refusals and failures already escalate; a finding did not, until this.
+# An agent WITH a Discord route: `good` has none, and escalate() with via=none only logs, so a
+# test on `good` could never see a post — it would pass against a runner that never escalated.
+mkagent "$A/esc.md" "$(printf '%s\n  escalate:\n    via: discord' "$MOWS_BLOCK_OK")"
+escrun(){ printf '%s' "$1" > "$CLAUDE_RESULT_FILE"; echo memblock > "$CLAUDE_MODE_FILE"; mows-agent run esc >/dev/null 2>&1; }
+: > "$CURL_LOG"
+escrun $'### BLOCKING: ffwd-org/x#1 — production signing key committed to git\nDetails follow.\n```mows-memory\nx#1 @abc1234 blocking\n```\n'
+chk "escalate: BLOCKING first line posts to Discord"   'grep -q "BLOCKING: ffwd-org/x#1" "$CURL_LOG"'
+chk "escalate: ...markdown prefix stripped, run id kept" 'grep -qE "[0-9]{8}-[0-9]{6}-[0-9]+ BLOCKING: ffwd-org/x#1" "$CURL_LOG" && ! grep -q "### BLOCKING" "$CURL_LOG"'
+chk "escalate: ...and is logged as an event"           'grep -q "BLOCKING: ffwd-org/x#1" "$MOWS_AGENTS_STATE/esc/events.log"'
+: > "$CURL_LOG"
+escrun $'All clean. BLOCKING is a word I mention in passing.\n'
+chk "escalate: BLOCKING elsewhere in the reply does not post" '! grep -q "BLOCKING" "$CURL_LOG"'
+: > "$CURL_LOG"
+memrun $'BLOCKING: on an agent with via=none\n'
+chk "escalate: via=none logs the event but posts nothing" '! grep -q "BLOCKING" "$CURL_LOG" && grep -q "BLOCKING: on an agent" "$MOWS_AGENTS_STATE/good/events.log"'
+echo ok > "$CLAUDE_MODE_FILE"
+
 echo "### memory: injected into run_context (spec §2.1, §2.2)"
 printf 'newest: abc123\nopen: one thing\n' > "$M"
 echo ok > "$CLAUDE_MODE_FILE"; mows-agent run good >/dev/null 2>&1

@@ -398,7 +398,17 @@ cmd_run(){
   wait "$CPID" 2>/dev/null
   local st; st=$(jq -r .state "$RUNDIR/status.json")
   case $st in
-    done)            merge_step || exit 3; exit 0;;
+    done)
+      # A reply whose FIRST line is a BLOCKING: finding — the pr-reviewer soul's contract — is worth
+      # the operator's attention now, not at the next dashboard visit, so it rides the agent's own
+      # escalation route exactly as a refusal does. Markdown prefixes (### / **) are tolerated; the
+      # word anywhere else in the reply is not a finding. The line is cut at 300 chars: the finding
+      # names a file, never a secret's value (the soul says so), and Discord is not the report.
+      local first; first=$(jq -r '(.result // "") | split("\n")[0] // ""' "$RUNDIR/result.json" 2>/dev/null)
+      if [[ $first =~ ^[[:space:]#*_]*BLOCKING: ]]; then
+        escalate "$AGENT" "$VIA" "$RUN_ID $(sed -E 's/^[[:space:]#*_]*//' <<<"$first" | cut -c1-300)"
+      fi
+      merge_step || exit 3; exit 0;;
     budget_exceeded) escalate "$AGENT" "$VIA" "$RUN_ID budget_exceeded (cap \$$USD_RUN)"; exit 4;;
     stalled)         escalate "$AGENT" "$VIA" "$RUN_ID stalled: no stream event for ${STALL_SEC}s, killed"; exit 5;;
     *)               escalate "$AGENT" "$VIA" "$RUN_ID failed: $(jq -r '(.result // "") | .[0:200]' "$RUNDIR/result.json" 2>/dev/null || echo 'no result record')"; exit 3;;
