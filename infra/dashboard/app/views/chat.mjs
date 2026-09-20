@@ -393,9 +393,21 @@ export function Chat({ name, events, tools }) {
   // Keep the composer above the on-screen keyboard. 100vh does not account for it.
   useEffect(() => {
     const vv = window.visualViewport; if (!vv) return;
-    const fit = () => document.documentElement.style.setProperty('--kb', (window.innerHeight - vv.height - vv.offsetTop) + 'px');
+    const fit = () => {
+      const kb = window.innerHeight - vv.height - vv.offsetTop;
+      document.documentElement.style.setProperty('--kb', kb + 'px');
+      // iOS lifts position:fixed;bottom:0 chrome to sit above the keyboard, so the tab bar and the
+      // terminal FAB floated mid-page over the cards while typing. A class, not a style (CSP): the
+      // stylesheet hides both while it is set. 120px is the threshold because the URL bar collapsing
+      // and Safari's own form-accessory bar both shrink the visual viewport too, and neither is a
+      // keyboard; a real one is 250px+ on every phone this has been measured on.
+      document.documentElement.classList.toggle('kb-open', kb > 120);
+    };
     vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
-    return () => { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); };
+    return () => {
+      vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit);
+      document.documentElement.classList.remove('kb-open');
+    };
   }, []);
 
   const send = async e => {

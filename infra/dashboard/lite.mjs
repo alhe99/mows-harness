@@ -2085,7 +2085,12 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    in it — composer, Send, hint — can ever sit under the FAB, and no per-element reserve is needed.
    FAB top is 116px + safe-bottom from the viewport bottom; 132 leaves 16px of air. */
 @media(max-width:700px){.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 132px)}
-.chint{padding:0 14px 12px}}
+.chint{padding:0 14px 12px}
+/* While the keyboard is up, iOS lifts position:fixed;bottom:0 chrome to sit ABOVE the keyboard, so
+   the tab bar and the terminal FAB floated mid-page over the cards. The chat view's visualViewport
+   handler flags the document (html.kb-open) when the keyboard is genuinely up; both hide until it
+   goes. Nothing is lost: Safari's own accessory bar dismisses the keyboard and the nav returns. */
+html.kb-open .tabs,html.kb-open .termfab{display:none}}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}
