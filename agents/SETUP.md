@@ -64,6 +64,8 @@ nothing grows from turn to turn. It refuses only while a run is in flight (both 
 turn is capped at `$0.25` and 6 turns — a question, not a work session — and times out at 300 s.
 The transcript `mows-agent` keeps is `~/.local/state/mows-agents/<name>/chat.jsonl`; `prune`
 keeps its last 200 entries, and `--clear` deletes it and leaves `memory.md` untouched.
+An agent may set `mows.budget.chat_usd` and `chat_turns` to raise its own chat caps; the
+defaults stay `$0.25` and 6.
 
 **`--stream`** makes the turn emit one compact JSON line per token delta (`{"seq":N,"delta":"…"}`)
 and a final `{"end":true,…}`, instead of printing the finished reply as text. It is recognised
@@ -118,6 +120,22 @@ Before this, `memory: user` in the frontmatter was assumed to make Claude Code p
 per-agent memory. It does not — that field scopes Claude Code's *project* memory, keyed by
 working directory — and `harness-reviewer` ran with no memory at all. The field stays (it is a
 real Claude Code setting) but it is not what "your memory" refers to in an agent's task.
+
+## Souls
+
+A soul is a shared role file: `~/.claude/agents/souls/<name>.md`, plain Markdown, referenced from
+an agent's frontmatter as `mows.soul: ~/.claude/agents/souls/<name>.md`. `mows-agent` appends it to
+the system prompt as `## Your role` on every run and chat turn, before the agent's memory, so
+several agents can carry the same responsibilities with different scopes — the instance body says
+only where it works. Lint refuses a soul that is missing, empty, not a regular file, or over 16 KB.
+`install.sh --agents` installs every soul in `agents/souls/` (always — a soul is code) and seeds the
+example instances only when absent (their budgets are yours to tune).
+
+The first soul is `pr-reviewer`, with three instances: `pr-reviewer-h4b`, `pr-reviewer-ffwd`,
+`pr-reviewer-paytix`. Read-only against GitHub by instruction; findings go to the run result, the
+agent's memory and Discord, never to the PR. Run them from the dashboard's Run now, or ask them in
+chat. See the design spec for what they review and in what order. Run now needs the shared
+`mows-agent@.service` template installed (Triggers, above) — without it the button answers 409.
 
 ## State dir
 
