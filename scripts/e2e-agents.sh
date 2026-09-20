@@ -625,6 +625,14 @@ chk "escalate: ...and is logged as an event"           'grep -q "BLOCKING: ffwd-
 : > "$CURL_LOG"
 escrun $'All clean. BLOCKING is a word I mention in passing.\n'
 chk "escalate: BLOCKING elsewhere in the reply does not post" '! grep -q "BLOCKING" "$CURL_LOG"'
+
+# The live h4b run opened with "## Summary", a blank line, then the finding: line 3, not line 1.
+: > "$CURL_LOG"
+escrun $'## Summary\n\n**BLOCKING:** two plaintext-secret exposures — h4b-dev/sms#17\n- details\n'
+chk "escalate: BLOCKING on line 3 under a heading still posts" 'grep -q "BLOCKING:\*\* two plaintext" "$CURL_LOG"'
+: > "$CURL_LOG"
+escrun $'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nBLOCKING: line eleven is too deep\n'
+chk "escalate: BLOCKING past the tenth line does not post" '! grep -q "line eleven" "$CURL_LOG"'
 : > "$CURL_LOG"
 memrun $'BLOCKING: on an agent with via=none\n'
 chk "escalate: via=none logs the event but posts nothing" '! grep -q "BLOCKING" "$CURL_LOG" && grep -q "BLOCKING: on an agent" "$MOWS_AGENTS_STATE/good/events.log"'

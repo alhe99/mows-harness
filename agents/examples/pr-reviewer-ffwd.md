@@ -1,6 +1,6 @@
 ---
 name: pr-reviewer-ffwd
-description: Reviews the operator's open PRs in the ffwd-org GitHub org — read-only, on demand
+description: Reviews the operator's open PRs in the ffwd-org GitHub org and posts one review per PR — on demand
 model: sonnet
 effort: high
 tools: [Bash, Read, Glob, Grep]
@@ -14,8 +14,8 @@ mows:
   soul: ~/.claude/agents/souls/pr-reviewer.md
   task: >-
     Review my open pull requests in the ffwd-org organisation that are not yet in your memory,
-    newest-updated first, at most five. Report findings and a verdict per PR, then update your
-    memory.
+    newest-updated first, at most five. Post one review per PR with its findings and verdict, then update
+    your memory.
   budget:
     usd_per_run: 2.00
     max_turns: 40

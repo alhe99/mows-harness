@@ -132,9 +132,11 @@ only where it works. Lint refuses a soul that is missing, empty, not a regular f
 example instances only when absent (their budgets are yours to tune).
 
 The first soul is `pr-reviewer`, with three instances: `pr-reviewer-h4b`, `pr-reviewer-ffwd`,
-`pr-reviewer-paytix`. Read-only against GitHub by instruction; findings go to the run result, the
-agent's memory and Discord, never to the PR. Run them from the dashboard's Run now, or ask them in
-chat. See the design spec for what they review and in what order. Run now needs the shared
+`pr-reviewer-paytix`. Each verdict is posted to the PR as one GitHub review under the operator's
+`gh` identity: request changes for blocking and should-fix, approve for nits and clean, a plain
+comment on the operator's own PRs and on drafts (GitHub forbids self-approval). `gh pr review` is
+the reviewer's only write; memory marks a head `posted` so no head is reviewed twice. Run them from
+the dashboard's Run now, or ask them in chat with a PR URL. See the design spec for what they review and in what order. Run now needs the shared
 `mows-agent@.service` template installed (Triggers, above) — without it the button answers 409.
 
 ## State dir

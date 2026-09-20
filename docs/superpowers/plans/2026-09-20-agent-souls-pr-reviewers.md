@@ -283,3 +283,7 @@ runs: `acc478f` (soul: never reproduce a secret's value) and `9c64cf0` (runner: 
 line escalates). Task 6 ran all three instances, not only ffwd — the ffwd facts were recorded first,
 as the spec required, and h4b ran last at $0.51 under its $2 cap. The measured facts are in the
 spec's addendum.
+
+**Same day, after the plan:** the operator reversed the read-only decision; the reviewers now post
+one GitHub review per PR (spec Addendum 2). Soul text + instance descriptions + a ten-line
+`BLOCKING:` window in `cmd_run` (e2e 235/0). No new plan — a bounded change to the existing flow.

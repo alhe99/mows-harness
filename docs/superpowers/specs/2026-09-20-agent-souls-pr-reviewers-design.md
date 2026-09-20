@@ -228,8 +228,8 @@ No timers — these agents have no triggers. The dashboard's Run now (`/a/agent-
 
 ## 8. Not doing (explicitly)
 
-- **Posting to GitHub.** Reviews, comments, approvals. Revisit only after a week of reading the
-  reviewer's findings on the dashboard; it is a separate spec with a separate switch.
+- ~~**Posting to GitHub.**~~ Reversed the same day by the operator after reading the first run's
+  verdicts — see the second addendum. The "separate switch" turned out to be the soul text itself.
 - **Cron or webhook triggers.** Manual was the decision. Either is one frontmatter line later.
 - **Cloning repositories.** Local checkouts under the workdir are context; `gh pr diff` is the
   review surface.
@@ -289,3 +289,41 @@ memory records the PR it did not read (a 1,406-file branch promotion) and why.
 
 **Not measured:** a second run against the same heads (the skip-by-`@sha7` rule); a chat turn with
 a reviewer (the run path was the question). Both are one Run now / one message when wanted.
+
+## Addendum 2 — the reviewers post to GitHub (decided and measured 2026-09-20)
+
+After reading the first run's verdicts the operator reversed §8's first item: every verdict is
+posted to the PR as one GitHub review, and where GitHub allows it the review approves or requests
+changes. Decided via one question: **blocking and should-fix → request changes; nits and clean →
+approve.** Two exceptions are GitHub's, not ours: the operator's own PRs and drafts get a plain
+comment review (GitHub returns 422 on self-approval). The change is soul text only — `gh pr review`
+is the single write the soul permits; merge, edit, close, non-GET `gh api`, push and commit stay
+forbidden. Memory lines gain a trailing `posted`; a line without it is a pending post the next run
+retries, and it does not count against the five.
+
+**Measured (claude 2.1.277, same regime as Addendum 1):**
+
+| step | turns | cost | denials | writes |
+|---|---|---|---|---|
+| chat: "post your review of payments-backend#490" | — | $0.13 | 0 | 1 × `gh pr review --approve` (author is not the operator) |
+| run #2, pr-reviewer-h4b | 35 | $1.13 | 0 | 10 × `gh pr review`: 8 `--comment` (own PRs), 1 `--approve`, 1 `--request-changes` (blocking, other author) |
+
+Unattended `gh pr review` is allowed by the regime with zero denials. Each of the eleven PRs
+carries exactly one review by the operator afterwards. A grep of the posted bodies, the result and
+the memory for secret-shaped strings (connection strings with credentials, Twilio SIDs and keys,
+bearer tokens) found nothing, although run #2 surfaced two pre-existing plaintext-secret exposures
+in `h4b-dev/payments-backend` and `h4b-dev/sms` and named them by file only.
+
+**Three gaps found, two fixed the same day:**
+1. After posting one review in chat, the reviewer marked all seven memory lines `posted`. Soul
+   now says: write `posted` only in the turn where your own `gh pr review` exited 0, and check
+   `gh pr view --json reviews` for an existing operator review before posting. The false marks
+   were scrubbed by hand; run #2 then posted the five real backlog items correctly.
+2. Run #2 opened its reply with `## Summary`, a blank line, then `**BLOCKING:** …` on line 3, so
+   the runner's first-line rule did not escalate. `cmd_run` now takes the first `BLOCKING:` line
+   within the first ten (two more e2e assertions: line 3 under a heading posts, line 11 does not).
+   Separately, `DISCORD_WEBHOOK` is unset in `~/.config/mows-agents/config` on this box, so an
+   escalation would have only logged an event anyway — the operator's to fill in.
+3. Run #2 silently dropped `creditum-backend#601` (reviewed in chat, never posted) from memory
+   instead of carrying it as pending. Not fixed in the soul — one occurrence; recorded so a second
+   one earns a rule. Posted by hand-asked chat turn afterwards.
