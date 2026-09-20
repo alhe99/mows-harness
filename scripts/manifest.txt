@@ -98,6 +98,10 @@ claude/skills/stack-health/check.py
 claude/skills/sync-to-vps/SKILL.md
 claude/skills/sync-to-vps/sync.py
 docs/architecture.md
+docs/assets/agents-detail.png
+docs/assets/agents-list.png
+docs/assets/agents-phone-typing.png
+docs/assets/agents-phone.png
 docs/assets/demo-session.sh
 docs/assets/device.png
 docs/assets/fleet.gif
