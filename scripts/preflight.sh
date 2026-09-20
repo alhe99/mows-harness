@@ -100,7 +100,11 @@ if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | 
 # and public the moment the repo is, so they get scanned too. --all covers remote-tracking
 # refs, which is deliberate: an unpushed local fix does not clear a leak still on origin.
 BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
-if git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u | grep -nE "$BADIDENT"; then
+# GitHub's synthetic PR merge commit ("Merge <sha> into <sha>", committer GitHub <noreply>) carries
+# the account's PUBLIC email as author — not a commit of ours, and not in the tree we publish. It is
+# skipped by that exact shape; every real commit, merge or not, is still checked.
+if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
+   | grep -vE $'^noreply@github\\.com\tMerge [0-9a-f]{40} into [0-9a-f]{40}\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
 # commit messages get the same forbidden-string treatment the tree gets

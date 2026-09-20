@@ -3659,7 +3659,11 @@ const uiAssetUrlFor = rel => {
 // Safe because loadUiAssets() now runs at startup, before listen(), so uiAssets is always
 // populated by the time any handler renders a page.
 let cssCache = null;
+// The stylesheet's comments are for the reader of this file, not the browser: 22 KB raw, ~10 KB
+// gzipped, shipped inline on every /ui and / document until this strip (CI: 20673 B of the 20480 B
+// D3 ceiling). Stripped once, at first use; a comment never crosses a string in this CSS.
 const cssText = () => (cssCache ??= CSS
+  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\n[ \t]*\n+/g, '\n')
   .replace('FONT_INTER', uiAssetUrlFor('vendor/inter-var-latin.woff2'))
   .replace('FONT_MONO', uiAssetUrlFor('vendor/jetbrains-mono-var-latin.woff2')));
 // ---------- Content-Security-Policy for /ui ----------
