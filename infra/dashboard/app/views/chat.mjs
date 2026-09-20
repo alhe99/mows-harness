@@ -469,6 +469,6 @@ export function Chat({ name, events, tools }) {
             control with no text and no icon is indistinguishable from a rendering failure. */ ''}
       <button class="sendb" disabled=${busy} aria-label=${busy ? 'Sending' : 'Send'}>${busy ? '…' : ''}</button>
     </form>
-    ${tools && html`<p class="chint">${name} has access to ${tools}. Use /help for commands.</p>`}
+    ${tools && html`<p class="chint">${name} has access to ${tools}.<span class="chint-help"> Use /help for commands.</span></p>`}
   </div>`;
 }

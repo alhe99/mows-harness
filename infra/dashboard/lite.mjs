@@ -1960,6 +1960,7 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .agwrap{display:flex;flex-direction:column;gap:12px}
 .agback{font:12px var(--mono);color:var(--dim)}
 .agback:hover{color:var(--fg2)}
+.agback-in{display:none}
 .ag2{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
 .agchat{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .agh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}
@@ -2058,11 +2059,17 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 .agwrap{gap:8px}
 /* The back link was a bare 12px mono line sitting on the safe-area blur band's edge, half faded
    and not a tap target. A 36px row with a little air below the band. */
-.agback{display:inline-flex;align-items:center;min-height:36px;padding:0 2px;margin-top:2px}
-/* The card fills the space between that row and the tab bar, with the insets subtracted by name
-   rather than folded into a magic number: body already pads max(8px, safe-top) above and
-   72px + safe-bottom below; the row is 36px + 8px gap; ~20px of air stays above the bar. */
-.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 120px)}
+/* No separate back row on a phone: it was a ghosted 12px string alone in a ~100px dead zone
+   under the notch. The back control moves into the card's header (.agback-in), where iOS puts
+   one, and the card starts right under the safe-area band. */
+.agback{display:none}
+.agback-in{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;background:var(--card2);border:1px solid var(--bd3);color:var(--fg2);font:600 16px/1 var(--sans);flex-shrink:0;margin-right:-4px}
+.agback-in:active{background:var(--pop)}
+/* The card fills the space between the safe-area band and the tab bar, insets subtracted by
+   name rather than folded into a magic number: body already pads max(8px, safe-top) above and
+   72px + safe-bottom below; ~20px of air stays above the bar. */
+.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 80px)}
+.chint-help{display:none}
 .chatbox{padding:14px;gap:16px}
 .chat .chatf{padding:10px 12px}
 .agh{padding:12px 14px}

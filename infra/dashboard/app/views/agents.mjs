@@ -105,6 +105,11 @@ export function AgentDetail({ name }) {
     <div class="ag2">
       <section class="agchat">
         <header class="agh">
+          ${/* Phone-only back control, in the header where iOS puts one. The desktop comp has a
+                separate "← agents" line above the card (.agback); on a phone that line was a
+                ghosted 12px string alone in a 100px dead zone under the notch. One of the two is
+                shown per breakpoint, by CSS. */ ''}
+          <a class="agback-in" href="/ui/agents" aria-label="Back to agents">←</a>
           <span class="agav" aria-hidden="true"></span>
           <div class="agti">
             <h1>${name}${live && html` <span class="agdot" title="running"></span>`}</h1>
