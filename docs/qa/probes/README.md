@@ -60,16 +60,22 @@ both engines — `document.elementFromPoint()` at the button's own centre return
 **tapping Send opened the terminal** — and all eleven stayed green.
 
 `layout` reads `getBoundingClientRect()` and `elementFromPoint()` after a real layout at 375×812,
-414×896, 1024×800 and 1400×900. It also asserts *which* nav is actually rendered at each width,
-which the greps cannot: `.tabs` is `display:none` above 701px and the pill-nav header is hidden
-below it, so a change to that media query would leave both navs in the markup, neither one visible,
-and every grep green.
+414×896, 800×700, 1024×800 and 1400×900. It also asserts *which* nav is actually rendered at each
+width, which the greps cannot: `.tabs` is `display:none` above 701px and the pill-nav header is
+hidden below it, so a change to that media query would leave both navs in the markup, neither one
+visible, and every grep green.
 
 It asserts its own precondition first, because the first version of it did not and passed at all
-four viewports against the broken code: the composer is `position:sticky` and only reaches the FAB
-once its containing block extends past the fold, which the two-line fixture transcript does not do.
-The probe grows the transcript box to its own designed `max-height` through CSSOM and then asserts
-that the composer really is in its sticky state before measuring anything.
+four viewports against the broken code. The precondition changed with the 2026-09-19 card redesign:
+the composer used to be a page-level `position:sticky` bar that only reached the FAB once its
+containing block extended past the fold, and the probe asserted that sticky state. The composer is
+now the static foot of a fixed-height chat card, so the precondition is the geometric guarantee each
+regime's CSS is built to hold — on a phone the card *ends above* the FAB's band; in the 701–860
+single-column band the form reserves the FAB's width so Send ends left of it; above 860 the composer
+is in the left column and the FAB hangs over the right. The transcript is still grown through CSSOM
+first, so a two-line fixture cannot make the card shorter than a real chat and pass by accident. That
+precondition was red, unnoticed, for the day between the redesign and this rewrite: `layout` was the
+one mode not run in that day's probe passes. Run `all`.
 
 ## What they cannot tell you
 

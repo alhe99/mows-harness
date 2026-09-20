@@ -2070,6 +2070,10 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    72px + safe-bottom below; ~20px of air stays above the bar. */
 .agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 80px)}
 .chint-help{display:none}
+/* iOS Safari zooms the page when a focused control's font is under 16px. The other inputs got
+   this rule long ago (input[type=search], .li2); the chat composer missed it and every tap on it
+   zoomed the whole conversation. 16px is the accessible fix — pinch zoom stays available. */
+.chat .chatf textarea{font-size:16px}
 .chatbox{padding:14px;gap:16px}
 .chat .chatf{padding:10px 12px}
 .agh{padding:12px 14px}
@@ -2077,6 +2081,11 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
 /* The terminal FAB is fixed bottom-right, over this card's hint line. Left-align the hint and leave
    the FAB's column empty, rather than hide a global control on one page. */
 .chint{text-align:left;padding:0 76px 12px 14px}}
+/* Phones (tab bar shown, FAB at bottom:70px+safe): the card ends ABOVE the FAB's band, so nothing
+   in it — composer, Send, hint — can ever sit under the FAB, and no per-element reserve is needed.
+   FAB top is 116px + safe-bottom from the viewport bottom; 132 leaves 16px of air. */
+@media(max-width:700px){.agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px)) - env(safe-area-inset-bottom,0px) - 132px)}
+.chint{padding:0 14px 12px}}
 /* A send that never reached the server, or a transcript refetch that failed. Previously both
    were silent and the composer simply stayed disabled forever (fix round 1). */
 .cherr{color:var(--bad);font-size:13px;margin:0}
@@ -2125,7 +2134,14 @@ details[open]>*:not(summary){animation:pop-in .18s ease}
    FAB's own comment), so the tab bar does not replace it, and hiding it would make the terminal
    unreachable from the app. Asserted on GEOMETRY, not markup, by the "layout" mode of
    docs/qa/probes/probes.mjs — eleven greps over the served HTML could not see this and did not. */
-.uiapp .chat .chatf{padding-right:60px}
+/* 2026-09-19, the card redesign: the composer is no longer a page-level sticky bar, it is the
+   foot of a fixed-height chat card. That moved the collision: on a phone the card now ENDS above
+   the FAB's band (see the max-width:700px block above), and above 860px the composer sits in the
+   left column while the FAB hangs over the right one — in neither regime can Send reach the FAB.
+   The one band where they still share a column is 701–860px, single-column with no tab bar, so
+   the reserve is scoped to it. The layout mode of docs/qa/probes/probes.mjs asserts each regime's own
+   geometry rather than the sticky state that no longer exists. */
+@media(min-width:701px) and (max-width:860px){.uiapp .chat .chatf{padding-right:60px}}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet

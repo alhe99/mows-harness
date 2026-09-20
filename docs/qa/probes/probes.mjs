@@ -474,24 +474,23 @@ async function layout() {
     return (w > 0 && h > 0) ? { w: Math.round(w), h: Math.round(h) } : null;
   };
   const probe = () => page.evaluate(() => {
-    // THE PRECONDITION, and without it this whole mode is vacuous — measured, not assumed: the
-    // first version of this probe passed at all four viewports against the BROKEN code.
-    //
-    // The composer is position:sticky, and sticky can never push an element outside its own
-    // containing block. That block is .chat, whose height is .chatbox + the composer — so the
-    // composer only reaches its sticky offset (and therefore the FAB) once .chat's own bottom edge
-    // is at or below it, which needs a TALL TRANSCRIPT, not merely a tall page. The fixture agent
-    // has a two-line transcript, so .chat ends ~290px above the line and nothing can collide.
-    //
-    // Both dimensions are grown through CSSOM (element.style, which CSP does not govern — the same
-    // reason the view's own --kb handler works under the /ui policy; an injected <style> tag would
-    // be refused). .chatbox is taken to 60vh, which is its OWN designed max-height, so this is the
-    // shape any real chat reaches after a few turns rather than an invented one; .events is padded
-    // so the document scrolls. Whether it worked is asserted, not assumed.
+    // THE PRECONDITION, rewritten for the card redesign (2026-09-19). The composer used to be a
+    // page-level position:sticky bar, and this probe's precondition was "it has reached its sticky
+    // offset, where the FAB can touch it" — a state that no longer exists: the composer is now the
+    // static foot of a fixed-height chat card. What can collide with the FIXED FAB is whatever the
+    // card puts inside the FAB's band, so the precondition is now the geometric guarantee each
+    // regime's CSS is built to hold, measured rather than assumed:
+    //   phone   (<=700):   the card ENDS above the FAB's top edge — nothing in it can be under it;
+    //   tablet  (701–860): single column, composer shares the FAB's column; the form reserves the
+    //                      FAB's width on the right, so Send ends left of the FAB's left edge;
+    //   desktop (>860):    two columns; the composer is in the left one — Send ends left of the FAB.
+    // Then, at every width, the direct test the whole mode exists for: the boxes do not intersect
+    // and a tap at Send's centre reaches Send. The transcript is grown to its designed height first
+    // (CSSOM, which CSP does not govern), so a two-line fixture cannot make the card shorter than a
+    // real chat and pass by accident. The first version of this probe passed against broken code;
+    // the sticky precondition was added for that reason, and this one replaces it for the same.
     const box = document.querySelector('.chatbox');
     if (box) box.style.minHeight = '60vh';
-    const ev = document.querySelector('.events');
-    if (ev) ev.style.minHeight = '1400px';
     const r = el => { if (!el) return null; const b = el.getBoundingClientRect();
       return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, w: Math.round(b.width), h: Math.round(b.height) }; };
     const send = document.querySelector('.chat .chatf button');
@@ -499,18 +498,10 @@ async function layout() {
     // The element a tap at the Send button's own centre would actually reach. This is the whole
     // assertion: a button can be present, correctly sized and completely unclickable.
     const hit = b ? document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2) : null;
-    const form = document.querySelector('.chat .chatf');
-    const fb = form && form.getBoundingClientRect();
     return {
       fab: r(document.querySelector('.termfab')),
       send: r(send),
-      // Stuck = the page can scroll AND the composer is sitting at its sticky offset (70px above
-      // the scrollport bottom, since env(safe-area-inset-bottom) and --kb are both 0 headless)
-      // rather than in flow. Asserted separately, so a probe that quietly measured a short page
-      // reads as a failure instead of as a pass.
-      scrollable: document.scrollingElement.scrollHeight > window.innerHeight + 50,
-      composerStuck: !!fb && Math.abs((window.innerHeight - fb.bottom) - 70) <= 2,
-      composerGap: fb ? Math.round(window.innerHeight - fb.bottom) : null,
+      card: r(document.querySelector('.agchat')),
       hitIsSend: hit === send,
       // className on an SVG element is an SVGAnimatedString, which JSON.stringify renders as {} —
       // and the thing on top here is the FAB's inline <svg>, so the naive read told you nothing
@@ -524,25 +515,28 @@ async function layout() {
   });
 
   // 375x812 is the viewport docs/qa/journeys/agent-chat.md step 8 names; 414x896 is the other
-  // phone geometry the mobile journey uses; 1024 and 1400 are where .tabs is gone and the header
-  // is the navigation. The desktop widths are not decoration -- R1's overlap was 12x26 at 1024,
-  // smaller than on a phone but not absent, which is why the fix is not inside a media query.
-  for (const [w, h, phone] of [[375, 812, true], [414, 896, true], [1024, 800, false], [1400, 900, false]]) {
+  // phone geometry the mobile journey uses; 800x700 is inside the 701–860 single-column band where
+  // the composer still shares the FAB's column and the right-hand reserve is what keeps them apart;
+  // 1024 and 1400 are two-column, where .tabs is gone and the header is the navigation.
+  for (const [w, h, regime] of [[375, 812, 'phone'], [414, 896, 'phone'], [800, 700, 'tablet'], [1024, 800, 'desktop'], [1400, 900, 'desktop']]) {
     await page.setViewportSize({ width: w, height: h });
     await page.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
     await page.waitForSelector('.chat .chatf button', { timeout: 15000 });
     await sleep(250);
-    await probe();              // first call grows the page
+    await probe();              // first call grows the transcript
     await sleep(150);
     const m = await probe();    // ...second one measures it settled
+    const phone = regime === 'phone';
 
-    // Only the phone widths pin the composer: above 701px .tabs is gone, the clearance media query
-    // does not apply, and the composer sticks at bottom:0. Both states are real; what must not
-    // happen is measuring a page too short to stick anything and calling it a pass.
-    check(`${w}x${h}: the page scrolls and the composer is in its sticky state (precondition)`,
-      m.scrollable === true && (phone ? m.composerStuck === true : m.composerGap === 0),
-      { scrollable: m.scrollable, composerGap: m.composerGap });
-
+    if (phone) {
+      check(`${w}x${h}: the chat card ends above the FAB's band (precondition, by construction)`,
+        !!(m.card && m.fab) && m.card.bottom <= m.fab.top,
+        { cardBottom: m.card && Math.round(m.card.bottom), fabTop: m.fab && Math.round(m.fab.top) });
+    } else {
+      check(`${w}x${h}: Send ends left of the FAB's column (precondition, by construction)`,
+        !!(m.send && m.fab) && m.send.right <= m.fab.left,
+        { sendRight: m.send && Math.round(m.send.right), fabLeft: m.fab && Math.round(m.fab.left) });
+    }
     check(`${w}x${h}: the terminal FAB does not overlap the Send button`,
       m.fab && m.send && overlap(m.fab, m.send) === null,
       { overlap: m.fab && m.send ? overlap(m.fab, m.send) : 'a box is missing', fab: m.fab, send: m.send });
