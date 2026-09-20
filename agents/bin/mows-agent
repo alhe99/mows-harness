@@ -193,6 +193,12 @@ store_memory(){
   printf '%s\n' "$body" > "$dir/memory.md.tmp" && mv "$dir/memory.md.tmp" "$dir/memory.md"
   event "$n" "memory stored: $(wc -c < "$dir/memory.md") bytes, $(wc -l < "$dir/memory.md") lines"
 }
+soul_block(){ # soul_block <path-or-empty>: the "## Your role" section (spec 2026-09-20 §1). Nothing when unset.
+  # A soul is a shared role file several instances name; it rides the same append path as memory so
+  # it is re-asserted on every call. Lint has already required it to exist and to be under 16 KB.
+  [ -n "$1" ] || return 0
+  printf '\n## Your role\n'; cat "$(expand_tilde "$1")"; printf '\n'
+}
 memory_block(){ # memory_block <name>: the "## Your memory" section of an appended prompt (spec §2.1)
   local f="$STATE_ROOT/$1/memory.md"
   printf '\n## Your memory\n'
@@ -226,14 +232,15 @@ chat_history(){ # chat_history <name>: the last CHAT_CTX_TURNS entries of chat.j
     | (.text // "") as $t
     | "\($who) (\((.at // "")[11:19])): \(if ($t | length) > $max then $t[:$max] + "[…]" else $t end)"'
 }
-chat_context(){ # chat_context <name> <profile> <workdir>: appended system prompt for ONE chat turn
+chat_context(){ # chat_context <name> <profile> <workdir> <soul-or-empty>: appended system prompt for ONE chat turn
   local n=$1 prev
   prev=$(ls -1d "$STATE_ROOT/$n/runs"/*/ 2>/dev/null | tail -1)
   printf 'mows-agent chat context\n- agent: %s\n- profile: %s\n- workdir: %s\n' "$n" "$2" "$3"
-  printf -- "- this turn's budget: %s USD, %s turns\n" "$CHAT_USD" "$CHAT_TURNS"
+  printf -- "- this turn's budget: %s USD, %s turns\n" "$CHAT_USD_EFF" "$CHAT_TURNS_EFF"
   if [ -n "$prev" ] && [ -f "$prev/status.json" ]; then
     printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
   fi
+  soul_block "$4"
   memory_block "$n"
   chat_history "$n"
   # The one line where run and chat disagree on purpose (spec §2.3). run_context says there is
@@ -250,6 +257,7 @@ run_context(){ # appended to the system prompt: who am I, what ran before. Never
     printf -- '- previous run: %s state=%s cost=%s\n' "$(basename "$prev")" "$(jq -r .state "$prev/status.json")" "$(jq -r .cost_usd "$prev/status.json")"
     [ -f "$prev/result.json" ] && printf -- '- previous result: %s\n' "$(jq -r '(.result // "") | .[0:600]' "$prev/result.json")"
   fi
+  soul_block "$SOUL"
   memory_block "$AGENT"
   printf '\nYou have no human available: never ask questions, decide and finish within budget.\n'
   memory_instruction
@@ -347,6 +355,7 @@ cmd_run(){
   M=$(meta "$f")
   PROFILE=$(mget "$M" .mows.profile); CFGDIR=$(cfg_of "$PROFILE")
   WORKDIR=$(expand_tilde "$(mget "$M" .mows.workdir)")
+  SOUL=$(mget "$M" .mows.soul)
   USD_RUN=$(mget "$M" .mows.budget.usd_per_run); MAXT=$(mget "$M" .mows.budget.max_turns)
   VIA=$(mget "$M" .mows.escalate.via); VIA=${VIA:-none}
   local usd_day floor task pid spent
@@ -494,7 +503,13 @@ cmd_chat(){
   mkdir -p "$dir"
   # Built BEFORE this turn's message is appended below, so the history the model sees is the
   # conversation up to now and the message arrives once, as the user turn — not twice.
-  local ctx; ctx=$(chat_context "$n" "$(mget "$m" .mows.profile)" "$wd")
+  # Per-agent chat caps (spec 2026-09-20 D7). The env constants stay the defaults so no other agent's
+  # chat changes; a value from the file is printed with two decimals so argv reads "1.00", not the
+  # "1" jq would give it.
+  CHAT_USD_EFF=$(mget "$m" .mows.budget.chat_usd); CHAT_USD_EFF=$([ -n "$CHAT_USD_EFF" ] && printf '%.2f' "$CHAT_USD_EFF" || printf '%s' "$CHAT_USD")
+  CHAT_TURNS_EFF=$(mget "$m" .mows.budget.chat_turns); CHAT_TURNS_EFF=${CHAT_TURNS_EFF:-$CHAT_TURNS}
+  local soul; soul=$(mget "$m" .mows.soul)
+  local ctx; ctx=$(chat_context "$n" "$(mget "$m" .mows.profile)" "$wd" "$soul")
   jq -nc --arg r user --arg t "$msg" --arg a "$(date -Is)" '{at:$a,role:$r,text:$t}' >> "$log"
 
   if [ "$stream" = 1 ]; then
@@ -550,7 +565,7 @@ cmd_chat(){
               --agent "$n" --append-system-prompt "$ctx" \
               --output-format stream-json --verbose --include-partial-messages \
               --permission-prompts none --strict-mcp-config "${mcp[@]}" \
-              --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+              --max-turns "$CHAT_TURNS_EFF" --max-budget-usd "$CHAT_USD_EFF" \
               -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
     if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
       local why="${notice:-claude exited $rc with no result record}"
@@ -579,7 +594,7 @@ cmd_chat(){
   out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
         --agent "$n" --append-system-prompt "$ctx" --output-format json \
         --permission-prompts none --strict-mcp-config "${mcp[@]}" \
-        --max-turns "$CHAT_TURNS" --max-budget-usd "$CHAT_USD" \
+        --max-turns "$CHAT_TURNS_EFF" --max-budget-usd "$CHAT_USD_EFF" \
         -- "$msg" 2>/dev/null)
   rc=$?
   # claude exits 0 and prints a plain-text notice (not JSON) when a session cannot be resumed,

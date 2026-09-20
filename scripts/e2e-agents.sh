@@ -672,6 +672,24 @@ mows-agent chat good "remember this" >/dev/null 2>&1
 chk "chat (plain): memory block stored"            '[ "$(cat "$M")" = "from plain chat: yes" ]'
 echo ok > "$CLAUDE_MODE_FILE"; rm -f "$M"
 
+echo "### souls: injected into run and chat (spec 2026-09-20 §1); chat budget per agent (D7)"
+echo ok > "$CLAUDE_MODE_FILE"
+mows-agent run souled >/dev/null 2>&1
+chk "run: appended prompt has the role heading"        'grep -qx "## Your role" "$CLAUDE_ARGS_FILE"'
+chk "run: soul text follows it verbatim"               'grep -qx "You are a test soul." "$CLAUDE_ARGS_FILE" && grep -qx "Second line." "$CLAUDE_ARGS_FILE"'
+chk "run: role precedes memory"                        '[ "$(grep -nx "## Your role" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" -lt "$(grep -nx "## Your memory" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" ]'
+mows-agent run good >/dev/null 2>&1
+chk "run: no soul, no role heading"                    '! grep -qx "## Your role" "$CLAUDE_ARGS_FILE"'
+mows-agent chat souled --stream "hi" >/dev/null 2>&1
+chk "chat: appended prompt has the role heading"       'grep -qx "## Your role" "$CLAUDE_ARGS_FILE"'
+chk "chat: role precedes the conversation"             '[ "$(grep -nx "## Your role" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" -lt "$(grep -nx "## The conversation so far" "$CLAUDE_ARGS_FILE" | cut -d: -f1)" ]'
+mows-agent chat chatb --stream "hi" >/dev/null 2>&1
+chk "chat: per-agent chat_usd reaches argv"            'grep -A1 -x -- "--max-budget-usd" "$CLAUDE_ARGS_FILE" | grep -qx "1.00"'
+chk "chat: per-agent chat_turns reaches argv"          'grep -A1 -x -- "--max-turns" "$CLAUDE_ARGS_FILE" | grep -qx "12"'
+chk "chat: budget line in the prompt says so"          'grep -q "this turn.s budget: 1.00 USD, 12 turns" "$CLAUDE_ARGS_FILE"'
+mows-agent chat good --stream "hi" >/dev/null 2>&1
+chk "chat: no override -> defaults in argv"            'grep -A1 -x -- "--max-budget-usd" "$CLAUDE_ARGS_FILE" | grep -qx "0.25" && grep -A1 -x -- "--max-turns" "$CLAUDE_ARGS_FILE" | grep -qx "6"'
+
 echo "### dashboard chat stream (Step 4 JS, no server/spawn needed — F2/F10)"
 chk "chat stream: multi-byte UTF-8 boundary and malformed-line handling" \
   'node scripts/chat-stream-utf8-check.mjs'
