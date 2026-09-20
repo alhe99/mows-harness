@@ -257,3 +257,35 @@ No timers — these agents have no triggers. The dashboard's Run now (`/a/agent-
 - **Token scope is wider than the soul.** `repo` scope can write. D4's instruction is the guard;
   the live run's stream is checked for write-shaped `gh` calls; a scoped read-only token is the
   operator's call and outside this spec.
+
+## Addendum — measured 2026-09-20 (claude 2.1.277, unattended `mows-agent@.service`, user `defaultMode: auto`)
+
+Each instance ran once from the dashboard's Run now (`POST /a/agent-run` → 303 → systemd unit).
+No `gh` call in any stream was write-shaped (grep for `pr review|pr comment|pr merge|pr edit|
+-X|--method|-f |-F |git push|git commit` over the three `stream.jsonl`: empty). The four `gh api`
+calls were `repos/…/contents/…` GETs reading workflow files.
+
+| instance | state | turns | cost | denials | gh subcommands | verdicts |
+|---|---|---|---|---|---|---|
+| pr-reviewer-paytix | done | 4 | $0.14 | 0 | `search prs`, `auth status` | none in scope; the one org PR is neither authored nor review-requested — correctly skipped |
+| pr-reviewer-ffwd | done | 11 | $0.28 | 0 | `pr diff` ×10, `search prs` ×4, `pr view` ×4, `pr checks` ×2 | 1 blocking, 1 should-fix, 1 clean (3 PRs, all in scope) |
+| pr-reviewer-h4b | done | 18 | $0.51 | 0 | `pr view` ×12, `run view` ×4, `api repos` ×4 (GET), `search prs` ×2, `pr diff` ×2 | 0 blocking, 2 should-fix, 3 clean (5 of the open PRs; memory carries the queue) |
+
+**Regime:** unattended `gh search/pr view/pr diff/pr checks/run view/api GET` all execute with zero
+permission denials — the §Risks worry about network reads being denied did not materialise.
+
+**Memory shape:** all three wrote the `owner/repo#n @sha7 verdict` lines the soul specifies, plus a
+dated header and ≤5 concerns; 10–11 lines, ~1 KB, far under the 60-line / 4096-byte cap. h4b's
+memory records the PR it did not read (a 1,406-file branch promotion) and why.
+
+**Two gaps found by the ffwd run, both fixed the same day:**
+1. The reviewer copied a plaintext keystore password from the diff into its finding and its
+   memory. The soul now carries "Never reproduce a secret's value" (`acc478f`); the memory on disk
+   was scrubbed by hand. The run's `result.json`/`stream.jsonl` under the state dir still hold the
+   value as evidence; the operator was told.
+2. A `BLOCKING:` first line reached the result but nothing carried it further: `cmd_run` only
+   escalated refusals. The runner now escalates a `BLOCKING:`-prefixed first line via the agent's
+   `escalate.via` (`9c64cf0`, five e2e assertions on an agent with `via: discord`).
+
+**Not measured:** a second run against the same heads (the skip-by-`@sha7` rule); a chat turn with
+a reviewer (the run path was the question). Both are one Run now / one message when wanted.

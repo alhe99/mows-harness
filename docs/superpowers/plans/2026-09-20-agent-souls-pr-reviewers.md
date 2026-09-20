@@ -275,3 +275,11 @@ chat. See the design spec for what they review and in what order.
 **Placeholders:** none. Task 6's addendum is filled from the run, by design.
 
 **Names:** `soul_block <path>`, globals `SOUL`, `CHAT_USD_EFF`, `CHAT_TURNS_EFF`; linter constant `SOUL_MAX_BYTES = 16384`; keys `mows.soul`, `mows.budget.chat_usd`, `mows.budget.chat_turns`; API field `capability.policy.soul`; prompt heading `## Your role` — identical across tasks and tests.
+
+## As executed (2026-09-20)
+
+Tasks 1–7 done in order; e2e 233/0 at the end. Two unplanned commits came out of Task 6's live
+runs: `acc478f` (soul: never reproduce a secret's value) and `9c64cf0` (runner: `BLOCKING:` first
+line escalates). Task 6 ran all three instances, not only ffwd — the ffwd facts were recorded first,
+as the spec required, and h4b ran last at $0.51 under its $2 cap. The measured facts are in the
+spec's addendum.
