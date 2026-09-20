@@ -480,6 +480,10 @@ chk "render: exits 0"                          'mows-agent render timed'
 chk "render: service template once"            'grep -q "^ExecStart=$HOME/.local/bin/mows-agent run %i" "$RENDER_DIR/mows-agent@.service"'
 chk "render: service is oneshot as this user"  'grep -q "^Type=oneshot" "$RENDER_DIR/mows-agent@.service" && grep -q "^User=$(id -un)" "$RENDER_DIR/mows-agent@.service"'
 chk "render: service unsets API key"           'grep -q "^UnsetEnvironment=ANTHROPIC_API_KEY" "$RENDER_DIR/mows-agent@.service"'
+# systemd's default PATH has no ~/.local/bin, where claude, claude-quota and mows-agent itself live.
+# The first unit ever installed from this template failed with "setsid: failed to execute claude:
+# No such file or directory" (2026-09-20); the template had set HOME and nothing else.
+chk "render: service PATH reaches ~/.local/bin" 'grep -q "^Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" "$RENDER_DIR/mows-agent@.service"'
 chk "render: TimeoutStartSec = max_turns*3min" 'grep -q "^TimeoutStartSec=7200" "$RENDER_DIR/mows-agent@.service"'
 chk "render: first timer"                      'grep -q "^OnCalendar=\*-\*-\* 06:00:00" "$RENDER_DIR/mows-agent-timed.timer" && grep -q "^Persistent=true" "$RENDER_DIR/mows-agent-timed.timer"'
 chk "render: second timer suffixed -2"         'grep -q "^OnCalendar=Mon" "$RENDER_DIR/mows-agent-timed-2.timer"'

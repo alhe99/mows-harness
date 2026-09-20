@@ -659,6 +659,9 @@ Wants=network-online.target
 Type=oneshot
 User=$(id -un)
 Environment=HOME=$HOME
+# systemd's default PATH has no ~/.local/bin, where claude, claude-quota and this runner live. The
+# first unit installed from this template failed with "failed to execute claude" for that reason.
+Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 UnsetEnvironment=ANTHROPIC_API_KEY
 WorkingDirectory=$HOME
 # generous: a run is already capped by --max-turns / --max-budget-usd and the stall kill
