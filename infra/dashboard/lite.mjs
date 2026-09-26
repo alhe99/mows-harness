@@ -2166,7 +2166,31 @@ const MD_CSS = `.mdhead{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:bas
 .mdv table{border-collapse:collapse;font-size:13.5px}
 .mdv th,.mdv td{border:1px solid var(--bd2);padding:6px 10px;text-align:left}
 .mdv th{background:var(--card2);color:var(--title)}
-.mdv img{max-width:100%;border-radius:var(--r)}`;
+.mdv img{max-width:100%;border-radius:var(--r)}
+.mdmmd{overflow-x:auto;margin:0 0 12px;text-align:center;cursor:zoom-in}
+.mdmmd.full{cursor:zoom-out;text-align:left}`;
+// ```mermaid fences: the server renderer leaves them as <pre data-lang="mermaid">; this swaps
+// each for its SVG in the browser. Emitted ONLY on /md pages that have one. securityLevel
+// strict because docs come from anywhere (same reasoning as safeUrl). A block that fails to
+// parse keeps its source visible, with the parser error as its tooltip. Wide diagrams
+// (real flowcharts/sequences run 1000-2800px) start fitted to the column as an overview;
+// a tap toggles natural size, scrolled sideways inside the .mdmmd box.
+// ponytail: CDN-loaded (major-pinned) — vendor the file if the box must render offline.
+const MD_MERMAID = `<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@12/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
+let n = 0;
+for (const pre of document.querySelectorAll('.mdv pre[data-lang="mermaid"]')) {
+  const id = 'mmd' + n++;
+  try {
+    const { svg } = await mermaid.render(id, pre.textContent);
+    const d = document.createElement('div'); d.className = 'mdmmd'; d.innerHTML = svg; pre.replaceWith(d);
+    const g = d.querySelector('svg'), w = g.viewBox.baseVal.width;
+    d.onclick = () => { const on = d.classList.toggle('full');
+      g.style.maxWidth = on ? 'none' : w + 'px'; g.style.width = on ? w + 'px' : ''; };
+  } catch (e) { pre.title = 'mermaid: ' + ((e && e.message) || e); document.getElementById('d' + id)?.remove(); }
+}
+</script>`;
 function mdInline(s) { // s is already HTML-escaped; stash code spans so marks inside stay literal
   const keep = [];
   s = s.replace(/`([^`]+)`/g, (_, c) => (keep.push(`<code>${c}</code>`), `\x00${keep.length - 1}\x00`));
@@ -2266,7 +2290,8 @@ async function mdView(req, res, url) {
   const body = `<h1><a href="/">mows sessions</a></h1>
 <div class="mdhead"><b>${esc(path.basename(real))}</b><span>${esc(real)}</span><span>${kb} · updated ${when}</span></div>
 <article class="mdv">${art}</article>`;
-  send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>`, '', '', false, null, req.headers.host));
+  const mmd = art.includes('data-lang="mermaid"') ? MD_MERMAID : '';
+  send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>${mmd}`, '', '', false, null, req.headers.host));
 }
 
 // ---------- page chrome, shared by BOTH document shapes ----------
