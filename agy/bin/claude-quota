@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# claude-quota — per-account Claude usage signal for agy delegation.
-# The 70% delegation threshold is defined HERE and nowhere else.
-#   --json | --line | --check [personal|work] | --reviewer | --refresh | --selftest
+# claude-quota — per-account Claude usage signal (SessionStart line, mows-agent quota_floor).
+# The 70% threshold is defined HERE and nowhere else.
+#   --json | --line | --check [personal|work] | --refresh | --selftest
 # Exit codes for --check: 0 below threshold, 1 at/over, 2 unknown.
 set -euo pipefail
 THRESHOLD=70
@@ -143,9 +143,5 @@ case "${1:---line}" in
               read -r pf pw < <(pct_of personal | paste -sd' '); read -r wf ww < <(pct_of work | paste -sd' ')
               echo "claude quota: personal 5h ${pf}% wk ${pw}% | work 5h ${wf}% wk ${ww}% (threshold ${THRESHOLD}%)";;
   --check)    ensure_cache; check_account "${2:-$(active_account)}";;
-  --reviewer) ensure_cache
-              for a in personal work; do
-                if (check_account "$a") 2>/dev/null; then echo "$a"; exit 0; fi
-              done; exit 1;;
-  *) echo "usage: claude-quota [--json|--line|--check [personal|work]|--reviewer|--refresh|--selftest]" >&2; exit 64;;
+  *) echo "usage: claude-quota [--json|--line|--check [personal|work]|--refresh|--selftest]" >&2; exit 64;;
 esac

@@ -2,8 +2,7 @@
 # ag — launch Antigravity CLI (agy) in a named tmux session, cc-style.
 # usage: ag [dir] [-- <agy flags...>]     (bare `ag` = current directory)
 # tmux session: agy-<slug-of-dir-basename> (+ -2, -3 … for deliberate seconds).
-# watchdogs/bin/reap-idle-claude reaps ^agy- when detached+idle but NEVER
-# ^agyh- (running handoffs) — this naming is that contract; don't change it.
+# watchdogs/bin/reap-idle-claude reaps ^agy- when detached+idle.
 set -euo pipefail
 CFG="$HOME/.config/mows-agy/config"; [ -f "$CFG" ] && . "$CFG"
 AGY=${AGY_BIN:-agy}

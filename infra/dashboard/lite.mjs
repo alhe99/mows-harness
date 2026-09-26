@@ -900,14 +900,14 @@ ${script}`;
   send(req, res, 200, page('device · mows sessions', body, head, bodyClass, 'device', false, null, req.headers.host));
 }
 
-// ---------- system + usage panel (host metrics, claude/agy limits, spend) ----------
+// ---------- system + usage panel (host metrics, claude limits, spend) ----------
 // One-step visibility of the box the harness runs on. Host numbers are sync reads
 // (/proc, statfs) cached 5s; usage numbers shell out (claude-quota, ccusage per
-// account, agy handoff state) so they're collected in the background and cached
+// account) so they're collected in the background and cached
 // 5 min — a page load NEVER waits on them (first load shows "collecting…").
 // Optional dependencies, each degrading gracefully when absent: claude-quota
 // (agy layer) -> limits render "?", ccusage (`sudo npm i -g ccusage`) -> spend
-// cards say so, agy handoff state -> "no handoffs".
+// cards say so.
 const GB = n => (n / 1073741824).toFixed(1);
 let hostCache = { t: 0, h: null };
 function hostInfo() {
@@ -988,24 +988,7 @@ async function collectUsage(force) {
       sess,
       block: blk ? { cost: blk.costUSD || 0, rate: (blk.burnRate && blk.burnRate.costPerHour) || 0 } : null };
   }));
-  const agy = {};
-  try {
-    const hdir = TMUX_HOME + '/.local/state/agy-handoffs';
-    for (const id of readdirSync(hdir)) {
-      try {
-        const st = JSON.parse(readFileSync(hdir + '/' + id + '/meta.json', 'utf8')).status;
-        agy[st] = (agy[st] || 0) + 1;
-      } catch { /* not a handoff dir */ }
-    }
-  } catch { /* no agy state on this box */ }
-  let agyEv = null;
-  try {
-    const lines = readFileSync(TMUX_HOME + '/.local/state/agy-handoffs/events.log', 'utf8').trim().split('\n');
-    const last = lines[lines.length - 1] || '';
-    const sp = last.indexOf(' ');
-    if (sp > 0) agyEv = { t: Date.parse(last.slice(0, sp)) || 0, msg: last.slice(sp + 1) };
-  } catch { /* no events yet */ }
-  return { quota, thr, accts, agy, agyEv };
+  return { quota, thr, accts };
 }
 let usageCache = { t: 0, d: null, busy: false, p: null };
 function usage(force) {
@@ -1197,17 +1180,10 @@ ${a.sess.length ? a.sess.map(t => `<div class="qrow"><a class="sid8" href="/s/${
 </details>`;
       }
       return `<div class="stat"><span class="sl">${esc(a.label)} · limits</span>${qrow('5h', q.h5)}${qrow('week', q.wk)}
-<div class="mlist muted">${a.tokExp && a.tokExp < Date.now() && q.h5 == null ? `oauth token expired ${rel(a.tokExp)} ago — open any ${esc(a.label)} session and it refreshes` : `delegate to agy at ${u.thr}%`}</div></div>
+<div class="mlist muted">${a.tokExp && a.tokExp < Date.now() && q.h5 == null ? `oauth token expired ${rel(a.tokExp)} ago — open any ${esc(a.label)} session and it refreshes` : `threshold ${u.thr}%`}</div></div>
 <div class="stat"><span class="sl">${esc(a.label)} · spend</span>${spend}${breakdown}</div>`;
     }).join('');
-    const ag = Object.keys(u.agy).length
-      ? Object.entries(u.agy).map(([k, v]) => `${esc(k)} <b>${v}</b>`).join(' · ') : 'no handoffs';
-    ubody = `<div class="statgrid u">${acards}
-<div class="stat wide"><span class="sl">agy · antigravity</span>
-<div class="qrow"><span style="width:72px">limits</span><span class="mlist" style="padding:0">antigravity's cli exposes no usage/quota api — delegation is gated by the claude limit bars above (${u.thr}%)</span></div>
-<div class="qrow"><span style="width:72px">handoffs</span><span class="mlist" style="padding:0">${ag}</span></div>
-${u.agyEv ? `<div class="qrow"><span style="width:72px">last event</span><span class="mlist" style="padding:0">${esc(u.agyEv.msg)} <span class="muted">· ${rel(u.agyEv.t)} ago</span></span></div>` : ''}
-</div></div>`;
+    ubody = `<div class="statgrid u">${acards}</div>`;
   }
   const sumToday = u ? Object.values(u.accts).reduce((s, a) => s + a.today, 0) : null;
   const age = usageCache.t ? (rel(usageCache.t) === 'now' ? 'now' : rel(usageCache.t) + ' ago') : '—';
@@ -1220,7 +1196,7 @@ ${u.agyEv ? `<div class="qrow"><span style="width:72px">last event</span><span c
   // (the page's h1 already says "system", so no repeated header line here).
   // figma-make System view (node 36:852): two 464px columns (Metrics | Environment +
   // Terminal), pixel spec below; everything the OLD flat panel showed (per-account
-  // limits/spend, agy handoffs, disk reclaim) survives underneath in .sysextra — the
+  // limits/spend, disk reclaim) survives underneath in .sysextra — the
   // addendum's 3-card anatomy has no slot for it, but the hard rule is "never remove
   // functionality", so it keeps the same cards/classes, just re-headed to read as part
   // of this page instead of a collapsible strip.

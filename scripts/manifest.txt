@@ -17,8 +17,6 @@ agents/examples/pr-reviewer-paytix.md
 agents/souls/pr-reviewer.md
 agy/SETUP.md
 agy/bin/ag
-agy/bin/agy-gate
-agy/bin/agy-handoff
 agy/bin/agy-notify
 agy/bin/agy-run
 agy/bin/claude-quota
@@ -40,9 +38,7 @@ claude/rules/context7.md
 claude/scripts/discord-notify.sh
 claude/scripts/discord-send.sh
 claude/scripts/discord-via-agy.sh
-claude/scripts/quota-gate.sh
 claude/settings.template.json
-claude/skills/agy-delegate/SKILL.md
 claude/skills/build-with-agent-team/SKILL.md
 claude/skills/context7-mcp/SKILL.md
 claude/skills/discord/SKILL.md

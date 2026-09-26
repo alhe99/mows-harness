@@ -13,8 +13,8 @@
 #                 ./rendered/ for review — NEVER installed, enabled, started, or touched live
 #                 by this script. Prints the exact sudo commands to do that yourself.
 #   --fleet       the profile-model CLIs (fleet/bin/*) into ~/.local/bin.
-#   --agy         antigravity delegation CLIs (agy/bin/*: ag, agy-run, agy-handoff, agy-gate,
-#                 claude-quota, agy-notify) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
+#   --agy         antigravity CLIs (agy/bin/*: ag, agy-run, claude-quota, agy-notify)
+#                 into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
 #   --agents      purpose-scoped agent CLIs (agents/bin/*: mows-agent, mows-agent-meta) into
 #                 ~/.local/bin; config seeded at ~/.config/mows-agents/config; example agent
 #                 seeded at ~/.claude/agents/harness-reviewer.md; souls (agents/souls/*) installed to
@@ -43,7 +43,7 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--agents
                      ./rendered/ for review; never installs/enables/starts anything itself
   --fleet           profile-model CLIs (cc, ccname, ccswap, ccwt, claude-rc, claude-status, reset-claude-env)
                      -> ~/.local/bin
-  --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota, agy-notify) -> ~/.local/bin
+  --agy             antigravity CLIs (ag, agy-run, claude-quota, agy-notify) -> ~/.local/bin
   --agents          purpose-scoped agent CLIs (mows-agent, mows-agent-meta) -> ~/.local/bin;
                      config seeded at ~/.config/mows-agents/config; example agent seeded at
                      ~/.claude/agents/harness-reviewer.md
@@ -205,8 +205,8 @@ layer_claude(){
     rm -rf "$HOME/.claude/$f"
     cp -r "claude/$f" "$HOME/.claude/"
   done
-  # scripts/ are the hook targets settings.template.json wires up (quota-gate on
-  # UserPromptSubmit, discord-notify on Notification) plus the discord send/bridge pair.
+  # scripts/ are the hook targets settings.template.json wires up (discord-notify on
+  # Notification) plus the discord send/bridge pair.
   # The Discord ones stay inert until a real webhook URL replaces the placeholder below;
   # seed only if absent, never clobber (same rule as agy's config).
   if [ ! -f "$HOME/.claude/secrets/discord-webhook.env" ]; then
@@ -427,18 +427,17 @@ layer_fleet(){
 }
 
 layer_agy(){
-  echo "== agy (antigravity delegation) =="
-  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agy" "$HOME/.local/state/agy-handoffs"
-  install -m755 agy/bin/ag agy/bin/agy-run agy/bin/agy-handoff agy/bin/agy-gate \
-    agy/bin/claude-quota agy/bin/agy-notify "$HOME/.local/bin/"
+  echo "== agy (antigravity) =="
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agy"
+  install -m755 agy/bin/ag agy/bin/agy-run agy/bin/claude-quota agy/bin/agy-notify "$HOME/.local/bin/"
   # config is user-owned after first install: seed only if absent, never clobber
   if [ ! -f "$HOME/.config/mows-agy/config" ]; then
     install -m644 agy/config.example "$HOME/.config/mows-agy/config"
     echo "seeded ~/.config/mows-agy/config — set model slugs there after running: agy models"
   fi
-  echo "installed: ag agy-run agy-handoff agy-gate claude-quota agy-notify -> ~/.local/bin"
+  echo "installed: ag agy-run claude-quota agy-notify -> ~/.local/bin"
   if ! command -v jq >/dev/null 2>&1; then
-    echo "WARN: jq not found — agy delegation requires jq: sudo apt-get install -y jq"
+    echo "WARN: jq not found — agy-run requires jq: sudo apt-get install -y jq"
   fi
   if ! command -v agy >/dev/null 2>&1; then
     echo "antigravity CLI (agy) not found — install it yourself when ready (never run by this script):"

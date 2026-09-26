@@ -39,7 +39,7 @@ you leave running, `--all` for the full web cockpit.
   System / Device / Agents, plus the `/ui` app), a themeable browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command; per-session
   git worktrees so parallel sessions never fight over one checkout
-- **agy** — antigravity delegation: `ag` launcher, `agy-run`, `agy-handoff`/`agy-gate`,
+- **agy** — antigravity: `ag` launcher, `agy-run` (composes Discord messages),
   `claude-quota`, `agy-notify` → `~/.local/bin`
 - **agents** — purpose-scoped agents that run unattended: one Claude Code agent file + a
   `mows:` policy block, budgets per run/day/account, systemd timers and HMAC webhooks as
@@ -162,7 +162,7 @@ running anything.
 | **watchdogs** | `--watchdogs` | 7 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `ccname`, `ccswap`, `ccwt`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
-| **agy** | `--agy` | `ag`, `agy-run`, `agy-handoff`, `agy-gate`, `claude-quota`, `agy-notify` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
+| **agy** | `--agy` | `ag`, `agy-run`, `claude-quota`, `agy-notify` → `~/.local/bin`; config seeded at `~/.config/mows-agy/config` | No — config never clobbered |
 | **agents** | `--agents` | `mows-agent`, `mows-agent-meta` → `~/.local/bin`; config seeded at `~/.config/mows-agents/config`; example agent seeded at `~/.claude/agents/harness-reviewer.md` | No — config and example never clobbered |
 
 All six are idempotent and independent. Re-running with a different flag set is safe.
@@ -411,8 +411,8 @@ flowchart TB
         AGENT["agent model:<br/>add-agent.sh (one Linux user per agent)"]
     end
 
-    subgraph Layer5["Layer 5: agy (delegation)"]
-        AGY["ag / agy-run / agy-handoff / agy-gate<br/>claude-quota (the 70% signal)"]
+    subgraph Layer5["Layer 5: agy"]
+        AGY["ag / agy-run / agy-notify<br/>claude-quota (usage signal)"]
     end
 
     subgraph Layer6["Layer 6: agents (purpose-scoped, unattended)"]
@@ -491,9 +491,10 @@ flowchart TB
   quota-blocked session on the other account, and `ccwt` manages the per-session git
   worktrees that `cc -w <name>` creates — one branch per session, so two agents in one repo
   never overwrite each other, merged back with `ccwt done`.
-- **`agy/`** — Antigravity (agy) delegation: the `ag` tmux launcher, `agy-run` sync wrapper,
-  `agy-handoff`/`agy-gate` worktree handoffs with a verify→review→auto-merge policy, and
-  `claude-quota`, the per-account usage signal behind the 70% delegation rule. See
+- **`agy/`** — Antigravity (agy): the `ag` tmux launcher, `agy-run` sync wrapper (the
+  Discord bridge uses it to compose messages), `agy-notify` webhook poster, and
+  `claude-quota`, the per-account usage signal (SessionStart line, `mows-agent` quota
+  floor). See
   [`agy/SETUP.md`](agy/SETUP.md).
 - **`agents/`** — purpose-scoped agents that run unattended: `mows-agent` owns policy (lint,
   budget, refusal, run records, escalation, pruning) while the Claude daemon owns the process

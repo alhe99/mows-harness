@@ -7,9 +7,6 @@
         {"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && timeout 3 claude-quota --line || true"}
       ]}
     ],
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/quota-gate.sh\"", "timeout": 10}]}
-    ],
     "Notification": [
       {"matcher": "permission_prompt|elicitation_dialog|agent_needs_input",
        "hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" input"}]},

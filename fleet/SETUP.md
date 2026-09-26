@@ -83,8 +83,7 @@ intended NOPASSWD path.
   branch into the current one, remove worktree + branch; refuses while any process
   still has its cwd inside the worktree or work is uncommitted), `ccwt drop <name>` (discard,
   asks first). Pairs with SDD: one spec/feature = one worktree = one branch, merged via
-  `ccwt done` when its checks pass; bigger fire-and-forget work keeps going to
-  `agy-handoff`, which uses the same worktree+gate pattern. Needs
+  `ccwt done` when its checks pass. Needs
   `.claude/worktrees/` in the global gitignore (`~/.config/git/ignore`) so worktrees
   never show as untracked in the host repo.
 - **`claude-rc`** — manage/switch the profile's Remote Control systemd units

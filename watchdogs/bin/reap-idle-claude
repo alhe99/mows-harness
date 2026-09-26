@@ -15,9 +15,7 @@ mkdir -p "$ST"
 now=$(date +%s)
 ts=$(date '+%F %T')
 
-# agy- (interactive antigravity, from ag) is reaped like cc-; agyh- (running
-# handoff sessions, from agy-handoff) is a DIFFERENT prefix on purpose and
-# must never match — those terminate themselves via their command chain.
+# agy- (interactive antigravity, from ag) is reaped like cc-.
 mapfile -t sessions < <(tmux ls -F '#{session_name} #{session_attached} #{session_activity}' 2>/dev/null |
   awk -v now="$now" -v idle="$IDLE" '($1 ~ /^cc-/ || $1 ~ /^ccw-/ || $1 ~ /^web-/ || $1 ~ /^agy-/) && $2==0 && (now-$3) > idle {print $1}')
 
