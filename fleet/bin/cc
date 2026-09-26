@@ -78,7 +78,9 @@ mkwt() { # create/reuse the -w worktree at $WTP; branch may survive a removed ch
     || { echo "cc: could not create worktree $WTP (not a git repo, or bad branch name '$BR'?)" >&2; exit 1; }
 }
 if [ "${1-}" = "-w" ]; then WT="${2-}"; [ -n "$WT" ] || { echo "cc: -w needs a name" >&2; exit 1; }; shift 2; fi
-DIR=$PWD; if [ $# -ge 1 ] && [ "$1" != "--" ] && [ "$1" != "-w" ]; then DIR=$1; shift; fi
+# ponytail: any leading -flag (-c, -r, --print …) is claude's, not a [dir] — the live
+# launcher accepted `cc -c` bare and callers still do; only a non-dash arg is a [dir].
+DIR=$PWD; if [ $# -ge 1 ] && [ "${1#-}" = "$1" ]; then DIR=$1; shift; fi
 if [ "${1-}" = "-w" ]; then WT="${2-}"; [ -n "$WT" ] || { echo "cc: -w needs a name" >&2; exit 1; }; shift 2; fi
 [ "${1-}" = "--" ] && shift
 CFG=$(cfg_for "$P")
