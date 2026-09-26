@@ -8,5 +8,19 @@ jobs:
         with: {fetch-depth: 0}
       - uses: gitleaks/gitleaks-action@v2
         env: {GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"}
-      - run: sudo apt-get install -y shellcheck
+      # python3-yaml is mows-agent-meta's only dependency, and preflight's check 5d runs that
+      # validator over the repo's own example agent file. 5d FAILS rather than skips without it,
+      # so this is what keeps the capability panel's honesty gate actually running in CI.
+      - run: sudo apt-get install -y shellcheck python3-yaml
+      # preflight's check 5c runs the chat view's XSS regression gate, which needs
+      # node:module.registerHooks (Node >= 22.15). Pinned rather than trusting whatever the
+      # runner image happens to ship, because 5c FAILS rather than skips on an inadequate node --
+      # so an image change would turn the build red instead of silently dropping the gate.
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
       - run: ./scripts/preflight.sh
+      # 145 assertions, ~45s, no container and no network. preflight does NOT run this suite and
+      # nor did CI, so until now the whole agents layer was gated on nothing at all. Best
+      # coverage-per-second available here; unconditional, and in this job rather than its own
+      # because it needs nothing the steps above have not already installed.
+      - run: bash scripts/e2e-agents.sh

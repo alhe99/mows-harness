@@ -1,0 +1,11 @@
+# mows-agents config — sourced by mows-agent. Installed to ~/.config/mows-agents/config
+# (only if absent; your edits are kept). chmod 600: it can hold webhook secrets.
+# Discord webhook for escalations (channel settings -> Integrations -> Webhooks). Empty = log only.
+DISCORD_WEBHOOK=
+# Minutes without a stream event before a run is killed as stalled.
+STALL_MIN=10
+# MCP config for agent runs. Empty = NO MCP servers (--strict-mcp-config with no file).
+# Point at a small file if an agent needs one; never at mcp-interactive.json wholesale.
+MCP_CONFIG=
+# Webhook trigger secrets (Phase 5): one per agent, name upper-cased, '-' -> '_'.
+# WEBHOOK_SECRET_HARNESS_REVIEWER=

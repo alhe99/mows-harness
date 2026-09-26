@@ -15,7 +15,11 @@
 #   --fleet       the profile-model CLIs (fleet/bin/*) into ~/.local/bin.
 #   --agy         antigravity delegation CLIs (agy/bin/*: ag, agy-run, agy-handoff, agy-gate,
 #                 claude-quota, agy-notify) into ~/.local/bin; config seeded at ~/.config/mows-agy/config.
-#   --all         all five of the above.
+#   --agents      purpose-scoped agent CLIs (agents/bin/*: mows-agent, mows-agent-meta) into
+#                 ~/.local/bin; config seeded at ~/.config/mows-agents/config; example agent
+#                 seeded at ~/.claude/agents/harness-reviewer.md; souls (agents/souls/*) installed to
+#                 ~/.claude/agents/souls/ and the pr-reviewer-* instances seeded beside them.
+#   --all         all six of the above.
 #   --non-interactive   never prompt: use env vars for every value, leave the rest as
 #                 sanctioned double-brace placeholders in rendered output and warn about it.
 #
@@ -30,7 +34,7 @@ cd "$(dirname "$0")"
 
 usage(){
   cat <<'EOF'
-usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [--non-interactive]
+usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--agents] [--all] [--non-interactive]
 
   --claude          ~/.claude config (CLAUDE.md, rules, agents, commands, skills, scripts,
                      settings, mcp template) + plugin marketplace registration
@@ -40,18 +44,21 @@ usage: install.sh [--claude] [--watchdogs] [--infra] [--fleet] [--agy] [--all] [
   --fleet           profile-model CLIs (cc, ccname, ccswap, ccwt, claude-rc, claude-status, reset-claude-env)
                      -> ~/.local/bin
   --agy             antigravity delegation CLIs (ag, agy-run, agy-handoff, agy-gate, claude-quota, agy-notify) -> ~/.local/bin
-  --all             all five layers above
+  --agents          purpose-scoped agent CLIs (mows-agent, mows-agent-meta) -> ~/.local/bin;
+                     config seeded at ~/.config/mows-agents/config; example agent seeded at
+                     ~/.claude/agents/harness-reviewer.md
+  --all             all six layers above
   --non-interactive never prompt; unset template vars are left as placeholders (+ warning)
 
 No layer flag and no --non-interactive: interactive picker.
 EOF
 }
 
-NI=0; L_CLAUDE=0; L_WATCH=0; L_INFRA=0; L_FLEET=0; L_AGY=0
+NI=0; L_CLAUDE=0; L_WATCH=0; L_INFRA=0; L_FLEET=0; L_AGY=0; L_AGENTS=0
 for a in "$@"; do case $a in
   --claude) L_CLAUDE=1;; --watchdogs) L_WATCH=1;; --infra) L_INFRA=1;;
-  --fleet) L_FLEET=1;; --agy) L_AGY=1;;
-  --all) L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1;;
+  --fleet) L_FLEET=1;; --agy) L_AGY=1;; --agents) L_AGENTS=1;;
+  --all) L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1 L_AGENTS=1;;
   --non-interactive) NI=1;;
   -h|--help) usage; exit 0;;
   *) echo "unknown flag $a" >&2; usage >&2; exit 1;;
@@ -61,19 +68,20 @@ esac; done
 command -v apt-get >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1 \
   || { echo "mows-harness targets Ubuntu/Debian with systemd." >&2; exit 1; }
 
-if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY)) = 0 ]; then
+if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY + L_AGENTS)) = 0 ]; then
   if [ "$NI" = 1 ]; then
     L_CLAUDE=1
   else
-    echo "Layers: 1) claude config  2) watchdogs  3) infra (VPS, staged only)  4) fleet  5) agy"
+    echo "Layers: 1) claude config  2) watchdogs  3) infra (VPS, staged only)  4) fleet  5) agy  6) agents"
     read -rp "install which? (e.g. 1 2 4, or 'all'): " ans
-    [[ $ans == *all* ]] && L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1
+    [[ $ans == *all* ]] && L_CLAUDE=1 L_WATCH=1 L_INFRA=1 L_FLEET=1 L_AGY=1 L_AGENTS=1
     [[ $ans == *1* ]] && L_CLAUDE=1
     [[ $ans == *2* ]] && L_WATCH=1
     [[ $ans == *3* ]] && L_INFRA=1
     [[ $ans == *4* ]] && L_FLEET=1
     [[ $ans == *5* ]] && L_AGY=1
-    if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY)) = 0 ]; then
+    [[ $ans == *6* ]] && L_AGENTS=1
+    if [ $((L_CLAUDE + L_WATCH + L_INFRA + L_FLEET + L_AGY + L_AGENTS)) = 0 ]; then
       echo "nothing selected, nothing to do." >&2; exit 1
     fi
   fi
@@ -369,9 +377,20 @@ layer_infra(){
 
   echo "-- dashboard (infra/dashboard/ — no SETUP.md; commands here) --"
   echo "  sudo mkdir -p /opt/claude-dashboard"
-  echo "  sudo install -m644 infra/dashboard/lite.mjs /opt/claude-dashboard/lite.mjs"
+  echo "  the dashboard is NO LONGER one file (2026-09-16). lite.mjs imports chat-stream.mjs and"
+  echo "  capability.mjs at load, and serves the /ui client out of app/. Install all four together:"
+  echo "  sudo install -m644 infra/dashboard/lite.mjs infra/dashboard/chat-stream.mjs infra/dashboard/capability.mjs /opt/claude-dashboard/"
+  echo "  sudo mkdir -p /opt/claude-dashboard/app && sudo cp -r infra/dashboard/app/. /opt/claude-dashboard/app/"
+  echo "  (lite.mjs alone => the unit will not start, ERR_MODULE_NOT_FOUND. Without app/ => GET /ui"
+  echo "   answers 200 with a shell whose module 404s: a blank page, nothing logged anywhere.)"
+  echo "  chat streaming needs the MATCHING mows-agent installed too — the dashboard spawns it by"
+  echo "  absolute path, so a stale ~/.local/bin/mows-agent silently un-streams chat. Run './install.sh --agents'"
+  echo "  in the same deploy and check it: grep -c -- --stream ~/.local/bin/mows-agent  (expect > 0)"
   echo "  sudo install -m644 infra/dashboard/claude-dash-lite.service.template /etc/systemd/system/claude-dash-lite.service && sudo systemctl daemon-reload"
   echo "  (runs as root by design — see the template's own header comment; restart after provisioning any new profile/agent)"
+  echo "  sudo systemctl restart claude-dash-lite"
+  echo "  (the restart is required on EVERY dashboard deploy: app/ is walked once per process and"
+  echo "   cached, so a running dashboard keeps serving the previous /ui client until it restarts)"
   echo "  optional, for the dashboard system panel's spend metrics: sudo npm i -g ccusage"
   echo "  (limits come from the agy layer's claude-quota; both degrade gracefully when absent)"
 
@@ -428,13 +447,44 @@ layer_agy(){
   fi
 }
 
+layer_agents(){
+  echo "== agents (purpose-scoped agents, Layer 6) =="
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/mows-agents" "$HOME/.local/state/mows-agents" "$HOME/.claude/agents" "$HOME/.claude/agents/souls"
+  install -m755 agents/bin/mows-agent agents/bin/mows-agent-meta "$HOME/.local/bin/"
+  if [ ! -f "$HOME/.config/mows-agents/config" ]; then
+    install -m600 agents/config.example "$HOME/.config/mows-agents/config"
+    echo "seeded ~/.config/mows-agents/config — set DISCORD_WEBHOOK there for escalations"
+  fi
+  # the example agent is user-owned after first install: seed only if absent, never clobber
+  if [ ! -f "$HOME/.claude/agents/harness-reviewer.md" ]; then
+    install -m644 agents/examples/harness-reviewer.md "$HOME/.claude/agents/harness-reviewer.md"
+    echo "seeded ~/.claude/agents/harness-reviewer.md — edit mows.workdir if this repo lives elsewhere"
+  fi
+  # Souls are shared role files (spec 2026-09-20): versioned here, installed ALWAYS — a soul is
+  # code, not a per-box setting, and an edit must reach every instance that names it.
+  install -m644 agents/souls/*.md "$HOME/.claude/agents/souls/"
+  echo "installed souls: $(ls agents/souls | tr '\n' ' ')"
+  # Instances are seeded only when absent, like harness-reviewer: their frontmatter is the
+  # operator's to tune (budget, profile) and must not be overwritten by a reinstall.
+  for f in agents/examples/pr-reviewer-*.md; do
+    b=$(basename "$f")
+    [ -f "$HOME/.claude/agents/$b" ] || { install -m644 "$f" "$HOME/.claude/agents/$b"; echo "seeded ~/.claude/agents/$b"; }
+  done
+  echo "installed: mows-agent mows-agent-meta -> ~/.local/bin"
+  command -v jq >/dev/null 2>&1 || echo "WARN: jq not found — mows-agent requires jq: sudo apt-get install -y jq"
+  python3 -c 'import yaml' 2>/dev/null || echo "WARN: python3 yaml missing — mows-agent lint requires it: sudo apt-get install -y python3-yaml"
+  RENDER_DIR="$PWD/rendered" "$HOME/.local/bin/mows-agent" render --all 2>/dev/null || echo "WARN: render skipped (lint errors? run: mows-agent lint --all)"
+  echo "next: mows-agent lint --all && mows-agent run harness-reviewer   (one bounded run, ~\$1.50 cap)"
+}
+
 [ "$L_CLAUDE" = 1 ] && layer_claude
 [ "$L_WATCH"  = 1 ] && layer_watchdogs
 [ "$L_INFRA"  = 1 ] && layer_infra
 [ "$L_FLEET"  = 1 ] && layer_fleet
 [ "$L_AGY"    = 1 ] && layer_agy
+[ "$L_AGENTS" = 1 ] && layer_agents
 
-if [ "$NI" = 0 ] && [ $((L_CLAUDE + L_WATCH + L_FLEET + L_AGY)) -gt 0 ]; then
+if [ "$NI" = 0 ] && [ $((L_CLAUDE + L_WATCH + L_FLEET + L_AGY + L_AGENTS)) -gt 0 ]; then
   read -rp "append ~/.local/bin to PATH in ~/.bashrc? [y/N] " p
   if [[ $p == y* ]]; then
     # shellcheck disable=SC2016  # $HOME must stay literal — it's meant to expand later,

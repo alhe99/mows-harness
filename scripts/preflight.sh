@@ -59,6 +59,35 @@ while IFS= read -r hitline; do
 done < <(git grep -nIE "$IPV4" -- . ':!scripts/preflight.sh' 2>/dev/null | grep -v 'preflight-allow')
 [ "$IPV4_BAD" = 0 ] || bad "IPv4-looking literal(s) found (see above)"
 
+# 3c. control bytes: a shipped TEXT file must contain no control byte other than tab/newline.
+# Not theoretical -- this branch hit the failure mode from both directions in one session: an
+# editing tool silently rewrote a \u0001 / $'\x01' escape NAMED IN SOURCE into a raw embedded
+# control byte (functionally harmless there -- every gate stayed green -- but invisible and
+# confusing on inspection), and separately a reviewing tool refused to run its own command for
+# containing that same escape.
+#
+# HOW "is this a text file" IS DECIDED, and why it changed (Task 7 fix round 1). This used to
+# ask `grep -Iq ''`, grep's own binary heuristic -- and that heuristic is precisely "does the
+# file contain a NUL". So a shipped .mjs with a stray NUL in it classified as BINARY and the
+# gate skipped the single worst case it exists to catch. Not theoretical: an editing tool
+# rewrote a backslash-u-0000 escape into a raw NUL in two .mjs files in one round, preflight
+# reported ALL CLEAN over both, and it then did it a THIRD time inside the comment being
+# written to describe it -- which this gate, once fixed, caught. The test is now "is the file
+# valid UTF-8", which does not beg the question: a .mjs with a stray NUL is still valid UTF-8
+# and gets scanned, while docs/assets/*.png and *.gif are not and still skip. Same property
+# as before (no path or extension allowlist to go stale), without the blind spot.
+CTRLBAD=0
+while IFS= read -r -d '' f; do
+  [ -f "$f" ] || continue
+  iconv -f UTF-8 -t UTF-8 <"$f" >/dev/null 2>&1 || continue  # not text at all -- not this check's business
+  # -a: grep must not bail out on a file it thinks is binary; deciding that is the line above's job.
+  if LC_ALL=C grep -aqP '[\x00-\x08\x0B-\x1F\x7F]' "$f" 2>/dev/null; then
+    echo "preflight FAIL: control byte(s) other than tab/newline in $f"
+    CTRLBAD=1
+  fi
+done < <(git ls-files -z)
+[ "$CTRLBAD" = 0 ] || bad "shipped file(s) contain raw control bytes (see above)"
+
 # 4. placeholder lint: only the sanctioned {{ VARS }}
 ALLOWED='DOMAIN|EXAMPLE_SUB|OAUTH_CLIENT_ID|OAUTH_CLIENT_SECRET|COOKIE_SECRET|ADMIN_EMAIL|CONTEXT7_API_KEY|VPS_HOST|PROJECTS_ROOT|ADMIN_USER'
 # exclude this script: it documents the {{VAR}} convention in comments/patterns
@@ -71,7 +100,11 @@ if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | 
 # and public the moment the repo is, so they get scanned too. --all covers remote-tracking
 # refs, which is deliberate: an unpushed local fix does not clear a leak still on origin.
 BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
-if git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u | grep -nE "$BADIDENT"; then
+# GitHub's synthetic PR merge commit ("Merge <sha> into <sha>", committer GitHub <noreply>) carries
+# the account's PUBLIC email as author — not a commit of ours, and not in the tree we publish. It is
+# skipped by that exact shape; every real commit, merge or not, is still checked.
+if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
+   | grep -vE $'^noreply@github\\.com\tMerge [0-9a-f]{40} into [0-9a-f]{40}\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
 # commit messages get the same forbidden-string treatment the tree gets
@@ -80,12 +113,181 @@ if git log --all --format='%s%n%b' | grep -nIE "$PAT" | grep -v 'preflight-allow
 fi
 
 # 5. shell static checks
-mapfile -t SH < <(git ls-files '*.sh' 'watchdogs/bin/*' 'fleet/bin/*' 'agy/bin/*' 'install.sh' 'scripts/e2e-container' 'scripts/e2e-infra' 2>/dev/null | sort -u)
+mapfile -t SH < <(git ls-files '*.sh' 'watchdogs/bin/*' 'fleet/bin/*' 'agy/bin/*' 'agents/bin/*' 'install.sh' 'scripts/e2e-container' 'scripts/e2e-infra' 2>/dev/null | sort -u)
 for f in "${SH[@]}"; do
   head -1 "$f" | grep -q bash || continue
   bash -n "$f" || bad "bash -n: $f"
   if command -v shellcheck >/dev/null; then shellcheck -S error "$f" || bad "shellcheck: $f"; fi
 done
+
+# 5b. SPA client assets: pinned vendor hashes, and a hard size ceiling (spec D3).
+# Without a gate, "SPA" grows back into the MB-scale bundle lite.mjs was written to replace.
+if [ -d infra/dashboard/app ]; then
+  ( cd infra/dashboard/app/vendor && sha256sum -c SHA256SUMS --quiet ) || bad "vendored module hash mismatch"
+  # The extensions measured below MUST be the extensions lite.mjs is willing to serve. A file
+  # servable but unmeasured ships to browsers for free, and this check would keep printing a
+  # reassuring number while the payload grew — so the agreement is asserted, not commented.
+  # Parsed out of UI_ASSET_TYPES rather than restated: a literal copy is exactly what went
+  # stale when fonts were added, and a check that can't notice its own subject moving is the
+  # hollow check this repo keeps cataloguing.
+  SERVED=$(sed -n '/^const UI_ASSET_TYPES = {/,/^};/p' infra/dashboard/lite.mjs \
+    | grep -oE "^  [a-z0-9]+:" | tr -d ' :' | sort | tr '\n' ' ')
+  [ -n "$SERVED" ] || bad "could not parse UI_ASSET_TYPES out of lite.mjs — the ceiling's extension list is unverifiable"
+  MEASURED="css mjs woff2 "
+  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: lite.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
+  GZ=0
+  while IFS= read -r f; do
+    GZ=$((GZ + $(gzip -9 -c "$f" | wc -c)))
+  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' \))
+  # Raised from 76800B (75 KiB) for the 44:5 redesign's two variable webfonts, and derived
+  # rather than guessed: 75 KiB of CODE budget — exactly what the original ceiling allowed,
+  # unchanged — plus 80 KiB for the fonts, which measured 79709B gzipped and are a fixed
+  # one-time cost that does not grow with the app. 76800 + 81920 = 158720.
+  #
+  # Deriving it this way keeps the gate doing its original job. A round number picked to sit
+  # just above today's total would have quietly shrunk the code budget from 31KB to 22KB, so
+  # the next few hundred lines of view code would trip a ceiling that was never about them.
+  # If a future change adds a font, raise this by that font's measured size and say so here.
+  [ "$GZ" -le 158720 ] || bad "client assets ${GZ}B gzipped exceeds the 158720B ceiling (spec D3)"
+  note "client assets: ${GZ}B gzipped of 158720B (fonts 79709B of that)"
+else
+  bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
+fi
+
+# 5c. The chat view's XSS / rendering regression gate (Task 7, findings C1 and R1).
+#
+# This is the only route by which that gate reaches CI: ci.yml runs exactly this script, and
+# checks 1-4 above compare file LISTS, not behaviour. It sat unwired for two rounds -- 63
+# assertions guarding a Critical stored-XSS, executed only when a human typed the command.
+#
+# It FAILS rather than skips when it cannot run. That is deliberate and is the whole point: a
+# security gate that quietly skips itself is worse than one that is absent, because it reports
+# green. This session hit that failure mode four separate times, including a control-byte gate
+# that was blind to the one byte it most needed to catch. node:module.registerHooks needs Node
+# >= 22.15; ci.yml pins setup-node accordingly rather than trusting the runner image.
+if [ -f scripts/chat-view-check.mjs ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    bad "node not found — scripts/chat-view-check.mjs (the chat view's XSS gate) did NOT run"
+  elif ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=15)?0:1)'; then
+    bad "node $(node -p 'process.versions.node') is too old for scripts/chat-view-check.mjs (needs >= 22.15 for node:module.registerHooks) — the XSS gate did NOT run"
+  else
+    CVOUT=$(node scripts/chat-view-check.mjs 2>&1) && CVRC=0 || CVRC=$?
+    if [ "$CVRC" -ne 0 ]; then
+      printf '%s\n' "$CVOUT" | grep '^FAIL' || printf '%s\n' "$CVOUT" | tail -5
+      bad "chat-view-check: the chat view's XSS/rendering gate failed (see above)"
+    else
+      note "chat-view-check: $(printf '%s\n' "$CVOUT" | grep -c '^PASS' || true) assertions pass"
+    fi
+  fi
+else
+  bad "scripts/chat-view-check.mjs is missing — the chat view's XSS gate did NOT run"
+fi
+
+# 5d. The capability panel's honesty gate (Task 8). Wired here for the same reason 5c is: ci.yml
+# runs this script and nothing else, so a gate that is not called from here is a gate that only
+# runs when a human remembers to type the command. It FAILS rather than skips when it cannot run —
+# a panel that claims an agent is narrower than it is fails silently by construction, which is
+# exactly the shape of bug a gate that skips itself will never catch.
+#
+# It needs node >= 22.15 (checked in 5c, which runs first and has already failed the build if not)
+# and python3 with PyYAML, because its last section runs the real mows-agent-meta over the real
+# example agent file rather than a fixture of its own.
+if [ -f scripts/capability-check.mjs ]; then
+  if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    bad "python3 with PyYAML not found — scripts/capability-check.mjs (the capability panel's honesty gate) did NOT run"
+  else
+    CAPOUT=$(node scripts/capability-check.mjs 2>&1) && CAPRC=0 || CAPRC=$?
+    if [ "$CAPRC" -ne 0 ]; then
+      printf '%s\n' "$CAPOUT" | grep '^FAIL' || printf '%s\n' "$CAPOUT" | tail -5
+      bad "capability-check: the capability panel's honesty gate failed (see above)"
+    else
+      note "capability-check: $(printf '%s\n' "$CAPOUT" | grep -c '^PASS' || true) assertions pass"
+    fi
+  fi
+else
+  bad "scripts/capability-check.mjs is missing — the capability panel's honesty gate did NOT run"
+fi
+
+# 5e. e2e assertion lint — three greps against the suites' own `chk` lines.
+#
+# Why this exists: two assertions in e2e-infra.sh were born red and stayed red through 57
+# commits, a task review and a fix round, and a third passed unconditionally for just as long.
+# Nobody was careless — the branch's rule is that every check must be OBSERVED to fail before it
+# counts, and that rule was applied rigorously to implementation code and never once to the e2e
+# scripts, because those read as test infrastructure rather than as code. They are code. These
+# greps are the cheap, offline half of that discipline: they cannot prove an assertion is
+# meaningful, but they catch the three shapes that have actually bitten us.
+E2E=(scripts/e2e-infra.sh scripts/e2e-agents.sh scripts/e2e-container.sh scripts/e2e-agy.sh)
+# (a) a chk body that is the `true`/`:` builtin, or ends in `|| true` / `; true`, passes no
+# matter what the code does. e2e-infra.sh carried `chk "stream: over cap -> 503" 'true'` with a
+# comment claiming a node harness covered it; no harness did. It contributed a green line and
+# tested nothing, which is strictly worse than a red one — a red line gets investigated.
+if grep -nE "^chk[[:space:]].*('[[:space:]]*(true|:)[[:space:]]*(#[^']*)?'|\"[[:space:]]*(true|:)[[:space:]]*(#[^\"]*)?\")[[:space:]]*$" "${E2E[@]}"; then
+  bad "e2e lint: a chk body is the true/: builtin — it cannot fail (see above)"
+fi
+if grep -nE "^chk[[:space:]].*(\|\||;)[[:space:]]*true[[:space:]]*(#[^']*)?'[[:space:]]*$" "${E2E[@]}"; then
+  bad "e2e lint: a chk body ends in '|| true' / '; true' — it cannot fail (see above)"
+fi
+# (b) `timeout N curl … --write-out`. An SSE stream never ends, so such a curl has to be cut
+# short — but `timeout` cuts it short with SIGTERM from OUTSIDE, and a SIGTERMed curl dies
+# before emitting --write-out. The substitution expands to "" and the comparison is false
+# whatever the server did. Worse, it inverts: the one case that DOES print a status is a server
+# that closed the connection, i.e. a broken one, so the check passes only when the code is
+# wrong. Use curl's own --max-time, which aborts from the inside and still writes the status.
+if grep -nE "timeout[[:space:]]+[0-9]+[[:space:]]+curl.*(-w[[:space:]]|--write-out)" "${E2E[@]}"; then
+  bad "e2e lint: 'timeout N curl … -w' — SIGTERM kills curl before --write-out (see above)"
+fi
+# (c) two chk lines sharing a label. Adjacent class rather than the same one: it does not make a
+# check unable to fail, it makes the PASS/FAIL report unable to say which behaviour was
+# exercised — and it is the signature of a copy-pasted assertion whose body was edited and whose
+# name was not, which silently double-counts one behaviour and drops another.
+for f in "${E2E[@]}"; do
+  [ -f "$f" ] || continue
+  DUP=$(grep -oE "^chk[[:space:]]+\"[^\"]+\"" "$f" | sort | uniq -d)
+  [ -z "$DUP" ] || bad "e2e lint: duplicate chk labels in $f: $DUP"
+done
+# (c2) the same lint, on the .mjs check files — where it matters MORE, not less. Scoping (c) to
+# the shell suites was a mistake: scripts/capability-coverage.mjs and chat-view-coverage.mjs
+# identify assertions BY LABEL and collect them into a Set, so two `check()` calls sharing a label
+# collapse into one entry and the second becomes invisible to the tool whose entire purpose is to
+# certify that every assertion can fail. That is not a reporting nuisance here, it is a hole in the
+# guarantee: capability-check.mjs shipped such a pair, the sweep reported 133 of 134 assertions,
+# and a deliberately vacuous `1 === 1` planted in the shadowed one was not named.
+for f in scripts/capability-check.mjs scripts/chat-view-check.mjs; do
+  [ -f "$f" ] || continue
+  # Only single-quoted literal labels, which is how every assertion in both files is written; a
+  # computed label would not be comparable across runs anyway.
+  DUP=$(grep -oE "check\('[^']+'" "$f" | sort | uniq -d)
+  [ -z "$DUP" ] || bad "assertion lint: duplicate check labels in $f (each hides another from the coverage sweep): $DUP"
+done
+# Deliberately NOT linted: a chk body that curls without -f and without a grep/jq/comparison.
+# It looks like the same class, but it flags `chk "oauth2-proxy listening :4180" 'curl -s -o
+# /dev/null …/ping'` and the caddy equivalent, which are correct — a pure reachability probe
+# fails on connection refused, which is exactly what "listening" means. A lint with false
+# positives on correct code teaches people to scroll past it, so it is worth less than nothing.
+
+# 5e. The capability panel makes claims about what the RUNNER does, and nothing else in this repo
+# would notice if the runner stopped doing it. The panel would then go on stating, in prose, an
+# enforcement story that had quietly become false — the exact failure this task exists to prevent,
+# one level removed. Each pattern below is the line in agents/bin/mows-agent that makes one panel
+# sentence true; if a pattern goes missing, the sentence it supports has to change with it.
+if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs ]; then
+  # <pattern in mows-agent> | <the panel sentence it holds up>
+  while IFS='|' read -r pat claim; do
+    [ -z "$pat" ] && continue
+    grep -qF -- "$pat" agents/bin/mows-agent \
+      || bad "capability panel: agents/bin/mows-agent no longer contains '$pat' — the panel still says \"$claim\""
+  done <<'PATTERNS'
+--max-budget-usd|up to $X per run
+--max-turns|and N turns per run
+cd "$WORKDIR"|the directory it starts in, not a boundary it is held to
+User=$(id -un)|every agent on this box runs under the same OS login
+--permission-prompts none|it cannot see the profile's permission rules
+today_spend|the daily cap is checked before a run starts
+PATTERNS
+else
+  bad "capability panel: could not check its claims against agents/bin/mows-agent (a file is missing)"
+fi
 
 # 6. gitleaks if available (CI always runs it)
 if command -v gitleaks >/dev/null; then gitleaks detect --source . --no-banner || bad "gitleaks"; fi
