@@ -127,13 +127,44 @@ reload is a new client). Nothing is sent to the server.
   existing phone rules hide it (`@media (pointer:coarse)` → `display:none`; tokens.css gains that one rule).
 - `/grid` on a touch device: the view renders "The grid is a desktop view" with a link to `/`.
 
-## 8. Budgets and cost
+## 8. Budgets, cost and leak control
 
-- `views/grid.mjs` + `views/grid.css` ≤ 15 KB gz (the route rule); tokens.css stays ≤ 12 KB.
-- Per pane: one ttyd websocket, one `web-term.sh` + tmux client, one xterm document (term closure cached after
-  the first). Six panes on a 4 GB box is the same load as six browser tabs today. Cap: 6 panes per tab, 9 tabs.
-- Hidden tabs keep their iframes mounted (sockets stay up, no reattach storm) but `display:none`; a fit happens
-  when a tab is shown again (the term page already fits on `resize`).
+Measured 2026-10-11 on this box (24 GB, earlyoom present) with headless Chromium 1920×1080, panes attached to six
+throwaway tmux sessions each streaming 160 lines/s, sampled every 30 s, then every pane closed
+(`.agent-team/live/grid-mem.mjs`, `grid-proxy.mjs`):
+
+| what | 1 pane | 6 panes | after closing all |
+|---|---|---|---|
+| browser renderer RSS over the empty page (80 MB) | +40 MB | +65 MB (≈ +5 MB per extra pane; the first pays xterm + WebGL + fonts once, shared) | back within 30–40 MB of empty, no GC forced |
+| server, per attached pane (`web-term.sh` + `tmux attach`) | 7 MB | 46 MB (7.7 MB each) | 0 processes: ttyd ends the child when the socket closes |
+| ttyd | 5 MB | 5 MB | 5 MB |
+| tmux server | 130 MB (the sessions' own scrollback, `history-limit 50000`; a client adds nothing measurable) | 131 MB | 131 MB |
+| drift over 3 minutes of streaming | none (RSS fell 144 → 138 MB) | | |
+
+Reference: the dashboard process is 82 MB, Caddy 43 MB, oauth2-proxy 22 MB. So six live panes cost the box about
+50 MB and the browser about 65 MB; the tmux sessions themselves, not the panes, are where memory lives.
+Rules that keep it bounded, each one a task and a probe assertion:
+
+- **Live panes are only the visible tab's.** A tab that has been hidden for 10 minutes **parks** its panes: the
+  iframes are removed (socket closed, tmux client detached, the session keeps running untouched) and the tab keeps
+  only the names. Showing the tab remounts them (≈1 s to reattach, same as reopening a browser tab today). Caps:
+  6 panes per tab, 9 tabs, so at most 12 sockets are live at once (the visible tab plus one still inside its
+  10-minute grace). Closing a pane or tab removes its iframe at once.
+- **One socket per pane, ever.** A pane mounts its iframe once; focus, zoom, resize and reorder move DOM nodes,
+  never recreate them, so no second ttyd connection is opened for a session that already has one. The probe counts
+  iframes and `web-term.sh` processes after each action.
+- **Page hidden** (`visibilitychange`) for 10 minutes parks every tab; `pageshow` / visible remounts the active one.
+  This is the laptop-lid case, and it matches what the phone already does.
+- **Nothing accumulates in the shell:** listeners are attached once per mounted pane and removed with it; the state
+  record holds names and fractions only; the per-tab client registry web-term.sh writes
+  (`~/.cache/webterm-clients/<tabid>`) is one small file per mount, pruned after 24 h on every write (119 files
+  today). The term page's xterm scrollback is 1 000 lines per pane, bounded.
+- **Size:** `views/grid.mjs` + `grid.css` ≤ 15 KB gz; `tokens.css` ≤ 12 KB; the term closure is unchanged (the
+  `grid-key` forwarder is a few lines and is counted by `budget.mjs --route term`).
+- **Leak gate:** `grid-check.mjs leak` opens six panes against the stub, cycles focus / zoom / reorder / park /
+  unmount 20 times and asserts the iframe count, listener count (via `getEventListeners` over CDP) and the DOM node
+  count (`Memory.getDOMCounters`) return to their post-mount values. The manual gate repeats the 3-minute RSS watch on
+  mows.me with real sessions (`ps` on the box, the browser's task manager on the laptop) before merge.
 
 ## 9. Verification
 
