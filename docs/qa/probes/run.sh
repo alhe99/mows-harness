@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Stand the fixture dashboard and the cuttable proxy up, run a probe, tear both down.
 #
-#   ./docs/qa/probes/run.sh <journey|lost|repeat|csp|base|layout|all> [chromium|webkit]
+#   ./docs/qa/probes/run.sh <journey|lost|repeat|csp|base|layout|all> [chromium|webkit] [--ui legacy|next]
+#
+# --ui next runs the same probes against the cockpit shell at / (the dashboard is started with --ui=next, the probe gets
+# MOWS_QA_UI=next); the default is the /ui app. The selectors the probes use are listed in the header of probes.mjs.
 #
 # See README.md in this directory. Needs docker; needs Playwright only for the probe itself, which
 # SKIPs loudly without it rather than failing.
 set -uo pipefail
-MODE=${1:-journey}
-ENGINE=${2:-chromium}
+UI=legacy; POS=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --ui) UI=${2:-}; shift 2 || break ;;
+    *) POS+=("$1"); shift ;;
+  esac
+done
+case $UI in legacy|next) ;; *) echo "run.sh: --ui is legacy or next" >&2; exit 2 ;; esac
+MODE=${POS[0]:-journey}
+ENGINE=${POS[1]:-chromium}
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 
@@ -18,6 +29,8 @@ export MOWS_QA_DIRECT="http://127.0.0.1:$UI_PORT"
 export MOWS_QA_BASE="http://127.0.0.1:$PROXY_PORT"
 export MOWS_QA_CUT="http://127.0.0.1:$CUT_PORT"
 export MOWS_QA_CONTAINER="$BOX"
+# the shell answers at `/` since the cutover (phase 05), so its agent routes carry no prefix; the old /ui app needs --ui=legacy
+if [ "$UI" = next ]; then export MOWS_QA_UI=next MOWS_QA_LITE_ARGS=--ui=next; PFX=; else export MOWS_QA_LITE_ARGS=--ui=legacy; PFX=/ui; fi
 
 PROXY_PID=""
 cleanup() {
@@ -30,12 +43,12 @@ up() {
   # $1 is the transcript's first user turn. The repeat probe needs one that ALREADY contains the
   # message it is about to send; every other probe wants the neutral fixture.
   cleanup
-  docker run -d --name "$BOX" -e "MOWS_QA_SEED=$1" -p "127.0.0.1:$UI_PORT:3005" \
+  docker run -d --name "$BOX" -e "MOWS_QA_SEED=$1" -e "MOWS_QA_LITE_ARGS=${MOWS_QA_LITE_ARGS:-}" -p "127.0.0.1:$UI_PORT:3005" \
     -v "$REPO":/r:ro -v "$HERE":/probes:ro node:20-slim bash /probes/fixture.sh >/dev/null || return 1
   node "$HERE/proxy.mjs" "$PROXY_PORT" "$UI_PORT" "$CUT_PORT" >/dev/null 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 30); do
-    curl -sf -o /dev/null "http://127.0.0.1:$PROXY_PORT/ui" && return 0
+    curl -sf -o /dev/null "http://127.0.0.1:$PROXY_PORT$PFX" && return 0
     sleep 1
   done
   echo "the fixture dashboard never came up on $UI_PORT" >&2

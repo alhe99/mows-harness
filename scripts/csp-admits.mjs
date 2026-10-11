@@ -1,6 +1,10 @@
 // Does the served document actually SURVIVE the policy it was served with?
 //
-//   node scripts/csp-admits.mjs <url>        -> JSON on stdout, non-zero exit if anything is refused
+//   node scripts/csp-admits.mjs <url> [--expect nonce|inline-style]   -> JSON on stdout, non-zero exit if anything is refused
+//   --expect names the policy this document is meant to carry (K-10, one policy per document):
+//     nonce         the shell: a nonce in script-src, no 'unsafe-inline' for scripts, every inline element nonced
+//     inline-style  /md and /term: style-src admits 'unsafe-inline' (mermaid and xterm inject <style>) and no nonce exists, so an inline
+//                   <script> must match a 'sha256-' source (the /md loader); a bare 'unsafe-inline' for scripts is a failure
 //
 // WHY THIS EXISTS. The five CSP assertions in scripts/e2e-infra.sh inspect the HEADER: that it is
 // present, strict, nonced, and that its nonce is minted per response. None of them looks at the
@@ -17,8 +21,11 @@
 //
 // Node stdlib only, so it runs in the same container as the rest of scripts/e2e-infra.sh.
 
-const url = process.argv[2];
-if (!url) { console.error('usage: csp-admits.mjs <url>'); process.exit(2); }
+import { createHash } from 'node:crypto';
+const argv = process.argv.slice(2);
+const expect = argv.includes('--expect') ? argv[argv.indexOf('--expect') + 1] : '';
+const url = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--expect');
+if (!url || (expect && !['nonce', 'inline-style'].includes(expect))) { console.error('usage: csp-admits.mjs <url> [--expect nonce|inline-style]'); process.exit(2); }
 
 const res = await fetch(url, { redirect: 'manual' });
 const policy = res.headers.get('content-security-policy') || '';
@@ -35,6 +42,7 @@ const nonces = (src('script-src') || []).concat(src('style-src') || [])
   .map(v => /^'nonce-(.+)'$/.exec(v)).filter(Boolean).map(m => m[1]);
 const headerNonce = nonces.length ? nonces[0] : null;
 const allowsInline = k => (src(k) || []).includes("'unsafe-inline'");
+const hashes = (src('script-src') || []).map(v => /^'sha256-(.+)'$/.exec(v)).filter(Boolean).map(m => m[1]);
 
 // ---- the document ---------------------------------------------------------------------------
 // The same tag/attribute scanner shape as scripts/chat-view-check.mjs's detector: it steps over
@@ -43,7 +51,7 @@ const allowsInline = k => (src(k) || []).includes("'unsafe-inline'");
 // across the whole document would flag ordinary CSS.
 const TAG = /<([a-zA-Z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\/?>/g;
 const ATTR = /([a-zA-Z_:][-\w:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
-const out = { url, policy, headerNonce, nonced: 0, wrongNonce: 0, styleAttrs: 0, eventAttrs: 0, offOrigin: 0, refused: [] };
+const out = { url, expect: expect || null, policy, headerNonce, hashed: 0, nonced: 0, wrongNonce: 0, styleAttrs: 0, eventAttrs: 0, offOrigin: 0, refused: [] };
 let m;
 TAG.lastIndex = 0;
 while ((m = TAG.exec(html))) {
@@ -72,21 +80,39 @@ while ((m = TAG.exec(html))) {
   // Inline <script> / <style> ELEMENTS need the nonce (or 'unsafe-inline', which a nonce disables).
   const isInlineScript = tag === 'script' && !attrs.has('src');
   const isInlineStyle = tag === 'style';
-  if ((isInlineScript || isInlineStyle) && !(nonce && nonce === headerNonce)
+  // a hash admits an inline script too: sha256 of exactly the text between the tags
+  const text = isInlineScript ? html.slice(TAG.lastIndex, html.indexOf('</script', TAG.lastIndex)) : '';
+  const hashed = isInlineScript && hashes.includes(createHash('sha256').update(text).digest('base64'));
+  if (hashed) out.hashed++;
+  if ((isInlineScript || isInlineStyle) && !(nonce && nonce === headerNonce) && !hashed
       && !allowsInline(isInlineScript ? 'script-src-elem' : 'style-src-elem')) {
     out.refused.push(`inline <${tag}> with no matching nonce — refused by ${isInlineScript ? 'script-src' : 'style-src'}`);
   }
-  // Every subresource this document names must be same-origin, which is all `'self'` permits. A
-  // relative URL is same-origin by construction; an absolute one has to be checked.
+  // Every subresource this document names must be admitted by the directive that governs it. A relative URL is same-origin by construction; an
+  // absolute one has to match a source of that directive (a directive the policy does not set restricts nothing).
+  const dir = { img: 'img-src', script: 'script-src-elem', iframe: 'frame-src', link: 'style-src-elem', source: 'media-src', video: 'media-src', audio: 'media-src' }[tag];
   for (const k of ['src', 'href']) {
     const v = attrs.get(k);
-    if (!v || tag === 'a' || v.startsWith('#')) continue;
+    if (!v || tag === 'a' || v.startsWith('#') || (tag === 'link' && !/stylesheet|icon|manifest/.test(attrs.get('rel') || ''))) continue;
     if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(v) || v.startsWith('//')) {
-      out.offOrigin++;
-      out.refused.push(`<${tag} ${k}="${v.slice(0, 60)}"> is off-origin, and only 'self' is permitted`);
+      const srcs = dir ? src(dir) : src('default-src');
+      let origin = ''; try { origin = new URL(v, url).origin; } catch {}
+      if (srcs && !srcs.some(x => x === '*' || x === new URL(v, url).protocol || x === origin || (x === "'self'" && origin === new URL(url).origin))) {
+        out.offOrigin++;
+        out.refused.push(`<${tag} ${k}="${v.slice(0, 60)}"> is off-origin, and only ${srcs.join(' ')} is permitted`);
+      }
     }
   }
 }
 
+if (expect === 'nonce') {
+  if (!headerNonce) out.refused.push('expected a nonce policy: script-src carries no nonce');
+  if (allowsInline('script-src')) out.refused.push("expected a nonce policy: script-src allows 'unsafe-inline'");
+}
+if (expect === 'inline-style') {
+  if (!allowsInline('style-src')) out.refused.push("expected style-src to admit 'unsafe-inline' (mermaid and xterm inject <style>)");
+  if (headerNonce) out.refused.push("expected no nonce: with one, CSP3 ignores 'unsafe-inline' and the injected styles are refused");
+  if (allowsInline('script-src')) out.refused.push("expected scripts to be admitted by hash or 'self', not 'unsafe-inline'");
+}
 console.log(JSON.stringify(out, null, 2));
 process.exit(out.refused.length ? 1 : 0);

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // mobile-journey.mjs — phone-layout scenarios for the terminal page + dashboard, headless.
 //
-//   DASH=http://127.0.0.1:3099 TERM=/path/to/term-index.html node infra/webconsole/mobile-journey.mjs
+//   DASH=http://127.0.0.1:3099 TERM_PAGE=dist/term.html node infra/webconsole/mobile-journey.mjs
 //
 // Serves TERM in place of /term/ on the DASH origin (no ttyd needed: /term/ws and /term/token answer
 // 404, the client shows "reconnect"), drives Chromium with touch emulation, and asserts GEOMETRY —
@@ -14,14 +14,16 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { globSync } from 'node:fs';
 
 const DASH = process.env.DASH || 'http://127.0.0.1:3099';
-const TERM = readFileSync(process.env.TERM_PAGE || process.env.TERM || '/opt/claude-dashboard/term-index.html');
+// TERM_PAGE only: the shell's own TERM (xterm-256color) was once read as the page path
+const TERM = readFileSync(process.env.TERM_PAGE || '/opt/claude-dashboard/term-index.html');
 const HOME = homedir();
-const PW = process.env.PLAYWRIGHT_CORE || (globSync(join(HOME, '.npm/_npx/*/node_modules/playwright-core/index.mjs'))[0]);
-const CHROME = process.env.CHROME || (globSync(join(HOME, '.cache/ms-playwright/chromium-*/chrome-linux/chrome'))[0]);
+// playwright-core: the repo's devDependency (npm ci --ignore-scripts), else the npx cache; chrome-linux* also matches the arm64 build
+const PW = process.env.PLAYWRIGHT_CORE || (existsSync('node_modules/playwright-core/index.mjs') ? resolve('node_modules/playwright-core/index.mjs') : globSync(join(HOME, '.npm/_npx/*/node_modules/playwright-core/index.mjs'))[0]);
+const CHROME = process.env.CHROME || (globSync(join(HOME, '.cache/ms-playwright/chromium-*/chrome-linux*/chrome')).sort().at(-1));
 if (!PW || !CHROME) { console.error('need playwright-core (npx cache) and a Playwright chromium: npx -y @playwright/mcp install-browser chrome-for-testing'); process.exit(2); }
 const { chromium } = await import(PW);
 
@@ -61,6 +63,8 @@ async function ensureClient(session) {
   return true;
 }
 const route = r => /\/term\/(ws|token)/.test(r.request().url()) ? r.fulfill({ status: 404, body: '' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: TERM });
+// the cockpit shell answers `/` by default since phase 05 (floating tab bar, no .li/.pg rows, no /app tab, no a.ab links); a dashboard started with --ui=legacy serves the old pages
+const SHELL = (await (await fetch(`${DASH}/`)).text()).includes('class="pnav"');
 const IGNORE = /Failed to load resource|WebSocket connection to|Transition was skipped/;
 const PHONES = { 'iPhone 17 Pro Max': { w: 440, h: 956, sat: 62, sab: 34 }, 'iPhone 15': { w: 393, h: 852, sat: 59, sab: 34 }, 'iPhone SE': { w: 375, h: 667, sat: 20, sab: 0 }, 'landscape Pro Max': { w: 956, h: 440, sat: 0, sab: 21 } };
 
@@ -80,21 +84,21 @@ try {
   // navigates to is byte-identical to the home screen, which is why the two can never drift.
   for (const name of Object.keys(PHONES)) {
     const { ctx, page, p, errs } = await phone(name);
-    await page.goto(`${DASH}/`);
+    await page.goto(`${DASH}/`); await page.waitForSelector('h1', { state: 'attached' }); await page.waitForSelector('.tabs', { state: 'attached' });
     const g = await page.evaluate(() => { const h1 = document.querySelector('h1').getBoundingClientRect(), tabs = document.querySelector('.tabs'), tb = tabs.getBoundingClientRect();
       return { h1top: Math.round(h1.top), tabsBottom: Math.round(tb.bottom), ih: innerHeight, iw: innerWidth, tabsDisp: getComputedStyle(tabs).display,
         scrollW: document.documentElement.scrollWidth, bodyPadB: parseFloat(getComputedStyle(document.body).paddingBottom),
-        lastBottom: Math.round(Math.max(...[...document.querySelectorAll('.li,.lp,.pg')].map(e => e.getBoundingClientRect().bottom))) }; });
+        lastBottom: Math.round(Math.max(...[...document.querySelectorAll('.li,.lp,.pg,.newcard')].map(e => e.getBoundingClientRect().bottom))) }; });
     const wide = p.w >= 700;   // landscape phone: desktop layout, footer links instead of the tab bar
     ok(g.h1top >= 0, `[${name}] header is on-screen (top ${g.h1top})`);
-    ok(wide ? g.tabsDisp === 'none' : (g.tabsDisp === 'flex' && g.tabsBottom === g.ih), `[${name}] tab bar ${wide ? 'hidden (wide layout)' : 'flush with the bottom edge'}`);
+    ok(wide ? g.tabsDisp === 'none' : (g.tabsDisp === 'flex' && (SHELL ? g.ih - g.tabsBottom <= 12 : g.tabsBottom === g.ih)), `[${name}] tab bar ${wide ? 'hidden (wide layout)' : SHELL ? 'floats at the bottom edge (shell, 10px inset)' : 'flush with the bottom edge'}`);
     ok(g.scrollW <= g.iw, `[${name}] no horizontal overflow (${g.scrollW} ≤ ${g.iw})`);
     // the "dead band" bug: content must reach into the bottom padding, not stop far above it
     ok(g.lastBottom > g.ih - 200 || g.lastBottom > 0, `[${name}] content fills the page down to the bar (last row bottom ${g.lastBottom})`);
     const nEmbed = await page.evaluate(() => document.documentElement.outerHTML.includes('embed=1') || document.body.classList.contains('embed'));
     ok(!nEmbed, `[${name}] no embed plumbing anywhere in the page`);
-    const att = await page.$$eval('a.ab[href^="/term/"], a.go[href^="/term/"]', a => a.map(x => x.getAttribute('href')));
-    ok(att.length > 0 && att.every(h => /^\/term\/\?arg=(attach|open)&arg=[^&]+&arg=[0-9a-f]{8}&v=3$/.test(h)), `[${name}] ${att.length} attach/resume links, each with a minted tabid`);
+    const att = await page.$$eval(SHELL ? 'a[href^="/term/"]' : 'a.ab[href^="/term/"], a.go[href^="/term/"]', a => a.map(x => x.getAttribute('href')));
+    ok(att.length > 0 && att.every(h => (SHELL ? /^\/term\/\?arg=(attach|open|menu)&arg=[^&]*&arg=[0-9a-f]{8}&v=3$/ : /^\/term\/\?arg=(attach|open)&arg=[^&]+&arg=[0-9a-f]{8}&v=3$/).test(h)), `[${name}] ${att.length} attach/resume links, each with a minted tabid`);
     ok(errs.length === 0, `[${name}] no page errors ${JSON.stringify(errs).slice(0, 200)}`);
     await ctx.close();
   }
@@ -130,14 +134,17 @@ try {
     await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.click('#ccsheet .row:has-text("all sessions")')])
       .then(() => ok(true, `[${name}] "all sessions" navigates to the console`), e => ok(false, `[${name}] "all sessions": ${e.message.split('\n')[0]}`));
     // and the console is the same page as the home screen, tab bar and all
+    await page.waitForSelector('.tabs', { state: 'attached' });
     const dg = await page.evaluate(() => ({ h1: !!document.querySelector('h1'), embed: document.body.classList.contains('embed'), tabs: getComputedStyle(document.querySelector('.tabs')).display }));
     ok(dg.h1 && !dg.embed && (p.w >= 700 ? dg.tabs === 'none' : dg.tabs === 'flex'), `[${name}] console after ‹ is the plain dashboard`);
     // BUG 2 (2026-08-26): attach on the session this tab is ALREADY on must still get you back in.
     // As a navigation it always does; as an in-page switch it no-opped (to === cur) and looked dead.
-    const back = await page.$eval(`a.ab[href*="arg=attach&arg=${B}"]`, a => a.getAttribute('href')).catch(() => '');
-    ok(!!back, `[${name}] console offers attach for the current session ${B}: ${back}`);
+    // the shell lists only live claude sessions, so it has no attach link for a bare tmux session
+    const back = SHELL ? '' : await page.$eval(`a.ab[href*="arg=attach&arg=${B}"]`, a => a.getAttribute('href')).catch(() => '');
+    ok(SHELL || !!back, `[${name}] console offers attach for the current session ${B}: ${back}`);
     if (back) { await Promise.all([page.waitForURL(new RegExp(`/term/\\?arg=attach&arg=${B}&arg=[0-9a-f]{8}&v=3$`), { timeout: 8000 }), page.click(`a.ab[href*="arg=attach&arg=${B}"]`)])
       .then(() => ok(true, `[${name}] attach on the already-attached session lands in the terminal`), e => ok(false, `[${name}] attach on current session: ${e.message.split('\n')[0]}`)); }
+    if (!back) await page.goto(`${DASH}/term/?arg=attach&arg=${B}&arg=${TAB}&v=3`); // shell: no attach link to click, enter the terminal directly
     await page.waitForSelector('#ccsess-pill');
     ok((await page.$eval('#ccsess-pill', b => b.textContent)).startsWith(B), `[${name}] and the pill names it`);
     // ‹ from the terminal: a plain navigation, no overlay
@@ -217,14 +224,14 @@ try {
   }
   { // no embed/iframe/postMessage machinery left anywhere in the dashboard or the terminal page
     const { ctx, page } = await phone('iPhone 15');
-    for (const path of ['/', '/settings', '/watch', '/droid']) {
+    for (const path of SHELL ? ['/', '/history', '/system', '/device', '/agents'] : ['/', '/settings', '/watch', '/droid']) {
       await page.goto(DASH + path);
       const html = await page.content();
       ok(!/embed=1|data-close|data-sw|--sat:|postMessage/.test(html), `${path}: no embed/drawer machinery`);
     }
-    await page.goto(DASH + '/');
+    await page.goto(DASH + '/'); await page.waitForSelector('.tabs', { state: 'attached' });
     const g = await page.evaluate(() => ({ tabs: getComputedStyle(document.querySelector('.tabs')).display, term: !!document.querySelector('.tabs a[href="/app"]') }));
-    ok(g.tabs === 'flex' && g.term, 'phone dashboard: tab bar with the terminal tab → /app');
+    ok(g.tabs === 'flex' && (SHELL || g.term), 'phone dashboard: tab bar with the terminal tab → /app');
     await page.goto(url); await page.waitForSelector('#ccsess-pill');
     // the DOM, not the source: the words "iframe"/"drawer" still appear in the blocks' history comments
     const machinery = await page.evaluate(() => ({ frames: document.querySelectorAll('iframe').length, drawer: !!document.getElementById('ccdrawer'), inner: window.parent !== window }));

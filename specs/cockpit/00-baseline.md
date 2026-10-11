@@ -7,7 +7,7 @@ repos:
 phase: 0
 depends_on: null
 outward: none
-dev_server: node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
+dev_server: MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
 gates:
   size_limit: warn
   lighthouse: warn
@@ -66,7 +66,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 4. `scripts/parity-capture.mjs`: against `docs/qa/probes/fixture.sh` (fixed fleet, usage, host data), `Date.now` frozen by `addInitScript`, animations and caret off, capture every route (`/`, `/history`, `/system`, `/device`, `/agents`, `/agents/<fixture>`, `/agents/<fixture>/<run>`, `/s/<fixture>`, `/md?f=<fixture>`) at 390×844 DPR 3 and 1280×800 on WebKit and Chromium into `<out>/<engine>/<route>-<w>.png`; `--ui legacy|next` picks the document.
    Evidence: ledger D-03, K-33; MAP.md §8 M-06
-   Verify: node scripts/parity-capture.mjs --ui legacy --out docs/qa/baseline/cockpit && test $(ls docs/qa/baseline/cockpit/webkit | wc -l) -ge 18
+   Verify: node scripts/parity-capture.mjs --ui legacy --out $RUN/baseline-recheck && test $(ls $RUN/baseline-recheck/webkit | wc -l) -ge 18
    Owner: builder
 
 5. `scripts/parity-diff.mjs <baseDir> <newDir> [--route r] --max <pct>`: per-image differing-pixel percentage (pngjs + pixelmatch, devDependencies installed off-server), exit 1 if any image exceeds `--max`, `--warn` prints only; a self-diff is 0.
@@ -91,7 +91,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 9. Settle the `ccimg` drift: `infra/webconsole/blocks/40-ccimg.html` becomes the deployed v2 (any file type, `x-name` header) and `POST /shot` honours `x-name` for the stored filename (sanitised to `[A-Za-z0-9._-]`).
    Evidence: MAP.md §4.1 'Drift found'; ledger B-13, K-23
-   Verify: grep -q 'ccimg-v2' infra/webconsole/blocks/40-ccimg.html && grep -q 'x-name' infra/dashboard/lite.mjs
+   Verify: grep -q 'ccimg-v2' infra/dashboard/routes/actions.mjs && grep -q 'x-name' infra/dashboard/routes/actions.mjs
    Owner: builder
 
 10. Caddy: `/stream` joins `@nosse` and the `(sse)` snippet (`flush_interval -1`) in both site blocks of `infra/caddy/Caddyfile.template`; `e2e-infra.sh` gains a `chk` that the first `/stream` event arrives through Caddy within 3 s (`curl -N --max-time 3`).

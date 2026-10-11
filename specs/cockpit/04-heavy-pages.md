@@ -7,7 +7,7 @@ repos:
 phase: 4
 depends_on: specs/cockpit/03-views.md
 outward: none
-dev_server: node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
+dev_server: MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
 gates:
   size_limit: warn
   lighthouse: warn
@@ -114,7 +114,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 13. Per-document CSP: `csp-admits.mjs` run on `/next/`, `/term/` and `/md` with each document's expected policy; term budget; parity of `/md` at both sizes.
    Evidence: ledger K-10, K-05; MAP.md §6.2 C-6
-   Verify: node scripts/csp-admits.mjs $DASH/next/ --expect nonce && node scripts/csp-admits.mjs $DASH/md?f=$HOME/Documents/Projects/mows-harness/README.md --expect inline-style && node scripts/budget.mjs --route term --max 130 && node scripts/parity-capture.mjs --ui next --route /md --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /md --max 0.5
+   Verify: node scripts/csp-admits.mjs $DASH/ --expect nonce && node scripts/csp-admits.mjs $DASH/md?f=$HOME/Documents/Projects/mows-harness/README.md --expect inline-style && node scripts/budget.mjs --route term --max 130 && node scripts/parity-capture.mjs --ui next --route /md --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /md --max 0.5
    Owner: verifier
 
 ## Out of scope

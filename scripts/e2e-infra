@@ -27,7 +27,9 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1
 apt-get install -y -qq nodejs >/dev/null 2>&1
 curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
 curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null
-apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq caddy >/dev/null 2>&1
+# The cloudsmith repo can answer 402 (apt-get update then exits 100 and caddy is never installed, so every Caddy check fails
+# downstream of the first); drop it and take the Ubuntu caddy package rather than test with no Caddy at all.
+{ apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq caddy >/dev/null 2>&1; } || { rm -f /etc/apt/sources.list.d/caddy-stable.list; apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq caddy >/dev/null 2>&1; }
 ARCH=$(dpkg --print-architecture)
 OPV=$(curl -fsSL https://api.github.com/repos/oauth2-proxy/oauth2-proxy/releases/latest | grep -oP "\"tag_name\": \"v\K[^\"]+")
 curl -fsSL "https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v${OPV}/oauth2-proxy-v${OPV}.linux-${ARCH}.tar.gz" | tar xz -C /tmp

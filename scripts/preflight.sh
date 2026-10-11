@@ -7,11 +7,37 @@ fail=0; note(){ echo "preflight: $*"; }; bad(){ echo "preflight FAIL: $*"; fail=
 # 1. manifest completeness (both directions)
 TREE=$(mktemp) MANI=$(mktemp)
 trap 'rm -f "$TREE" "$MANI"' EXIT
-git ls-files | sort > "$TREE"
+# dist/ is committed build output (ARCHITECTURE section 1): it is ONE manifest line, "dist/", whose contents are
+# verified against dist/manifest.json below (check 1b) instead of being listed file by file (K-25, G-13).
+git ls-files | sed -E 's#^dist/.*#dist/#' | sort -u > "$TREE"
 if ! grep -v '^\s*#' scripts/manifest.txt 2>/dev/null | grep -v '^\s*$' | sort > "$MANI"; then
   bad "manifest.txt missing or empty"
 fi
 diff -u "$MANI" "$TREE" || bad "tree and manifest.txt differ (see diff above)"
+
+# 1b. dist/ matches dist/manifest.json: every tracked file listed with its sha256, nothing listed that is not
+# tracked, no source maps. A hand-edited or half-rebuilt dist/ fails here; `node build.mjs` is the fix.
+if [ -n "$(git ls-files dist | head -1)" ]; then
+  if [ ! -f dist/manifest.json ]; then
+    bad "dist/ is tracked but dist/manifest.json is missing"
+  else
+    git ls-files dist | grep -E '\.map$' && bad "dist/ holds a source map (never committed)"
+    node -e '
+      const fs = require("fs"), cp = require("child_process"), crypto = require("crypto");
+      const files = JSON.parse(fs.readFileSync("dist/manifest.json", "utf8")).files || {};
+      const tracked = cp.execFileSync("git", ["ls-files", "dist"], { encoding: "utf8" }).split("\n").filter(Boolean)
+        .map(f => f.slice(5)).filter(f => f !== "manifest.json");
+      let bad = 0; const say = m => { console.log("preflight FAIL: dist/ " + m); bad = 1; };
+      for (const f of tracked) if (!(f in files)) say(f + " is tracked but not in manifest.json");
+      for (const [f, v] of Object.entries(files)) {
+        if (!tracked.includes(f)) { say(f + " is in manifest.json but not tracked"); continue; }
+        const want = typeof v === "string" ? v : v.sha256;
+        const got = crypto.createHash("sha256").update(fs.readFileSync("dist/" + f)).digest("hex");
+        if (got !== want) say(f + " sha256 differs from manifest.json");
+      }
+      process.exit(bad);' || bad "dist/ does not match dist/manifest.json (see above)"
+  fi
+fi
 
 # 2. no nested git repos / junk
 [ -z "$(find . -mindepth 2 -name .git)" ] || bad "nested .git found"
@@ -32,7 +58,9 @@ diff -u "$MANI" "$TREE" || bad "tree and manifest.txt differ (see diff above)"
 # you create it) so the gate keeps full strength on your box too — the public half was
 # only ever meant to catch shapes common to every deployment, not your specifics.
 PAT='ctx7sk-|ntn_|ghp_|github_pat_|sk-ant-|AKIA|mongodb\+srv://|client_secret=|/opt/homebrew|/Users/|/home/[A-Za-z0-9_-]+'
-if [ -f scripts/preflight-local.pat ]; then
+# PREFLIGHT_NO_LOCAL=1 skips the gitignored local pattern file, so the shipped gates can be run as a Verify
+# line (verify-spec.mjs) on a box where that file would also match this deployment's own agent examples.
+if [ -f scripts/preflight-local.pat ] && [ "${PREFLIGHT_NO_LOCAL:-}" != 1 ]; then
   LOCAL=$(grep -v '^\s*#' scripts/preflight-local.pat | grep -v '^\s*$' | paste -sd'|')
   [ -n "$LOCAL" ] && PAT="$PAT|$LOCAL"
 fi
@@ -102,9 +130,12 @@ if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | 
 BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
 # GitHub's synthetic PR merge commit ("Merge <sha> into <sha>", committer GitHub <noreply>) carries
 # the account's PUBLIC email as author — not a commit of ours, and not in the tree we publish. It is
-# skipped by that exact shape; every real commit, merge or not, is still checked.
+# skipped by that exact shape; every real commit, merge or not, is still checked. The same holds for the merge
+# commit GitHub writes when a PR is merged in the web UI ("Merge pull request #N from ...", committer GitHub
+# <noreply>): its author is the merging account's public email, it is already on origin, and no rewrite of ours
+# can remove it. Only that shape, only with GitHub as committer.
 if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
-   | grep -vE $'^noreply@github\\.com\tMerge [0-9a-f]{40} into [0-9a-f]{40}\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
+   | grep -vE $'^noreply@github\\.com\t(Merge [0-9a-f]{40} into [0-9a-f]{40}|Merge pull request #[0-9]+ from [^\t]+)\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
 # commit messages get the same forbidden-string treatment the tree gets
@@ -124,21 +155,24 @@ done
 # Without a gate, "SPA" grows back into the MB-scale bundle lite.mjs was written to replace.
 if [ -d infra/dashboard/app ]; then
   ( cd infra/dashboard/app/vendor && sha256sum -c SHA256SUMS --quiet ) || bad "vendored module hash mismatch"
-  # The extensions measured below MUST be the extensions lite.mjs is willing to serve. A file
+  # The extensions measured below MUST be the extensions the server is willing to serve (static.mjs ASSET_TYPES; see below). A file
   # servable but unmeasured ships to browsers for free, and this check would keep printing a
   # reassuring number while the payload grew — so the agreement is asserted, not commented.
   # Parsed out of UI_ASSET_TYPES rather than restated: a literal copy is exactly what went
   # stale when fonts were added, and a check that can't notice its own subject moving is the
   # hollow check this repo keeps cataloguing.
-  SERVED=$(sed -n '/^const UI_ASSET_TYPES = {/,/^};/p' infra/dashboard/lite.mjs \
+  # The list now lives in static.mjs (ASSET_TYPES, which serves dist/ under /assets/); legacy.mjs's UI_ASSET_TYPES is that same
+  # object, and is asserted to be, so app/ and dist/ can never be served under two different lists.
+  SERVED=$(sed -n '/^export const ASSET_TYPES = {/,/^};/p' infra/dashboard/static.mjs \
     | grep -oE "^  [a-z0-9]+:" | tr -d ' :' | sort | tr '\n' ' ')
-  [ -n "$SERVED" ] || bad "could not parse UI_ASSET_TYPES out of lite.mjs — the ceiling's extension list is unverifiable"
-  MEASURED="css mjs woff2 "
-  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: lite.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
+  [ -n "$SERVED" ] || bad "could not parse ASSET_TYPES out of static.mjs — the ceiling's extension list is unverifiable"
+  grep -qE '^(export )?const UI_ASSET_TYPES = ASSET_TYPES;' infra/dashboard/legacy.mjs || bad "legacy.mjs's UI_ASSET_TYPES is no longer static.mjs's ASSET_TYPES — two lists would drift"
+  MEASURED="css json mjs woff2 "
+  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: static.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
   GZ=0
   while IFS= read -r f; do
     GZ=$((GZ + $(gzip -9 -c "$f" | wc -c)))
-  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' \))
+  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' -o -name '*.json' \))
   # Raised from 76800B (75 KiB) for the 44:5 redesign's two variable webfonts, and derived
   # rather than guessed: 75 KiB of CODE budget — exactly what the original ceiling allowed,
   # unchanged — plus 80 KiB for the fonts, which measured 79709B gzipped and are a fixed
@@ -153,6 +187,35 @@ if [ -d infra/dashboard/app ]; then
 else
   bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
+
+# 5b2. The cockpit's gates, in fail mode since phase 05 (ARCHITECTURE section 9, K-30). budget.mjs --all measures every route closure of web/views/ and the
+# shell, the marked chunk, tokens.css, the fonts, the term closure and the server, and refuses mermaid in dist/; each limit is the BUDGET of
+# web/contract.d.ts. sw-check and push-check load the service worker and the Web Push implementation with no browser and no network. Node only, so they run
+# wherever preflight does. (The Lighthouse, parity and `build.mjs && git diff --exit-code -- dist/` gates need the installed devDependencies, a browser and
+# docker and run in CI, not here.)
+if [ -f scripts/budget.mjs ] && [ -d dist ]; then
+  BUDOUT=$(node scripts/budget.mjs --all 2>&1) && BUDRC=0 || BUDRC=$?
+  if [ "$BUDRC" -ne 0 ]; then
+    printf '%s\n' "$BUDOUT" | grep -E '^(FAIL|WARN|budget:)'
+    bad "budget.mjs --all: a size budget is exceeded (see above)"
+  else
+    note "budgets: every route, chunk, font, the term closure and the server are within ARCHITECTURE section 9"
+  fi
+else
+  bad "scripts/budget.mjs or dist/ missing — the per-route size budgets did not run"
+fi
+for t in sw-check push-check; do
+  if [ -f "scripts/$t.mjs" ]; then
+    TOUT=$(node "scripts/$t.mjs" 2>&1) && TRC=0 || TRC=$?
+    if [ "$TRC" -ne 0 ]; then printf '%s\n' "$TOUT" | grep '^FAIL' || printf '%s\n' "$TOUT" | tail -3; bad "$t: failed (see above)"; fi
+  else
+    bad "scripts/$t.mjs missing — the $t gate did not run"
+  fi
+done
+
+# 5c-e take UI_SRC (the client source under test): infra/dashboard/app now, web/ from phase 01 (K-26). The check and
+# coverage scripts read it from the environment.
+UI_SRC=${UI_SRC:-infra/dashboard/app}; export UI_SRC
 
 # 5c. The chat view's XSS / rendering regression gate (Task 7, findings C1 and R1).
 #
@@ -271,7 +334,7 @@ done
 # enforcement story that had quietly become false — the exact failure this task exists to prevent,
 # one level removed. Each pattern below is the line in agents/bin/mows-agent that makes one panel
 # sentence true; if a pattern goes missing, the sentence it supports has to change with it.
-if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs ]; then
+if [ -f agents/bin/mows-agent ] && [ -f "$UI_SRC/views/capability.mjs" ]; then
   # <pattern in mows-agent> | <the panel sentence it holds up>
   while IFS='|' read -r pat claim; do
     [ -z "$pat" ] && continue

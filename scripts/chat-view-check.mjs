@@ -10,19 +10,26 @@
 // does the rendering here exactly as it does in the browser.
 import { registerHooks } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const APP = new URL('../infra/dashboard/app/', pathToFileURL(import.meta.filename));
+// UI_SRC (repo-relative or absolute) names the client source under test: infra/dashboard/app now, web from phase 01 (K-26).
+const APP = pathToFileURL(resolve(import.meta.dirname, '..', process.env.UI_SRC || 'infra/dashboard/app') + '/');
 if (typeof registerHooks !== 'function') {
   console.error('FAIL: node:module.registerHooks is unavailable — this check needs Node >= 22.15');
   process.exit(1);
 }
+// The /ui app resolves its bare specifiers through the server's import map, to app/vendor/*, and its renderPartial lives in
+// views/chat.mjs. web/ (the cockpit shell, K-26) has no vendor/: marked and preact are the packages in node_modules, which Node
+// resolves by itself, and renderPartial / reconcile are exported by md.mjs. The hook is installed only for the /ui layout.
+const LEGACY = existsSync(new URL('vendor/marked.mjs', APP));
 const VENDOR = {
   preact: 'vendor/preact.mjs',
   'preact/hooks': 'vendor/hooks.mjs',
   htm: 'vendor/htm.mjs',
   marked: 'vendor/marked.mjs',
 };
-registerHooks({
+if (LEGACY) registerHooks({
   resolve(specifier, context, next) {
     const rel = VENDOR[specifier];
     if (rel) return { url: new URL(rel, APP).href, shortCircuit: true };
@@ -30,9 +37,10 @@ registerHooks({
   },
 });
 
-const { renderPartial, reconcile } = await import(new URL('views/chat.mjs', APP).href);
-// The vendored marked itself, to pin the HAZARD the view's tokenizer override neutralises.
-const { marked: rawMarked } = await import(new URL('vendor/marked.mjs', APP).href);
+const MD = await import(new URL(LEGACY ? 'views/chat.mjs' : 'md.mjs', APP).href);
+const { renderPartial, reconcile } = MD;
+// marked itself, to pin the HAZARD the view's tokenizer override neutralises.
+const { marked: rawMarked } = LEGACY ? await import(new URL('vendor/marked.mjs', APP).href) : await import('marked');
 
 let failed = false;
 function check(name, cond, detail) {
@@ -652,6 +660,90 @@ const texts = r => r.turns.map(t => t.role + ':' + t.text).join('|');
   const landed = reconcile([U('lost one')], reported, '');
   check('reconcile: a reported message that turns up in the transcript is saved, not retired',
     landed.retired.length === 0 && landed.missingUsers.length === 0, landed);
+}
+
+// ---- block-level memoisation (web/md.mjs renderBlocks; ARCHITECTURE.md section 5, ledger A-08) ----------------------------------
+// The live buffer is split on blank lines, closed blocks are cached by their text and only the open tail is parsed per delta. The
+// contract is that none of this is visible: renderBlocks(text) is what renderPartial(text) makes of the same buffer, at EVERY
+// intermediate state, and every guard above holds through it. The /ui app has no such function; the section is skipped there.
+if (MD.renderBlocks) {
+  const { renderBlocks } = MD;
+  const corpus = [
+    'Intro paragraph.\n\n```bash\ndf -h\n\nfree -m\n```\n\n- one\n\n- two\n\n1. first\n2. second\n\n> quoted\n\nDone, mañana.',
+    '# Title\n\nPara with `code` and **bold**.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n    indented code\n\ntext after\n\n---\n\nend',
+    'First.\n\nSee [ref] here.\n\n[ref]: https://example.com/r\n\nEnd.',
+    'x\n\n<pre>\na\n\nb\n</pre>\n\ny',
+    '1. a\n\n2. b\n\ntext\n\n3. c',
+    'Para one.\n\n- loose\n\n- list\n\n- items\n\nPara two.',
+  ];
+  let diff = null, walked = 0;
+  for (const text of corpus) {
+    for (let i = 1; i <= text.length && !diff; i++) {
+      const t = text.slice(0, i);
+      walked++;
+      if (renderBlocks(t) !== renderPartial(t)) diff = { open: true, t };
+      else if (renderBlocks(t, false) !== renderPartial(t)) diff = { open: false, t };
+    }
+  }
+  check('renderBlocks equals renderPartial at every prefix of replies with fences, lists, tables, references and raw HTML',
+    diff === null, diff || { prefixesWalked: walked });
+
+  // A generated corpus, because the hand-written one above is the cases somebody thought of. Seeded, so a failure reproduces.
+  const FRAGMENTS = ['Plain words here.', '# Heading', '- item', '* item', '1. one', '2) two', '> quote', '```', '```js', '~~~', '    code line',
+    '---', 'text with `code`', '**bold** and _it_', '[a](https://x.y)', '| a | b |', '|---|---|', '', '', '', '<b>x</b>', 'Setext', '===',
+    '  - nested', '[ref]: http://x', 'a ``` b', '&amp; < >'];
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  let firstDiff = null, docs = 0, states = 0;
+  for (; docs < 1200 && !firstDiff; docs++) {
+    const t = Array.from({ length: 4 + Math.floor(rnd() * 14) }, () => FRAGMENTS[Math.floor(rnd() * FRAGMENTS.length)]).join('\n');
+    for (let i = t.length; i >= Math.max(1, t.length - 30); i--) {
+      states++;
+      if (renderBlocks(t.slice(0, i)) !== renderPartial(t.slice(0, i))) { firstDiff = { doc: t, at: i }; break; }
+    }
+  }
+  console.log(`  fuzz: ${docs} generated documents, ${states} streamed states compared with renderPartial`);
+  check('[fuzz] renderBlocks equals renderPartial on every generated document, fences and blank lines in any order', firstDiff === null, firstDiff);
+
+  // What the memoisation is for: a delta re-parses the open tail only. marked.parse is counted, not timed.
+  let calls = 0;
+  const realParse = rawMarked.parse;
+  rawMarked.parse = (...a) => { calls++; return realParse(...a); };
+  const base = 'Alpha paragraph one.\n\nBeta paragraph two.\n\nGamma paragraph three';
+  try {
+    renderBlocks(base);
+    calls = 0; renderBlocks(base + ' and more');
+    const onDelta = calls;
+    calls = 0; renderBlocks(base + ' and more.\n\nDelta paragraph four');
+    const onClose = calls;
+    calls = 0; renderBlocks(base + ' and more.\n\nDelta paragraph four, longer');
+    const onNext = calls;
+    check('a delta inside the open block parses that block once and re-parses nothing closed', onDelta === 1, onDelta);
+    check('a block that has just been closed is parsed once (with the new tail), never again', onClose === 2 && onNext === 1, { onClose, onNext });
+    calls = 0; renderBlocks('Sealed turn.\n\nIts last block', false); const first = calls;
+    calls = 0; renderBlocks('Sealed turn.\n\nIts last block', false);
+    check('a saved turn (open=false) is cached whole: the second render parses nothing', first === 2 && calls === 0, { first, second: calls });
+  } finally { rawMarked.parse = realParse; }
+
+  const fenced = renderBlocks('Before.\n\n```bash\ndf -h\n\nfree -m\n```\n\nAfter.');
+  check('a blank line inside a fence is not a block boundary: one code block holds both commands',
+    (fenced.match(/<pre>/g) || []).length === 1 && /df -h\n\nfree -m/.test(fenced), fenced);
+  const loose = renderBlocks('- one\n\n- two\n\n- three\n\nTail.');
+  check('a list with blank lines between its items stays one list', (loose.match(/<ul>/g) || []).length === 1, loose);
+  const refd = renderBlocks('See [ref].\n\n[ref]: https://example.com/r\n\nEnd.');
+  check('a reference definition in a later block still resolves a link in an earlier one', /<a href="https:\/\/example.com\/r">ref<\/a>/.test(refd), refd);
+
+  // The guards hold THROUGH renderBlocks, which is what the view calls: every hostile fixture, whole and at every prefix.
+  const hostileWhole = Object.entries(HOSTILE).filter(([, src]) => liveBits(renderBlocks(src)).length);
+  check('every hostile reply renders inert through renderBlocks too', hostileWhole.length === 0, hostileWhole.map(([k]) => k));
+  let worstBlocks = null;
+  for (const [label, src] of Object.entries(HOSTILE)) {
+    for (let i = 1; i <= src.length && !worstBlocks; i++) {
+      const bits = liveBits(renderBlocks(src.slice(0, i)) + renderBlocks('Lead paragraph.\n\n' + src.slice(0, i) + '\n\nTrailing paragraph.'));
+      if (bits.length) worstBlocks = { label, i, bits };
+    }
+  }
+  check('no prefix of any hostile fixture renders live through renderBlocks, alone or between two blocks', worstBlocks === null, worstBlocks);
 }
 
 process.exit(failed ? 1 : 0);

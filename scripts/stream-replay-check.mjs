@@ -1,6 +1,8 @@
 // Proves the spec §3 resumability claim: a client that reconnects with Last-Event-ID gets the
 // deltas it missed, exactly once, in order. curl cannot express this, so it gets its own check.
 import http from 'node:http';
+// --chatend-gap: also run web/store.mjs against the live /stream through a real SSE client (the case below).
+const GAP = process.argv.includes('--chatend-gap');
 const PORT = process.env.PORT || 3105, AGENT = 'replaytest';
 const get = (path, headers = {}) => new Promise(r => http.get({ port: PORT, path, headers }, r));
 // Every delta this file injects goes through here, never through a bare get(). /_test/chat is
@@ -74,4 +76,82 @@ const connectionAlive = /event: fleet/.test(leakedBuf);
 console.log(connectionAlive ? 'PASS: a rejected replay does not kill the connection — fleet events still arrive'
                             : `FAIL: no fleet event reached the attacker connection — rejecting the replay killed it:\n${leakedBuf}`);
 
-process.exit(replayOk && isolationOk && connectionAlive ? 0 : 1);
+
+// The chatend gap (ledger D-04, K-34). A `chatend` carries no id: and is never replayed (K-14), so a client whose stream was cut while
+// a turn ended cannot learn it from the stream at all. The shell's store (web/store.mjs, run here unchanged) must notice on reconnect
+// that an agent it still holds as busy has gone quiet, refetch that agent's transcript, and clear busy when the last turn recorded
+// is the agent's. This is the whole path against the real server: a real EventSource-shaped client over http, the store's own
+// reconnect backoff, the server's real replay logic. Only the transcript endpoint is answered here, because a dev instance has no
+// agent by this name and a probe must not write into a real agent's chat.jsonl.
+let gapOk = true;
+if (GAP) {
+  const { createStore } = await import('../web/store.mjs');
+  const GAP_AGENT = 'gapagent', GAP_TURN = 7;
+  const gapCheck = (name, ok, detail) => { if (!ok) gapOk = false; console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${ok || detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
+  const opened = [], fetched = [];
+  let current = null;
+  class SseClient { // the browser's EventSource as far as the store uses it: addEventListener, close, readyState, and CLOSED on a dead socket
+    constructor(url) {
+      this.url = url; this.readyState = 0; this.l = {}; opened.push(url); current = this;
+      const u = new URL(url, 'http://x');
+      this.req = http.get({ port: PORT, path: u.pathname + u.search, headers: { accept: 'text/event-stream' } }, res => {
+        this.res = res; this.readyState = 1; this.emit('open', '');
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', d => {
+          buf += d;
+          for (let i; (i = buf.indexOf('\n\n')) >= 0;) {
+            const rec = { event: 'message', data: '', id: '' };
+            for (const line of buf.slice(0, i).split('\n')) {
+              if (line.startsWith('event: ')) rec.event = line.slice(7); else if (line.startsWith('data: ')) rec.data += line.slice(6); else if (line.startsWith('id: ')) rec.id = line.slice(4);
+            }
+            buf = buf.slice(i + 2);
+            if (rec.data) this.emit(rec.event, rec.data, rec.id);
+          }
+        });
+        res.on('close', () => this.dead());
+      });
+      this.req.on('error', () => this.dead());
+    }
+    addEventListener(t, f) { (this.l[t] ||= []).push(f); }
+    emit(t, data, lastEventId = '') { for (const f of this.l[t] || []) f({ data, lastEventId }); }
+    dead() { if (this.readyState !== 2) { this.readyState = 2; this.emit('error', ''); } }
+    close() { this.readyState = 2; this.req.destroy(); }
+    cut() { this.res.destroy(); } // what a phone losing signal does to the socket
+  }
+  const env = {
+    EventSource: SseClient, setTimeout, clearTimeout,
+    document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
+    fetch: url => {
+      fetched.push(url);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ turns: [
+        { at: '2026-10-11T10:00:00Z', role: 'user', text: 'a question' }, { at: '2026-10-11T10:00:09Z', role: 'assistant', text: 'ABC, finished while the stream was down' }] }) });
+    },
+  };
+  const until = async (fn, ms) => { for (let t = 0; t < ms && !fn(); t += 50) await new Promise(r => setTimeout(r, 50)); return fn(); };
+  const store = createStore(env);
+  store.start({ route: '/agents', fleet: [], live: 0, indexed: 0, host: 'x' });
+  const release = store.watch(`chat:${GAP_AGENT}`);
+  await until(() => current && current.readyState === 1 && current.url.includes(`chat:${GAP_AGENT}`), 3000);
+  gapCheck('the store holds the chat topic on its one stream', !!current && current.url.includes(`,chat:${GAP_AGENT}`), opened);
+  await seed(`/_test/chat?agent=${GAP_AGENT}&turn=${GAP_TURN}&seq=1&delta=ABC`);
+  await seed(`/_test/chat?agent=${GAP_AGENT}&turn=${GAP_TURN}&seq=2&delta=DEF`);
+  gapCheck('a delta marks the agent busy', await until(() => store.busy.value[GAP_AGENT] === GAP_TURN && store.chat.value && store.chat.value.seq === 2, 3000), store.busy.value);
+  const before = opened.length;
+  current.cut();
+  await new Promise(r => setTimeout(r, 200));
+  await seed(`/_test/chatend?agent=${GAP_AGENT}&turn=${GAP_TURN}&cost_usd=0.01`); // the turn ends while no client is connected
+  gapCheck('the stream is down when the turn ends (nothing reconnected in the meantime)', opened.length === before, { before, now: opened.length });
+  gapCheck('after the reconnect the transcript was refetched and busy cleared', await until(() => !(GAP_AGENT in store.busy.value), 15000),
+    { busy: store.busy.value, opened: opened.length });
+  gapCheck('...the chatend itself never arrived (it is not replayed), so it was the refetch that did it',
+    store.chatend.value === null && fetched.length === 1 && fetched[0] === `/api/agents/${GAP_AGENT}/chat`, { chatend: store.chatend.value, fetched });
+  gapCheck('...the refetched transcript is handed to the views (chatLog) for the chat to settle from',
+    (store.chatLog.value[GAP_AGENT] || []).length === 2 && store.chatLog.value[GAP_AGENT][1].role === 'assistant', store.chatLog.value);
+  gapCheck('the reopened stream carried the last chat id and the chat topic', /lastEventId=gapagent%3A7%3A2/.test(opened[opened.length - 1]) && /,chat:gapagent/.test(opened[opened.length - 1]), opened.slice(-1));
+  release();
+  store.stop();
+  current && current.close();
+}
+
+process.exit(replayOk && isolationOk && connectionAlive && gapOk ? 0 : 1);

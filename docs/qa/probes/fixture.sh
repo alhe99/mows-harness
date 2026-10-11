@@ -31,6 +31,16 @@ SEED=${MOWS_QA_SEED:-hello}
   printf '{"at":"2026-09-16T10:18:04Z","role":"assistant","text":"Hi. Ask me about the last run.","cost_usd":0.01}\n'; } \
   > "$STATE/chat.jsonl"
 
+# MOWS_QA_PARITY=1 (scripts/parity-capture.mjs): the routes the probes never visit need data too. /s/<acct>/<sid>
+# only matches a hex sid (aaaa1111-demo above is not one) and /md only serves files under /home. Off by
+# default so every existing probe keeps seeing exactly one session.
+if [ "${MOWS_QA_PARITY:-}" = 1 ]; then
+  { printf '{"type":"user","message":{"role":"user","content":"What changed in the last run?"},"timestamp":"2026-09-16T10:20:00Z"}\n'
+    printf '{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"Nothing yet. The run finished clean."}]},"timestamp":"2026-09-16T10:20:03Z"}\n'; } \
+    > "$DH/.claude/projects/-demo-api/bbbb2222-3333-4444-5555-666666666666.jsonl"
+  printf '# Parity fixture\n\nA short note with `code`, a list and a link.\n\n- one\n- two\n\n[home](/)\n' > "$DH/parity.md"
+fi
+
 # MOWS_TEST_HOOKS belongs on the SERVER: the gate is read inside lite.mjs's router, so /_test/chat
 # and /_test/chatend are 404 without it and every streaming assertion would silently measure nothing.
-exec env HOME="$DH" MOWS_TEST_HOOKS=1 node /r/infra/dashboard/lite.mjs --port 3005 --host 0.0.0.0
+exec env HOME="$DH" MOWS_TEST_HOOKS=1 node /r/infra/dashboard/lite.mjs --port 3005 --host 0.0.0.0 ${MOWS_QA_LITE_ARGS:-}

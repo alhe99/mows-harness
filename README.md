@@ -16,7 +16,7 @@ dashboard + web terminal that work from any device — phone included.
 
 </div>
 
-<img src="docs/assets/hero.png" alt="The mows control dashboard: a pill nav (Sessions, History, System, Device), a New Session button, and four live Claude Code session cards — one waiting on a confirmation, one working, one paused, one idle — each with its project and the agent's latest message.">
+<img src="docs/assets/hero.png" alt="The mows control dashboard: a pill nav (Sessions, History, System, Device, Agents), a New Session button, and four live Claude Code session cards — one waiting on a confirmation, one working, one paused, one idle — each with its project and the agent's latest message.">
 
 <p align="center"><sub><b>mows control</b> — four live agents at a glance: one <b>waiting on you</b>, one <b>working</b>, one <b>paused</b>, one <b>idle</b>, each with what it's doing <i>right now</i>. (Synthetic demo data — see below.)</sub></p>
 
@@ -36,7 +36,7 @@ you leave running, `--all` for the full web cockpit.
 - **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, monitor OS patch health, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, the **mows control** dashboard (Sessions / History /
-  System / Device / Agents, plus the `/ui` app), a themeable browser terminal (the phone view)
+  System / Device / Agents, one installable shell with push), a themeable browser terminal (the phone view)
 - **fleet** — several Claude identities on one box, switched with one command; per-session
   git worktrees so parallel sessions never fight over one checkout
 - **agy** — antigravity: `ag` launcher, `agy-run` (composes Discord messages),
@@ -99,7 +99,7 @@ budget-capped run escalates to Discord if configured. See [`agents/SETUP.md`](ag
 pull-to-refresh, and each card's ⋯ menu as a floating popover — pause, rename inline, kill
 with confirm.
 
-<img src="docs/assets/phone.png" alt="The mows control dashboard on a phone: four live Claude Code session cards, each with its state (waiting / working / paused / idle), project, and what the agent is doing right now; a terminal button floating bottom-right and Sessions / History / System / Device tabs along the bottom." width="300"> <img src="docs/assets/phone-menu.png" alt="The Sessions view on a phone with one card's ⋯ menu open as a floating popover: Pause, a RENAME text field with Save, and Kill." width="300">
+<img src="docs/assets/phone.png" alt="The mows control dashboard on a phone: four live Claude Code session cards, each with its state (waiting / working / paused / idle), project, and what the agent is doing right now; a terminal button floating bottom-right and a floating Sessions / History / System / Device / Agents tab bar along the bottom." width="300"> <img src="docs/assets/phone-menu.png" alt="The Sessions view on a phone with one card's ⋯ menu open as a floating popover: Pause, a RENAME text field with Save, and Kill." width="300">
 
 **The web terminal** — a real Claude Code session in a browser tab, in whichever of the 12
 built-in color schemes you picked. Themes are converted from
@@ -253,8 +253,8 @@ cd mows-harness
 
 Expect the last line to be `preflight: ALL CLEAN`. That gate checks manifest completeness,
 scans for leaked secrets/identity, shellchecks every script, runs a sandboxed install dry-run,
-and runs the dashboard's own gates inline — the `/ui` client-asset ceiling and vendored-module
-hashes, the chat renderer's XSS assertions, and the capability panel's honesty assertions. Each
+and runs the dashboard's own gates inline — the per-route size budgets, the service-worker and push checks, the
+chat renderer's XSS assertions, and the capability panel's honesty assertions. Each
 one **fails** rather than skips when it cannot run. **If it fails, stop** — do not install from
 a repo that fails its own gate.
 
@@ -369,19 +369,20 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    `{{...}}` placeholder survives in anything root will execute.
 5. **Install and enable, in order** — caddy → oauth2-proxy → dashboard → web terminal →
    transcript prune timer (`claude-transcript-prune.timer`). The sudoers file goes in via
-   `visudo -cf` validation, mode `0440`. The dashboard step is **four artifacts** — `lite.mjs`,
-   `chat-stream.mjs`, `capability.mjs` and the whole `app/` tree — plus a unit restart;
+   `visudo -cf` validation, mode `0440`. The dashboard step is **five artifacts** — `lite.mjs`,
+   `chat-stream.mjs`, `capability.mjs`, `static.mjs`, and the whole `app/` and `dist/` trees (`scripts/deploy-dashboard.sh`
+   installs them) — plus a unit restart;
    `./install.sh --infra` prints the exact lines, and "Deploying this change" in
    [`docs/architecture.md`](docs/architecture.md) says what each way of splitting them looks
    like when it goes wrong.
 6. **`sudo loginctl enable-linger <user>`** — `claude-rc`'s ad-hoc listeners use user-scope
    systemd and will fail fast without it.
 7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
-   returns 404: ttyd's ~700KB generated index is deliberately not vendored here, so the
-   script fetches it locally and splices in the clipboard shim plus the
-   `infra/webconsole/blocks/` mobile UX (key bar, PWA geometry, home key, photo attach,
-   font size, color themes, keyboard suggestions + reconnect, copy/paste overlay,
-   restart-pane key). Re-run it after a repo update to pick up new or changed blocks.
+   returns 404: the page is `dist/term.html`, built from `web/pages/term/` (xterm.js 6 on
+   ttyd's socket, key bar, PWA geometry, home key, photo/file attach, font size, color themes,
+   keyboard suggestions + reconnect, copy/paste overlay, restart-pane key) and committed, and
+   the script installs it where Caddy serves it, keeping any page already there as
+   `term-index.legacy.html` (rollback is a file swap). Re-run it after a repo update.
    If you want the dashboard to serve the global terminal theme (terminal tabs poll
    `/settings/term-theme.json`), also
    `sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json`.
@@ -434,7 +435,7 @@ flowchart TB
     subgraph Layer3["Layer 3: infra (public VPS surface)"]
         CADDY["Caddy :443<br/>TLS + reverse proxy"]
         OAUTH["oauth2-proxy :4180<br/>Google-gated auth"]
-        DASH["dashboard (lite.mjs + /ui app) :3005"]
+        DASH["dashboard (lite.mjs + shell) :3005"]
         TERM["ttyd /term :7681"]
         WATCH["qa-watch: Xvfb + Chrome + noVNC<br/>:6080 / :9222, on-demand"]
     end
@@ -471,16 +472,15 @@ flowchart TB
   alive and clean: unit/wedge recovery, memory-capture verification, idle-session reaping,
   orphaned-MCP reaping, usage-limit auto-continue, OS patch-health monitoring, boot logging.
 - **`infra/`** — templates for the public surface: Caddy (TLS + reverse proxy), oauth2-proxy
-  (Google-gated auth), the zero-dependency **mows control** dashboard — PWA-installable,
-  no build step, Node stdlib only: `lite.mjs` (plus `chat-stream.mjs` and `capability.mjs`,
-  which it imports) serves the server-rendered Sessions / History / System / Device / Agents
-  views above with live SSE updates and a pane-content session classifier, **and** the
-  client-rendered app at `/ui`: `/ui/agents`, `/ui/agents/<name>` (capability panel + streaming
-  chat) and `/ui/agents/<name>/<run_id>`, built on `GET /api/*`, one multiplexed `GET /stream`
-  per tab, and the four vendored ESM modules under `infra/dashboard/app/` (45 KB gzipped
-  against a 76,800 B preflight ceiling — no npm install, no bundler). The server-rendered
-  `/agents` twin still ships beside `/ui/agents` and is retired only after the replacement has
-  run on a box for a week. **Deploying it is four artifacts and a restart, not one `install`** —
+  (Google-gated auth), the **mows control** dashboard — a PWA-installable cockpit whose server
+  imports Node builtins only: `lite.mjs` (plus `core.mjs`, `sse.mjs`, `static.mjs`, `routes/`,
+  `chat-stream.mjs`, `capability.mjs`) serves one shell document for Sessions / History / System /
+  Device / Agents (and the agent detail, run and transcript routes) with live SSE updates and a
+  pane-content session classifier. The shell is Preact built off-server from `web/` into the
+  committed `dist/` (per-route size budgets, a service worker, an app badge and Web Push on a
+  session needing you), built on `GET /api/*` and one multiplexed `GET /stream` per tab. The
+  previous server-rendered pages are one flag away (`--ui=legacy`) until they are deleted.
+  **Deploying it is several artifacts and a restart, not one `install`** — `scripts/deploy-dashboard.sh`,
   see [`docs/architecture.md`](docs/architecture.md) — a `ttyd` web terminal with 12
   switchable color themes, an on-demand browser-QA watch stack, the containerized Android
   emulator console, firewall templates, and scoped sudoers.

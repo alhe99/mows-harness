@@ -259,43 +259,44 @@ claude-remote-<name>@default.service` run as an agent) actually reports permissi
 
 Caddy serves `/term` and `/term/` itself, from a static file — `ttyd`'s own `GET /` is
 never what a browser sees (see `infra/webconsole/claude-web-term.service.template`'s "Serving
-model" note). The generated page is ttyd's own bundle plus every self-authored addition
-spliced in: the clipboard shim and the `infra/webconsole/blocks/` mobile UX (key bar, PWA
-geometry, home key, photo attach, font size, **color themes**, keyboard suggestions +
-reconnect, copy/paste overlay, restart-pane key, repaint-on-foreground — each block
-documents itself; runtime kill switches: `/term/?ime=off`, `?clip=off`, `?rst=off`,
-`?paint=off`, `?theme=off`). That file does not exist until you generate it:
+model" note). The page is `dist/term.html`, built off-server from `web/pages/term/` (xterm.js 6 on the
+same ttyd socket; the key bar, PWA geometry, home key, photo/file attach, font size, **color themes**,
+keyboard suggestions + reconnect, copy/paste overlay, restart-pane key and repaint-on-foreground are
+modules of its own; runtime kill switches: `/term/?ime=off`, `?clip=off`, `?rst=off`, `?paint=off`,
+`?theme=off`). It is committed with the rest of `dist/`, and that file does not reach Caddy until you
+install it:
 
 ```bash
 infra/webconsole/make-term-index.sh
 ```
 
-The unit runs ttyd with `-t rendererType=canvas`, which is load-bearing on phones: ttyd's
-default WebGL renderer loses its GPU context whenever iOS backgrounds the PWA, and ttyd
-1.7.4 never re-enables it for that page load, so the terminal comes back garbled and then
-blank. The canvas renderer has no context to lose. See that flag's note in
-`claude-web-term.service.template` before changing it.
+The unit runs ttyd with `-t rendererType=canvas`; the new page ignores that preference (only
+`fontSize`, `disableLeaveAlert`, `disableResizeOverlay`, `disableReconnect` and `titleFixed` of ttyd's
+preference frame are applied) and uses xterm's DOM renderer, adding WebGL lazily on Chromium only, with a
+fall back to the DOM renderer when the context is lost. See that flag's note in
+`claude-web-term.service.template` before changing the unit.
 
 `/opt/claude-dashboard` was created `root:root 0755` by `install.sh --infra`'s own printed
 `sudo mkdir -p /opt/claude-dashboard` command back in step 5, so a plain non-root run of the
-script above **cannot** write the result there directly — it detects that itself, keeps the
-spliced page at a temp path instead of losing it, and prints the exact follow-up:
+script above **cannot** write the result there directly — it detects that itself and prints the
+exact follow-up:
 
 ```bash
-sudo install -D -m644 <tmp-path-it-printed> /opt/claude-dashboard/term-index.html
+sudo install -D -m644 dist/term.html /opt/claude-dashboard/term-index.html
 ```
 
-Idempotent either way — the script regenerates the page from scratch on every run (same
-inputs, same output), so re-running after the `sudo install` above is safe, and re-running
-after a repo update is exactly how the page picks up new or changed blocks. Skip both
-steps and `/term` 404s for every visitor, indefinitely — it is not created by any of the
-`systemctl enable` steps above.
+The page that was installed before is kept as `term-index.legacy.html` next to it (and never
+overwritten by a later run), so **rollback is a file swap**: `sudo cp
+/opt/claude-dashboard/term-index.legacy.html /opt/claude-dashboard/term-index.html` — Caddy reads it per
+request, nothing restarts. `make-term-index.sh --dry-run` prints the plan. `scripts/deploy-dashboard.sh`
+runs it together with the rest of the dashboard. Skip it and `/term` 404s for every visitor,
+indefinitely — it is not created by any of the `systemctl enable` steps above.
 
 Note: `/term`'s "new session" launcher flow relies on `fleet/bin/cc` (installed via `./install.sh --fleet`).
 
 The persistent shell at `/app` (`lite.mjs`'s `GET /app`, `POST /a/switch`) reads and writes
 tab-to-tty mappings through this same `web-term.sh`, so a deploy that touches any of
-`lite.mjs`, `web-term.sh`, or the blocks that feed `make-term-index.sh` must redeploy all
+`lite.mjs`, `web-term.sh`, or the page that `make-term-index.sh` installs must redeploy all
 three together — `sudo install` the two files above and re-run `make-term-index.sh`, then
 `sudo systemctl restart claude-dash-lite`.
 
@@ -304,11 +305,11 @@ throwaway `wt-*` tmux sessions only and clean up after themselves:
 
 ```bash
 bash infra/webconsole/web-term-selfcheck.sh          # switch/exit-code contract, real pty client
-# then, against a scratch instance (never :3005) and a freshly built page:
-infra/webconsole/make-term-index.sh /tmp/term-index.html
+# then, against a scratch instance (never :3005) and the built page:
+node build.mjs
 SETTINGS_FILE=/tmp/s.json WEBTERM_SH=$PWD/infra/webconsole/web-term.sh \
   node infra/dashboard/lite.mjs --port 3099 --host 127.0.0.1 &
-DASH=http://127.0.0.1:3099 TERM_PAGE=/tmp/term-index.html \
+DASH=http://127.0.0.1:3099 TERM_PAGE=dist/term.html \
   WEBTERM_SH=$PWD/infra/webconsole/web-term.sh node infra/webconsole/mobile-journey.mjs
 ```
 
@@ -322,7 +323,7 @@ rather than "verified" for anything touching them.
 
 #### Terminal color themes
 
-`blocks/46-cctheme.html` ships 12 xterm color schemes (Material family, Nord, Catppuccin
+`infra/webconsole/themes.json` holds 12 xterm color schemes (the single source: `build.mjs` turns it into the `[data-theme]` CSS of the `/term` page) (Material family, Nord, Catppuccin
 Mocha, TokyoNight, Rosé Pine, GitHub Dark/Light) converted from
 [mbadolato/iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) (MIT).
 Three ways to pick one, in precedence order:

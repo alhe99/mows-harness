@@ -24,6 +24,13 @@ const BASE = process.env.MOWS_QA_BASE || 'http://127.0.0.1:3205';       // ...th
 const CUT = process.env.MOWS_QA_CUT || 'http://127.0.0.1:3206';
 const BOX = process.env.MOWS_QA_CONTAINER || 'mows-qa-ui';
 const AGENT = 'harness-reviewer';
+// MOWS_QA_UI=next (run.sh --ui next): the same probes against the cockpit shell, served at `/` since phase 05 (the legacy app is --ui=legacy, at /ui).
+// The agent pages keep their markup in the shell (.chatbox, .m.me/.claude, .chat .chatf, .cherr, button.jump, .termfab, .agchat,
+// nav.tabs, header.hdr, .agback-in), so the selectors below serve both; only the path prefix differs. Two things differ in
+// behaviour and are asserted accordingly: the shell ignores the import-map comment (its modules are bundled), and `csp` runs
+// against the shell's nonce policy, which also admits 'self' stylesheets.
+const SHELL = process.env.MOWS_QA_UI === 'next';
+const UI = SHELL ? '' : '/ui';
 
 // ---- finding Playwright, without naming anyone's home directory in a tracked file --------------
 async function loadPlaywright() {
@@ -77,7 +84,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Injection goes STRAIGHT to the dashboard, never through the proxy: the cut below takes the proxy
 // down, and an injector that goes dark with the page under test proves nothing.
+const sent = new Map(); // turn -> the raw text injected so far: what mows-agent would have saved, not what a browser renders it as
 const inject = async (turn, seq, delta) => {
+  sent.set(turn, (sent.get(turn) || '') + delta);
   const r = await fetch(`${DIRECT}/_test/chat?agent=${AGENT}&turn=${turn}&seq=${seq}&delta=${encodeURIComponent(delta)}`);
   if (r.status !== 204) throw new Error('inject failed: ' + r.status);
 };
@@ -92,8 +101,9 @@ const DEMO_HOME = ['', 'home', 'demo'].join('/');
 const TRANSCRIPT = `${DEMO_HOME}/.local/state/mows-agents/${AGENT}/chat.jsonl`;
 // What mows-agent's cmd_chat does before printing its end line. Without it the reload assertions
 // would be measuring the salvage path rather than the saved transcript.
-const saveTurn = text => inBox(`printf '%s\\n' ${JSON.stringify(JSON.stringify(
-  { at: new Date().toISOString(), role: 'assistant', text, cost_usd: 0.02 }))} >> ${TRANSCRIPT}`);
+const saveRecord = (role, text) => inBox(`printf '%s\\n' ${JSON.stringify(JSON.stringify(
+  { at: new Date().toISOString(), role, text, ...(role === 'assistant' ? { cost_usd: 0.02 } : {}) }))} >> ${TRANSCRIPT}`);
+const saveTurn = text => saveRecord('assistant', text);
 
 // The STREAMING bubble specifically, not "the last bubble" — the saved transcript's last assistant
 // turn is also .m.claude and would answer for it.
@@ -147,12 +157,12 @@ process.exit(failed);
 async function journey() {
   // 1. The SPA boots at all. Load-bearing for WebKit specifically: the shell has no bundler and
   // leans on an inline <script type="importmap"> plus bare specifiers, which Safari shipped in 16.4.
-  await page.goto(`${BASE}/ui/agents`, { waitUntil: 'load' });
-  await page.waitForSelector('a[href^="/ui/agents/"]', { timeout: 15000 });
+  await page.goto(`${BASE}${UI}/agents`, { waitUntil: 'load' });
+  await page.waitForSelector(`a[href^="${UI}/agents/"]`, { timeout: 15000 });
   check('SPA boots: import map + bare specifiers resolve, agents list renders',
-    (await page.locator('a[href^="/ui/agents/"]').count()) > 0);
+    (await page.locator(`a[href^="${UI}/agents/"]`).count()) > 0);
 
-  await page.click(`a[href="/ui/agents/${AGENT}"]`);
+  await page.click(`a[href="${UI}/agents/${AGENT}"]`);
   await page.waitForSelector('.chatbox', { timeout: 15000 });
   check('agent detail renders a chat transcript and a composer',
     (await page.locator('.chat .chatf textarea').count()) === 1);
@@ -160,6 +170,10 @@ async function journey() {
   // 2-5. The reply must grow INCREMENTALLY. A reply that lands in one block looks correct and is a
   // regression, which is why the journey samples rather than waiting for the end.
   const turn = Date.now();
+  // mows-agent's cmd_chat appends the user record BEFORE it spawns claude, so a real turn in flight always ends the saved transcript
+  // with the operator's question. The shell's store reads that to decide, after a reconnect, whether a turn is still running (the
+  // last saved turn being the agent's means it is over), so the fixture has to be as faithful as the injected deltas are.
+  saveRecord('user', 'journey question');
   const samples = [];
   await inject(turn, 1, 'Looking at the last run: ');
   await page.waitForSelector('.m.claude.streaming', { timeout: 10000 });
@@ -224,7 +238,7 @@ async function journey() {
   // A SECOND VIEWER on the same agent, during the same turn.
   const page2 = await ctx.newPage();
   page2.on('pageerror', e => consoleErrors.push('page2 pageerror: ' + e.message));
-  await page2.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
+  await page2.goto(`${BASE}${UI}/agents/${AGENT}`, { waitUntil: 'load' });
   await page2.waitForSelector('.chatbox', { timeout: 15000 });
   await sleep(500);
   await inject(turn, 200, '\n\nA token sent while two tabs are watching.');
@@ -272,7 +286,10 @@ async function journey() {
   await page2.close();
 
   // 9. End of turn, then reload: the finished reply appears exactly once.
-  const full = await liveText(page);
+  // Saved as the RAW reply, as mows-agent writes it. The rendered innerText is not that text: WebKit's innerText puts one newline
+  // between paragraphs where the deltas carry two, so saving it made the view's salvage rule (`includes`) miss and the reply
+  // appear twice in WebKit — against the /ui app as well, which is why webkit/journey was never green.
+  const full = sent.get(turn);
   saveTurn(full);
   await endTurn(turn);
   await sleep(2000);
@@ -288,6 +305,36 @@ async function journey() {
   check('after a reload the saved transcript shows that reply exactly once',
     afterReload.filter(t => t.includes('MISSEDWHILEOFFLINE')).length === 1,
     { fullLen: full && full.length, afterReload: afterReload.map(t => t.slice(-40)) });
+
+  // The chatend gap (ledger D-04, K-34), shell only: a turn that ENDS while the stream is cut. A chatend carries no id: and is never
+  // replayed (K-14), so the reconnect cannot deliver it; the store refetches the transcript instead and the view settles from that.
+  // The /ui app has no such recovery (its composer stays on "…" until a reload), so the case is the shell's alone.
+  if (SHELL) {
+    const gapTurn = turn + 1000;
+    saveRecord('user', 'gap question');
+    await inject(gapTurn, 1, 'A second turn, ');
+    await page.waitForSelector('.m.claude.streaming', { timeout: 10000 });
+    await inject(gapTurn, 2, 'cut before it ended.');
+    await sleep(400);
+    const gapCut = await (await fetch(CUT + '/')).text();
+    note('chatend gap: cut the proxied sockets mid-turn: ' + gapCut.trim());
+    await sleep(200);
+    saveTurn('The second turn finished while the stream was down: GAPDONE');
+    await endTurn(gapTurn);
+    let gap = null;
+    for (let i = 0; i < 60; i++) {
+      await sleep(500);
+      gap = await page.evaluate(() => ({
+        saved: [...document.querySelectorAll('.chatbox .m.claude:not(.streaming) .mb')].filter(e => e.innerText.includes('GAPDONE')).length,
+        live: !!document.querySelector('.chatbox .m.claude.streaming'),
+        busy: document.querySelector('.chat .chatf button').disabled,
+        thinking: [...document.querySelectorAll('.chatbox p.muted')].some(e => e.textContent === 'Thinking…'),
+      }));
+      if (gap.saved === 1 && !gap.live && !gap.busy) break;
+    }
+    check('chatend gap: after the reconnect the saved reply is on screen exactly once', gap.saved === 1, gap);
+    check('chatend gap: ...the streaming bubble is gone and the composer is usable again (busy cleared)', !gap.live && !gap.busy && !gap.thinking, gap);
+  }
 
   // The socket cut above is deliberate and every engine logs its own network error for it. Those
   // are this probe's noise; a JS error is the app's.
@@ -321,7 +368,7 @@ async function journey() {
 
 // ---- journey step 10: a message the agent never recorded ---------------------------------------
 async function lost() {
-  await page.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
+  await page.goto(`${BASE}${UI}/agents/${AGENT}`, { waitUntil: 'load' });
   await page.waitForSelector('.chat .chatf textarea', { timeout: 15000 });
   const r = await page.evaluate(async () => {
     const MSG = 'SENTINEL-' + Date.now() + ': what did your last run find?';
@@ -371,7 +418,7 @@ async function lost() {
 // text anywhere in the transcript?" — calls the repeat saved because the earlier one was, and
 // deletes it. Only a transcript that already contains the text can tell the two rules apart.
 async function repeat() {
-  await page.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
+  await page.goto(`${BASE}${UI}/agents/${AGENT}`, { waitUntil: 'load' });
   await page.waitForSelector('.chat .chatf textarea', { timeout: 15000 });
   const before = await page.evaluate(() => document.querySelectorAll('.chatbox .m.me').length);
   check('the transcript starts with exactly one saved "status?"', before === 1, before);
@@ -398,10 +445,10 @@ async function repeat() {
 // the static half in CI; this is the half only a browser can answer.
 async function csp() {
   const expectBlocked = process.env.MOWS_QA_CSP_EXPECT !== 'runs';
-  await page.goto(`${BASE}/ui/agents`, { waitUntil: 'load' });
-  await page.waitForSelector('a[href^="/ui/agents/"]', { timeout: 15000 });
+  await page.goto(`${BASE}${UI}/agents`, { waitUntil: 'load' });
+  await page.waitForSelector(`a[href^="${UI}/agents/"]`, { timeout: 15000 });
   check('the SPA still renders (a CSP that breaks the app is not a win)',
-    (await page.locator('a[href^="/ui/agents/"]').count()) > 0);
+    (await page.locator(`a[href^="${UI}/agents/"]`).count()) > 0);
 
   const r = await page.evaluate(async () => {
     const o = { violations: [] };
@@ -522,7 +569,7 @@ async function layout() {
   // 1024 and 1400 are two-column, where .tabs is gone and the header is the navigation.
   for (const [w, h, regime] of [[375, 812, 'phone'], [414, 896, 'phone'], [800, 700, 'tablet'], [1024, 800, 'desktop'], [1400, 900, 'desktop']]) {
     await page.setViewportSize({ width: w, height: h });
-    await page.goto(`${BASE}/ui/agents/${AGENT}`, { waitUntil: 'load' });
+    await page.goto(`${BASE}${UI}/agents/${AGENT}`, { waitUntil: 'load' });
     await page.waitForSelector('.chat .chatf button', { timeout: 15000 });
     await sleep(250);
     await probe();              // first call grows the transcript

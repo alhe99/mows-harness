@@ -20,6 +20,9 @@ on:
       - 'scripts/e2e-infra'
       - 'scripts/e2e-infra.sh'
       - 'scripts/stream-*.mjs'
+      - 'scripts/lh-gate.mjs'
+      - 'web/**'
+      - 'dist/**'
       - '.github/workflows/e2e-infra.yml'
   pull_request:
     paths:
@@ -28,6 +31,9 @@ on:
       - 'scripts/e2e-infra'
       - 'scripts/e2e-infra.sh'
       - 'scripts/stream-*.mjs'
+      - 'scripts/lh-gate.mjs'
+      - 'web/**'
+      - 'dist/**'
       - '.github/workflows/e2e-infra.yml'
   # The suite downloads the LATEST oauth2-proxy release and the Caddy apt repo on every run, so
   # it can break with nobody having touched this repo. Nightly turns that from a surprise during
@@ -70,3 +76,15 @@ jobs:
       - run: ./scripts/e2e-infra
         env:
           MOWS_HOST: ${{ secrets.MOWS_HOST }}
+      # Lighthouse 13.5.0 performance gate on the cockpit shell (ARCHITECTURE section 9, ledger K-29/K-30),
+      # fail mode: median of 3 mobile runs, LCP <= 2500 ms and TBT <= 200 ms, no --warn. Run against the
+      # dashboard on loopback with Playwright's Chromium; a page holding an SSE open never reaches
+      # network idle, which lh-gate.mjs handles with --max-wait-for-load=60000.
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: |
+          node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next &
+          for _ in $(seq 1 30); do curl -sf http://127.0.0.1:3105/healthz && break; sleep 1; done
+          node scripts/lh-gate.mjs --url http://127.0.0.1:3105/ --lcp 2500 --tbt 200 --runs 3

@@ -3,7 +3,7 @@
 # (dashboard + /term) so the README screenshots can be taken without ever pointing a camera
 # at a live box. Nothing here touches the real dashboard, the real tmux server, the real
 # Claude config dirs, or the real ttyd unit: it runs a patched copy of lite.mjs on its own
-# port against a synthetic /home tree, with shimmed `runuser`/`tmux`/`ccusage`/`claude-quota`
+# port against a synthetic home tree, with shimmed `runuser`/`tmux`/`ccusage`/`claude-quota`
 # so every session, project path, account name and dollar figure on screen is invented.
 #
 #   ./docs/assets/stage-demo.sh            # start; prints the URLs, stays in foreground
@@ -135,16 +135,20 @@ elif sub == 'blocks':
 EOF
 chmod +x "$STAGE/bin/"* "$H/.local/bin/"*
 
-# ---- patched lite.mjs -------------------------------------------------------
-# Only the roots move: the /home scan root and TMUX_HOME. Everything rendered is the real
-# code path, so a screenshot taken here is a faithful picture of the real UI.
-sed -e "s|'/home'|'$STAGE/hm'|g" -e "s|\`/home/|\`$STAGE/hm/|g" \
-    infra/dashboard/lite.mjs > "$STAGE/lite.mjs"
-cp infra/webconsole/themes.json "$STAGE/themes.json"
+# ---- patched copy of the dashboard ------------------------------------------
+# The whole server directory is copied (lite.mjs imports core.mjs, sse.mjs, static.mjs, routes/ and legacy.mjs, and static.mjs finds dist/ beside it),
+# and only the roots move: the /home scan root, TMUX_HOME and the /md root are literals in core.mjs and routes/md.mjs. Everything rendered is the real
+# code path (the cockpit shell, --ui=next), so a screenshot taken here is a faithful picture of the real UI.
+D=$STAGE/dash
+mkdir -p "$D"
+cp -r infra/dashboard/. "$D/"
+cp -r dist "$D/dist"
+sed -i -e "s|'/home'|'$STAGE/hm'|g" -e "s|\`/home/|\`$STAGE/hm/|g" "$D/core.mjs" "$D/routes/md.mjs"
+cp infra/webconsole/themes.json "$D/themes.json"
 echo '{"termTheme":"Material Ocean"}' > "$STAGE/settings.json"
 
-PATH="$STAGE/bin:$PATH" HOME="$H" node "$STAGE/lite.mjs" \
-  --port "$PORT" --settings-file "$STAGE/settings.json" >"$STAGE/dash.log" 2>&1 &
+PATH="$STAGE/bin:$PATH" HOME="$H" node "$D/lite.mjs" \
+  --port "$PORT" --ui=next --settings-file "$STAGE/settings.json" >"$STAGE/dash.log" 2>&1 &
 NODE_PID=$!
 
 # ---- throwaway ttyd ---------------------------------------------------------

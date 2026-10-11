@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { join, basename } from 'node:path';
 
 const args = process.argv.slice(2);
-const spec = args.find(a => !a.startsWith('--'));
+const spec = args.find((a, i) => !a.startsWith('--') && !['--only', '--owner'].includes(args[i - 1]));
 if (!spec) { console.error('usage: verify-spec.mjs <spec.md> [--dry-run] [--only ids] [--owner o]'); process.exit(2); }
 const dry = args.includes('--dry-run');
 const only = args.includes('--only') ? args[args.indexOf('--only') + 1].split(',').map(Number) : [];

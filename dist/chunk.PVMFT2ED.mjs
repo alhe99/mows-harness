@@ -1,0 +1,1 @@
+var r=(e,t)=>`/term/?arg=${e}&arg=${encodeURIComponent(t)}&arg=${[...crypto.getRandomValues(new Uint8Array(4))].map(a=>a.toString(16).padStart(2,"0")).join("")}&v=3`,n=()=>matchMedia("(display-mode: browser)").matches&&innerWidth>=700&&matchMedia("(pointer:fine)").matches;export{r as a,n as b};

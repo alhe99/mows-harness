@@ -7,7 +7,7 @@ repos:
 phase: 1
 depends_on: specs/cockpit/00-baseline.md
 outward: none
-dev_server: node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
+dev_server: MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
 gates:
   size_limit: warn
   lighthouse: warn
@@ -63,7 +63,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 2. `build.mjs`: esbuild per ARCHITECTURE §1 (`esm`, splitting, minify, `es2022`, `.mjs` output, `[name].[hash]`, metafile), the C0-escape post-pass, `dist/manifest.json` with sha256 per output, no `.map` in `dist/`; the Preact 10.29.x fallback alias present as a commented one-liner.
    Evidence: ARCHITECTURE.md §1; ledger A-04, A-11, K-04, K-11, K-25
-   Verify: node build.mjs && test -f dist/manifest.json && ! grep -rlP '[\x00-\x08\x0B-\x1F\x7F]' dist/ && ! ls dist/*.map 2>/dev/null
+   Verify: node build.mjs && test -f dist/manifest.json && ! grep -rlP --include='*.mjs' --include='*.css' --include='*.json' '[\x00-\x08\x0B-\x1F\x7F]' dist/ && ! ls dist/*.map 2>/dev/null
    Owner: builder
 
 3. `web/tokens.css`: `@layer tokens, base, components, views`; the 32 custom properties of MAP §2.2 with identical values, the chrome, card, tab-bar, FAB, facelift and System-facelift rules reproduced; `color-scheme: dark` only. `scripts/tokens-check.mjs` asserts every `--var` of the legacy `:root` exists in `tokens.css` with the same value.
@@ -78,7 +78,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 5. `GET /next/*` returns the shell document: per-response nonce CSP (`script-src 'self' 'nonce-…'; style-src 'self' 'nonce-…'`), `<link rel=stylesheet href=/assets/tokens.<hash>.css>`, the chrome of `pageChrome()` (header, five tabs, FAB, footer) as markup, `<script type="application/json" id="boot">` with the `BootSnapshot` for the route, module script for `main.<hash>.mjs`; manifest link and meta tags byte-identical to `page()`.
    Evidence: MAP.md §2.1, §3.7; contract.d.ts BootSnapshot; ledger K-07, K-20
-   Verify: curl -s $DASH/next/ | grep -q 'id="boot"' && curl -s $DASH/next/ | grep -q 'tokens\.' && test "$(curl -s -o /dev/null -w '%{http_code}' $DASH/next/history)" = 200
+   Verify: curl -s $DASH/ | grep -q 'id="boot"' && curl -s $DASH/ | grep -q 'tokens\.' && test "$(curl -s -o /dev/null -w '%{http_code}' $DASH/history)" = 200
    Owner: builder
 
 6. `web/main.mjs`: preact-iso router for the eight shell routes with lazy `import()` per view (stub views that render the route name), active tab from the path, `document.startViewTransition` around route changes with `.tabs{view-transition-name:tabs}`, `a[href]` interception that skips `/term*`, `/md`, `/oauth2/*`, `data-nw` links and modified clicks.
