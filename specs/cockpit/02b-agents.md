@@ -82,7 +82,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
    Verify: node docs/qa/probes/agents-check.mjs webkit run
    Owner: builder
 
-7. `docs/qa/probes/run.sh --ui next` runs every existing probe mode against the shell routes (selectors updated where the markup moved, listed in the probe header); `csp` still proves injection is refused under the shell's nonce policy.
+7. `docs/qa/probes/run.sh --ui next` runs every existing probe mode against the shell routes (selectors updated where the markup moved, listed in the probe header); `csp` still proves injection is refused under the shell's nonce policy; `docs/qa/probes/agents-check.mjs <engine> run` renders the fixture run page and asserts the status block, cost and assistant text.
    Evidence: MAP.md §6.3, §6.5; ledger K-10
    Verify: docs/qa/probes/run.sh all webkit --ui next
    Owner: builder

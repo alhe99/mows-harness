@@ -62,7 +62,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
    Verify: node scripts/budget.mjs --route term --max 130 && curl -s $DASH/assets/$(node -p "Object.keys(require('./dist/manifest.json').files).find(f=>f.startsWith('term.'))") -o /dev/null -w '%{http_code}' | grep -qx 200
    Owner: builder
 
-3. Themes: the `[data-theme]` blocks generated from `themes.json` at build time (the inline copy in `46-cctheme.html` goes), picker in the key bar + `?theme=<Name>` + `window.cctheme()`, precedence `localStorage.cctheme` → global `/settings/term-theme.json` (polled 30 s) → default; applies `term.options.theme`, body background and `theme-color`.
+3. Themes: the `[data-theme]` blocks generated from `themes.json` at build time (the inline copy in `46-cctheme.html` goes), picker in the key bar + `?theme=<Name>` + `window.cctheme()`, precedence `localStorage.cctheme` → global `/settings/term-theme.json` (polled 30 s) → default; applies `term.options.theme`, body background and `theme-color`; `scripts/theme-tokens-check.mjs` asserts every theme and every one of its 20 keys from `themes.json` appears in the generated `[data-theme]` CSS, and that no second copy of the themes exists in the tree.
    Evidence: MAP.md §4.4; ledger B-01, K-12
    Verify: node scripts/theme-tokens-check.mjs && node docs/qa/probes/term-check.mjs chromium theme
    Owner: builder
@@ -97,7 +97,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
    Verify: bash -n infra/webconsole/make-term-index.sh && infra/webconsole/make-term-index.sh --dry-run | grep -q legacy
    Owner: builder
 
-10. `web/pages/md/`: the `/md` document — server `mdHtml` output, `.mdhead` with download, `article.mdv`, CSP = BASE_CSP + `script-src 'self' https://cdn.jsdelivr.net 'sha256-…'` for the one pinned `mermaid@12.1.0` module with `integrity=`, loaded by `IntersectionObserver` when the first `pre[data-lang=mermaid]` enters the viewport, default layout, tap-to-toggle full size; shares `tokens.css`.
+10. `web/pages/md/`: the `/md` document — server `mdHtml` output, `.mdhead` with download, `article.mdv`, CSP = BASE_CSP + `script-src 'self' https://cdn.jsdelivr.net 'sha256-…'` for the one pinned `mermaid@12.1.0` module with `integrity=`, loaded by `IntersectionObserver` when the first `pre[data-lang=mermaid]` enters the viewport, default layout, tap-to-toggle full size; shares `tokens.css`; `docs/qa/probes/md-check.mjs <engine>` asserts the download link, the rendered README, mermaid absent from the network log until a diagram scrolls in, then one pinned CDN request with `integrity`, and tap-to-toggle.
    Evidence: MAP.md §2.3.7, §2.4 'mermaid loader'; ledger A-03, A-09, K-09, K-10, O-3
    Verify: node docs/qa/probes/md-check.mjs chromium && ! grep -rl mermaid dist/
    Owner: builder

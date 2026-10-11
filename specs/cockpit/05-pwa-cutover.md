@@ -51,7 +51,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 ## Tasks
 
-1. `web/sw.mjs` → `/sw.js`: precache the shell document, `dist/` and `tokens.css` by manifest hash; answer navigations from cache only for `/`, `/history`, `/system`, `/device`, `/agents*`, `/s/*`; network-only for `/term*`, `/oauth2/*`, `/vnc/*`, `/droidview/*`, `/api/*`, `/stream`, `/events`, `/a/*`, `/md`; never cache a 3xx; the inline offline page kept; `skipWaiting` + `clients.claim` as today.
+1. `web/sw.mjs` → `/sw.js`: precache the shell document, `dist/` and `tokens.css` by manifest hash; answer navigations from cache only for `/`, `/history`, `/system`, `/device`, `/agents*`, `/s/*`; network-only for `/term*`, `/oauth2/*`, `/vnc/*`, `/droidview/*`, `/api/*`, `/stream`, `/events`, `/a/*`, `/md`; never cache a 3xx; the inline offline page kept; `skipWaiting` + `clients.claim` as today; `scripts/sw-check.mjs` loads the worker in a fake `ServiceWorkerGlobalScope` and asserts the allowlist, that a 3xx is never cached, that `/term/` is passed through, and the offline fallback body.
    Evidence: MAP.md §2.5 'Service worker'; ledger B-10, K-20
    Verify: node scripts/sw-check.mjs
    Owner: builder

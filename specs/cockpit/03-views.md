@@ -77,7 +77,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
    Verify: ! grep -lE '<style|<div|class="' infra/dashboard/lite.mjs infra/dashboard/sse.mjs infra/dashboard/static.mjs infra/dashboard/routes/api.mjs && node infra/dashboard/lite.mjs --selftest
    Owner: builder
 
-7. `--ui=legacy` serves exactly today's documents at `/` (byte-identical HTML for the fixture, modulo the nonce), `--ui=next` serves the shell; the service template gains the flag; `deploy-dashboard.sh` copies the new modules.
+7. `--ui=legacy` serves exactly today's documents at `/` (byte-identical HTML for the fixture, modulo the nonce), `--ui=next` serves the shell; the service template gains the flag; `deploy-dashboard.sh` copies the new modules; `scripts/legacy-parity-check.mjs` fetches the fixture's `/`, `/history`, `/system`, `/device`, `/agents` under `--ui=legacy` and compares them with the pre-split HTML captured in phase 00 modulo the CSP nonce.
    Evidence: ledger B-11, K-21; MAP.md §1.6
    Verify: node scripts/legacy-parity-check.mjs
    Owner: builder
