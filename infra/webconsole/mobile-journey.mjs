@@ -64,7 +64,7 @@ async function ensureClient(session) {
 }
 const route = r => /\/term\/(ws|token)/.test(r.request().url()) ? r.fulfill({ status: 404, body: '' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: TERM });
 // the cockpit shell answers `/` by default since phase 05 (floating tab bar, no .li/.pg rows, no /app tab, no a.ab links); a dashboard started with --ui=legacy serves the old pages
-const SHELL = (await (await fetch(`${DASH}/`)).text()).includes('class="pnav"');
+const SHELL = (await (await fetch(`${DASH}/`)).text()).includes('id="boot"'); // the inline boot snapshot: only the shell document carries it (pageChrome, .pnav included, is shared with legacy)
 const IGNORE = /Failed to load resource|WebSocket connection to|Transition was skipped/;
 const PHONES = { 'iPhone 17 Pro Max': { w: 440, h: 956, sat: 62, sab: 34 }, 'iPhone 15': { w: 393, h: 852, sat: 59, sab: 34 }, 'iPhone SE': { w: 375, h: 667, sat: 20, sab: 0 }, 'landscape Pro Max': { w: 956, h: 440, sat: 0, sab: 21 } };
 
@@ -243,7 +243,8 @@ try {
     const r = await page.context().request.get(`${DASH}/app?s=${A}`, { maxRedirects: 0 });
     ok(r.status() === 302 && new RegExp(`^/term/\\?arg=attach&arg=${A}&arg=[0-9a-f]{8}&v=3$`).test(r.headers()['location'] || ''), `/app?s=${A} → 302 ${r.headers()['location']}`);
     const r2 = await page.context().request.get(`${DASH}/app`, { maxRedirects: 0 });
-    ok(r2.status() === 302 && /^\/term\/\?arg=/.test(r2.headers()['location'] || ''), `/app → 302 ${r2.headers()['location']}`);
+    const loc2 = r2.headers()['location'] || ''; // O-5: the shell sends a bare /app to its home; --ui=legacy still into the terminal
+    ok(r2.status() === 302 && (SHELL ? loc2 === '/' : /^\/term\/\?arg=/.test(loc2)), `/app → 302 ${loc2}`);
     await ctx.close();
   }
   await br.close();

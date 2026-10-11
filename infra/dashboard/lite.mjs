@@ -179,7 +179,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await reclaimAction(req, res);
     }
-    if (p === '/app') return await appView(req, res, url);
+    if (p === '/app') return await appView(req, res, url, UI === 'next');
     if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
     if (p === '/md') return await mdView(req, res, url, UI === 'next');
