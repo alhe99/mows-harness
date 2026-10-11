@@ -52,7 +52,17 @@ check('7 Back returns to Sessions in the same document', back.path === '/next/' 
 const prevented = (href, { attrs = {}, init = {} } = {}) => page.evaluate(([href, attrs, init]) => {
   const a = document.createElement('a'); a.href = href; for (const [k, v] of Object.entries(attrs)) a.setAttribute(k, v);
   document.body.append(a);
-  return !a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, ...init }));
+  // The shell's window listener stops the event, so no later listener can observe or cancel it. A window capture listener (runs
+  // first) cancels the event for real, so the browser never follows the link, and hands the shell a stand-in: defaultPrevented
+  // stays false until the shell itself calls preventDefault, which is recorded as "routed".
+  let routed = false;
+  window.addEventListener('click', e => {
+    Event.prototype.preventDefault.call(e);
+    Object.defineProperty(e, 'defaultPrevented', { get: () => routed });
+    e.preventDefault = () => { routed = true; };
+  }, { capture: true, once: true });
+  a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, ...init }));
+  return routed;
 }, [href, attrs, init]);
 page.on('popup', p => p.close());
 const cases = [
@@ -66,6 +76,7 @@ const cases = [
 ];
 for (const [id, href, opts, want] of cases) {
   check(id, (await prevented(href, opts)) === want);
+  if (want) await page.waitForSelector('#app h1[data-view="system"]'); // let the routed view's lazy import finish before the reload aborts it
   await page.goto(base, { waitUntil: 'load' });
   await page.waitForSelector('#app h1[data-view="sessions"]');
 }
