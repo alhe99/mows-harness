@@ -5,6 +5,7 @@ import { classifyFleet } from '../infra/dashboard/core.mjs';
 const now = Date.now(), recent = now - 60_000, old = now - 20 * 60_000;
 const cases = [
   ['phone working: spinner only', { tail: '✶ Wandering… (36s · ↓ 1.6k tokens)\n❯ \n  🤖 Fable 5.1 (high) | 💰 $133.64 session / $0.…\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 age…', mt: old }, 'working'],
+  ['phone working for minutes: spinner with m+s', { tail: '✢ Wandering… (5m 16s · ↓ 13.8k tokens)\n❯ \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 age…', mt: 0 }, 'working'],
   ['phone idle after a turn: footer only', { tail: '❯ \n  🤖 Fable 5.1 (high) | 💰 $133.64 session / $0.…\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 age…', mt: recent }, 'needs-you'],
   ['phone idle, turn long seen', { tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 age…', mt: old }, 'idle'],
   ['desktop working', { tail: '✻ Thinking… (5s · esc to interrupt)\n❯ \n  ? for shortcuts', mt: recent }, 'working'],
