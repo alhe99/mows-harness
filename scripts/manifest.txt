@@ -292,6 +292,7 @@ scripts/e2e-infra
 scripts/e2e-infra.sh
 scripts/fixtures/chat-tools-measured.txt
 scripts/fixtures/inherited-tools.json
+scripts/fleet-classify-check.mjs
 scripts/gen-cockpit-specs.mjs
 scripts/legacy-parity-check.mjs
 scripts/lh-gate.mjs
