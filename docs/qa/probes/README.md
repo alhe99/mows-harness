@@ -82,12 +82,13 @@ one mode not run in that day's probe passes. Run `all`.
 ## Against the cockpit shell: `--ui next`
 
 ```sh
-./docs/qa/probes/run.sh all webkit --ui next      # every mode above, against /next on the same fixture
+./docs/qa/probes/run.sh all webkit --ui next      # every mode above, against the shell at / on the same fixture (default since phase 05)
+./docs/qa/probes/run.sh all webkit                # ...and against the old /ui app (the dashboard is started with --ui=legacy)
 node docs/qa/probes/agents-check.mjs webkit all   # the agent pages around the chat: list, detail, run (fixture data, no docker)
 ```
 
-`--ui next` starts the fixture dashboard with `--ui=next`, gives the probe `MOWS_QA_UI=next`, and the probe prefixes every
-agent route with `/next` instead of `/ui`. **No selector moved**: the shell's agent pages keep `.chatbox`, `.m.me` / `.m.claude`
+`--ui next` starts the fixture dashboard with `--ui=next`, gives the probe `MOWS_QA_UI=next`, and the probe uses the agent routes
+at `/agents/...` instead of `/ui/agents/...` (until the cutover of phase 05 the shell was mounted at `/next`; that prefix now answers 301). **No selector moved**: the shell's agent pages keep `.chatbox`, `.m.me` / `.m.claude`
 (`.streaming`), `.chat .chatf`, `.cherr`, `button.jump`, `.agchat`, `.agback-in`, `.termfab`, `nav.tabs`, `header.hdr`, so the
 same assertions hold, and the probe header lists them. Three things are different on purpose:
 
@@ -111,7 +112,7 @@ node docs/qa/probes/views-check.mjs chromium device   # one view, one engine
 ```
 
 Needs the dev instance (`MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next`, or `DASH=...`); no docker.
-Like `sessions-check`, it runs against `/next` with **fixture data**: the boot snapshot is rewritten in flight, `EventSource` is a fake that
+Like `sessions-check`, it runs against the shell with **fixture data**: the boot snapshot is rewritten in flight, `EventSource` is a fake that
 `window.__emit(name, data)` drives, and every `/api/*`, `/a/*`, `/droid/*`, `/watch/*` and `/sys/*` request is answered by the probe, so nothing it does
 reaches a real session, container or disk. The fixture filters, pages and mutates its rows the way `routes/api.mjs` does, so a chip, a pager link or a
 form has an observable effect. What each view is held to: the fixture renders; chips, the search form and the pager navigate in the same document
@@ -149,6 +150,27 @@ network), and tap-to-toggle full size. A file with no diagram never contacts the
 
 What none of it can tell you (the `real-device terminal` manual gate): the iOS keyboard and its shadow-line word suggestions, resume after a screen
 lock, the key bar geometry against a real home indicator, and one Android. Try `?ime=off` and `?paint=off` on the device.
+
+## The installed-app layer: `pwa-check` (cockpit phase 05)
+
+```sh
+node docs/qa/probes/pwa-check.mjs chromium all       # badge push sw
+node docs/qa/probes/pwa-check.mjs webkit badge       # the badge and the Wake Lock run on WebKit too; push and sw SKIP there, loudly
+node scripts/sw-check.mjs && node scripts/push-check.mjs   # the worker and the Web Push implementation with no browser at all
+```
+
+Needs the dev instance, like `views-check`; no docker. `badge` runs the shell with a fixture fleet (the boot snapshot is rewritten, `EventSource` is a fake
+`window.__emit` drives) and stubs for `navigator.setAppBadge`, `clearAppBadge` and `wakeLock`: one needs-you sets the badge to 1, the count follows the fleet
+event, focus clears it, the Wake Lock is requested while a session is working and the tab is visible, released when none is or the tab hides, taken again on
+return. `push` drives the real `/sw.js` in Chromium (its **new headless mode**: the headless shell reports every notification permission as denied and cannot
+show one): the System view's Notifications card shows permission, subscription and last delivery; "Turn on" posts the subscription made with the VAPID key
+`/api/push/key` returned (`PushManager.subscribe` is a stub and the two endpoints are the probe's, so nothing reaches a push service or the server's store); a
+`push` event dispatched into the worker shows the declarative notification; a `notificationclick` brings the open window to its route; "Turn off" deletes
+the subscription by the id the server gave. `sw` runs the real worker against the dev instance: it installs and precaches, and offline an allowlisted route
+is served from its cache while `/term/` and `/oauth2/*` are not intercepted (the browser's own network error, no offline page).
+
+What none of it can tell you (the `push + badge on iOS` manual gate): that APNs or FCM deliver to a Home Screen install with the app closed, that the badge on
+the icon equals the sessions waiting, and that the Wake Lock keeps an iPhone awake.
 
 ## What they cannot tell you
 

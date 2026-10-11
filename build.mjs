@@ -24,7 +24,7 @@ const themes = {
   },
 };
 const entryPoints = [
-  'web/main.mjs', 'web/tokens.css',
+  'web/main.mjs', 'web/tokens.css', 'web/sw.mjs', // sw: served as /sw.js behind a precache list (static.mjs swView)
   { in: 'web/pages/term/term.mjs', out: 'term' }, { in: 'web/pages/md/md.css', out: 'md' },
   { in: 'web/md.mjs', out: 'marked' }, // the markdown chunk gets its own budget (--chunk marked); chat.mjs imports it lazily
   ...readdirSync('web/views').filter(f => f.endsWith('.mjs')).sort().map(f => `web/views/${f}`),

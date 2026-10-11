@@ -5,11 +5,13 @@ import { LocationProvider, Router, useLocation } from 'preact-iso/router';
 import lazy from 'preact-iso/lazy';
 import { store } from './store.mjs';
 import './standalone.mjs';
+import { startPwa } from './pwa.mjs';
 
 // '/next' while the current UI still serves '/' (phase 05 swaps them and the server sends '').
 const base = document.documentElement.dataset.base || '';
 const boot = JSON.parse(String(document.getElementById('boot')?.textContent));
 store.start(boot);
+startPwa(store);
 
 // one lazy import() per view, so each view is its own chunk and budget (K-02)
 const routes = [

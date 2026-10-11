@@ -7,6 +7,8 @@
 //   node scripts/budget.mjs --fonts                 identity bytes of the woff2 files
 //   node scripts/budget.mjs --server                infra/dashboard/{lite.mjs,core.mjs,routes/*,sse.mjs,static.mjs} (core.mjs holds what the split took out of lite.mjs; legacy.mjs is the old UI and is not server code)
 //   node scripts/budget.mjs --legacy-app            infra/dashboard/app (today's UI)
+//   node scripts/budget.mjs --all [--warn]          every ARCHITECTURE section 9 budget in one run: shell, each web/views/*.mjs route, term, marked, tokens.css,
+//                                                   fonts, the server, and "no mermaid in dist/"; exit 1 if any fails (what preflight and CI run)
 //   node scripts/budget.mjs --self-test
 // Options: --max <kb>  --warn  --dist <dir> (default dist)  --metafile <path> (default <dist>/metafile.json)
 // kB here is 1000 B, as in the spec's "130 776 B".
@@ -86,7 +88,7 @@ function measure() {
     if (!files.length) throw new Error(`no ${which.slice(2)} "${n}" in ${DIST}/`);
     return { label: `${which.slice(2)} ${n}`, files, size: gz };
   }
-  throw new Error('usage: budget.mjs --route|--chunk|--file|--fonts|--server|--legacy-app [--max kb] [--warn] | --self-test');
+  throw new Error('usage: budget.mjs --route|--chunk|--file|--fonts|--server|--legacy-app|--all [--max kb] [--warn] | --self-test');
 }
 
 function report(label, bytes, files) {
@@ -97,6 +99,22 @@ function report(label, bytes, files) {
   if (over <= 0) { console.log(`ok: within ${max} kB (${(-over / 1000).toFixed(1)} kB headroom)`); return 0; }
   console.log(`${has('--warn') ? 'WARN' : 'FAIL'}: ${(over / 1000).toFixed(1)} kB over the ${max} kB budget`);
   return has('--warn') ? 0 : 1;
+}
+
+// ARCHITECTURE section 9 / BUDGET in web/contract.d.ts, kB each; a view's budget is its route closure
+function all() {
+  const views = existsSync('web/views') ? readdirSync('web/views').filter(f => f.endsWith('.mjs')).map(f => basename(f, '.mjs')).sort() : [];
+  const runs = [['--route', 'shell', 30], ...views.map(v => ['--route', v, 15]), ['--chunk', 'marked', 25], ['--file', 'tokens.css', 12], ['--fonts', '', 80], ['--route', 'term', 130], ['--server', '', 140]];
+  let bad = 0;
+  for (const [flag, name, kb] of runs) {
+    const r = spawnSync('node', [process.argv[1], '--dist', DIST, flag, ...(name ? [name] : []), '--max', String(kb), ...(has('--warn') ? ['--warn'] : [])], { encoding: 'utf8' });
+    process.stdout.write(r.stdout + r.stderr);
+    if (r.status) bad++;
+  }
+  // mermaid is pinned-CDN on /md (O-3) and never enters dist/
+  const hits = existsSync(DIST) ? readdirSync(DIST).filter(f => /\.(mjs|css|html|json)$/.test(f) && readFileSync(join(DIST, f), 'utf8').includes('mermaid')) : [];
+  console.log(hits.length ? `FAIL: mermaid is in dist/ (${hits.join(', ')})` : 'ok: no mermaid in dist/');
+  return bad + hits.length ? 1 : 0;
 }
 
 function selfTest() {
@@ -134,6 +152,7 @@ function selfTest() {
 
 try {
   if (has('--self-test')) process.exit(selfTest());
+  if (has('--all')) process.exit(all());
   const m = measure();
   process.exit(report(m.label, sum(m.files, m.size), m.files.length));
 } catch (e) { console.error(`budget: ${e.message}`); process.exit(2); }

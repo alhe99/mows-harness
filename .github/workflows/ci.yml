@@ -24,3 +24,15 @@ jobs:
       # coverage-per-second available here; unconditional, and in this job rather than its own
       # because it needs nothing the steps above have not already installed.
       - run: bash scripts/e2e-agents.sh
+      # The cockpit's gates, in fail mode since phase 05 (ARCHITECTURE section 9, ledger K-30). None
+      # takes --warn. Tooling is devDependencies only (the server imports node: builtins), installed
+      # without lifecycle scripts; Playwright's browsers are fetched separately for the parity capture.
+      - run: npm ci --ignore-scripts
+      # K-30: dist/ is the build of web/, nothing else. A hand-edited or stale dist/ fails here.
+      - run: node build.mjs && git diff --exit-code -- dist/
+      - run: node scripts/budget.mjs --all
+      # Frozen legacy baseline (K-33) vs the new shell, every route, WebKit and Chromium. The capture
+      # runs the fixture in a throwaway container; docker is preinstalled on ubuntu-24.04.
+      - run: npx playwright install --with-deps chromium webkit
+      - run: node scripts/parity-capture.mjs --ui next --out "$RUNNER_TEMP/parity"
+      - run: node scripts/parity-diff.mjs docs/qa/baseline/cockpit "$RUNNER_TEMP/parity" --max 0.5

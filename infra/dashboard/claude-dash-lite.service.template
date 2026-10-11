@@ -23,9 +23,9 @@ Type=simple
 #   its first real session — this deliberately filters out non-profile
 #   .claude-* dirs (e.g. a template cache or the claude-mem plugin's store).
 User=root
-# --ui=legacy|next picks the document `/` answers with (K-21): legacy is today's server-rendered dashboard; next serves the cockpit
-# shell there. Rolling the cutover back is this one word and a restart.
-ExecStart=/usr/bin/node /opt/claude-dashboard/lite.mjs --port 3005 --host 127.0.0.1 --ui=legacy
+# --ui=next|legacy picks the document `/` answers with (K-21): next is the cockpit shell (the default since the cutover); legacy is the old
+# server-rendered dashboard. Rolling the cutover back is this one word and a restart (UI=legacy scripts/deploy-dashboard.sh does both).
+ExecStart=/usr/bin/node /opt/claude-dashboard/lite.mjs --port 3005 --host 127.0.0.1 --ui=next
 Restart=on-failure
 RestartSec=3
 OOMScoreAdjust=-200

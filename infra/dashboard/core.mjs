@@ -92,7 +92,7 @@ export const RESUME_DAYS = +flag('--resume-days', 7);
 
 export const canResume = (mt, live) => live || Date.now() - mt < RESUME_DAYS * 864e5;
 
-const SETTINGS_FILE = flag('--settings-file', process.env.SETTINGS_FILE || '/opt/claude-dashboard/settings.json');
+export const SETTINGS_FILE = flag('--settings-file', process.env.SETTINGS_FILE || '/opt/claude-dashboard/settings.json');
 
 
 function loadThemeMap() {

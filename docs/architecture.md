@@ -21,7 +21,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | Port | Bound to | Service | Notes |
 |---|---|---|---|
 | 443 | public | Caddy | TLS termination + reverse proxy — the only thing this box exposes to the Internet and the only thing that terminates TLS |
-| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; the PWA-installable **mows control** app — `/` Sessions (live fleet cards, pane-content state classifier, SSE updates, pull-to-refresh), `/history` (day-grouped, filterable, paginated), `/system` (metrics, environment, per-account usage/spend, `POST /sys/reclaim` behind a mandatory preview, restart-all), `/device` (Android emulator + QA-watch noVNC stages; old `/settings`, `/watch`, `/droid` URLs 302 here), `/agents` (Layer 6 agents: list, detail, per-run, and four actions), the global terminal theme endpoints (`/settings/term-theme{,.json}`, persisted to `/opt/claude-dashboard/settings.json`), `/term` companion, and the persistent shell — `GET /app`, `POST /a/switch`, `GET /app/live.json` (see caveat below). Since 2026-09-16 the same process also serves the client-rendered `/ui/*` app and what it runs on: `/ui/assets/*` (content-hashed modules from `infra/dashboard/app/`), `GET /api/*` (JSON), and `GET /stream` (one multiplexed SSE connection per tab). See "Two navigation models" below, and **read the deploy note there — `lite.mjs` is no longer a single file you can install on its own** |
+| 3005 | 127.0.0.1 | dashboard (`infra/dashboard/lite.mjs`) | Reached only via Caddy; the PWA-installable **mows control** app — `/` Sessions (live fleet cards, pane-content state classifier, SSE updates, pull-to-refresh), `/history` (day-grouped, filterable, paginated), `/system` (metrics, environment, per-account usage/spend, `POST /sys/reclaim` behind a mandatory preview, restart-all), `/device` (Android emulator + QA-watch noVNC stages; old `/settings`, `/watch`, `/droid` URLs 302 here), `/agents` (Layer 6 agents: list, detail, per-run, and four actions), the global terminal theme endpoints (`/settings/term-theme{,.json}`, persisted to `/opt/claude-dashboard/settings.json`), `/term` companion, and the persistent shell — `GET /app`, `POST /a/switch`, `GET /app/live.json` (see caveat below). Every one of those pages is the cockpit shell (`--ui=next`, the default; `--ui=legacy` is the rollback) built from `web/` into `dist/` and served under `/assets/`; `/ui/*` and `/next/*` answer 301 into it. The same process serves `GET /api/*` (JSON, push included), `GET /stream` (one multiplexed SSE connection per tab) and `/sw.js`. See "One navigation model" below, and **read the deploy note there — `lite.mjs` is no longer a single file you can install on its own** |
 | 7681 | 127.0.0.1 | `ttyd` (`/term`) | Only `/term/ws` and `/term/token` reach `ttyd` through Caddy's `reverse_proxy`; plain `GET /term` and `/term/` are intercepted earlier and served by Caddy's own `file_server` from `term-index.html` (see `infra/webconsole/make-term-index.sh`) |
 | 4180 | 127.0.0.1 | oauth2-proxy | Caddy's `forward_auth` target for every protected route, plus a `reverse_proxy` for `/oauth2/*` |
 | 2019 | 127.0.0.1, loopback-only | Caddy's admin API | Never configured by `infra/caddy/Caddyfile.template` at all — Caddy's own factory default is to bind its admin endpoint to `localhost:2019` and refuse non-loopback access; nothing in this repo changes that default, so it stays loopback-only for free |
@@ -266,203 +266,110 @@ session is `attach` on a row: a normal page load, which works even when that tab
 attached to it. `infra/webconsole/mobile-journey.mjs` asserts this geometrically (measured
 edges, not element presence) across four phone geometries; run it before any deploy that
 touches the terminal page or the dashboard.
-### Two navigation models: platform features at `/`, a small SPA at `/ui`
+### One navigation model: the cockpit shell at `/`, and `--ui=legacy` one flag away
 
-Until 2026-09-16 there was one answer here and it was "platform features, not a framework". That
-is still true of every server-rendered route, and it is no longer the whole truth: `/ui/*` is a
-client-rendered app. Both models ship, on purpose, and the twins are retired one at a time only
-after the replacement has run on the box for a week (spec §6) — so `/agents` still serves HTML
-while `/ui/agents` exists beside it.
+Since the cockpit cutover (phase 05 of `specs/cockpit/`) there is **one** UI. `/`, `/history`, `/system`,
+`/device`, `/agents`, `/agents/<name>`, `/agents/<name>/<run>` and `/s/<acct>/<sid>` are all the same
+document: a shell (`routes/documents.mjs`, `nextView`) holding the header, the tab bar and the terminal FAB
+as markup, an inline `<script type="application/json" id="boot">` with the first paint's data (K-07), and
+one module entry. Preact 11 and signals, bundled off-server by `build.mjs` from `web/` into the committed
+`dist/` (one hashed file per view, every view a lazy `import()`), served by `static.mjs` under `/assets/` as
+`immutable`. `/term` and `/md` stay separate documents. `/api/*` and `/stream` are the contract in
+`web/contract.d.ts`. The long argument for this stack is `specs/cockpit/ARCHITECTURE.md`; what follows is
+what an operator needs to know.
 
-#### The server-rendered routes — `/`, `/history`, `/system`, `/device`, `/s/*`, `/agents`
+**The flag.** `lite.mjs --ui=next` is the default; `--ui=legacy` serves the previous server-rendered pages
+(`legacy.mjs`) at `/` and the old client-rendered app at `/ui`, with the shell still mounted at `/next` for
+comparison. The rollback is that one word and a restart (`UI=legacy scripts/deploy-dashboard.sh`, which also
+rewrites the unit's `ExecStart`); there is no `/legacy` mount and no proxy flip. `legacy.mjs`, the `/agents`
+twin and the `<noscript>` checks are deleted in Stage 8 step 4, one release after the cutover, in their own
+spec. Until then `scripts/legacy-parity-check.mjs` holds `--ui=legacy` to the documents it served before the
+split and `scripts/e2e-infra.sh` runs a second dashboard with the flag.
 
-No client framework (see the header of `infra/dashboard/lite.mjs` — that replaced a React build
-that cost 500 MB RSS and a MB-scale bundle). They feel like an installed app because the
-platform does the work:
+**Retired routes.** With the default, `GET /next/*` answers `301` to the same path without the prefix and
+`GET /ui/*` answers `301` into the shell (`/ui/agents/<name>[/<run>]` to the same route, anything else to
+`/agents`, via `uiTwinPath`'s allow-list; the query string is kept). The manifest is unchanged byte for byte
+(`id: /`, `start_url: /app`, `scope: /`): installed apps cache it, and `/app` still 302s to `/term/`.
 
-- **cross-document View Transitions** (`@view-transition { navigation: auto }`): the tab bar is
-  named `tabs` so it stays pinned while the content crossfades. Chrome 126+, Safari 18.2+;
-  anything older just navigates.
-- **Speculation Rules** (`<script type="speculationrules">`, `eagerness: moderate`): dashboard
-  links are prerendered on hover/touch-start, so the tap lands on a page that already exists.
-  The rule lists `/`, `/?*`, `/history`, `/history?*`, `/system`, `/device`, `/s/*`, `/agents`,
-  `/agents?*` and `/agents/*` only — never `/term*` (a prerender would spawn a ttyd → tmux
-  attach), and links carrying `fresh=1` (20 s quota refresh) or `reclaim=1` (disk scan) are
-  excluded by
-  selector. **`/ui*` is excluded by that same selector**, because the SPA owns its own
-  navigation: prerendering runs the page's scripts, so a prerendered `/ui` boots a whole second
-  copy of the app — including its `EventSource` on `/stream`, against a cap of 8 concurrent
-  clients per dashboard process — for a tap that may never come. Chrome only; Safari relies on
-  bfcache.
-- **bfcache**: pages send `cache-control: no-cache` (never `no-store`) and register no `unload`
-  handlers, so back/forward restore instantly.
-- **motion is CSS-only and compositor-only** (2026-08-26): the new screen rises 6 px under the
-  pinned tab bar (`vt-in`), every control shrinks to `scale(.96)` on `:active`, `<details>`
-  content fades in, and the terminal's session sheet slides up/down via `transition-behavior:
-  allow-discrete` + `@starting-style` (`web/pages/term/term.css`). Only `transform` and `opacity`
-  are ever animated — nothing triggers layout, no JS timers — and every rule sits behind
-  `prefers-reduced-motion: no-preference`. Browsers without `allow-discrete` drop those
-  declarations and toggle instantly, which is exactly the pre-motion behavior.
+**Platform features, replaced.** The server-rendered pages got their app feel from cross-document view
+transitions, speculation rules and bfcache. A single-page shell cannot use those, so each has a counterpart in
+`web/main.mjs`: `document.startViewTransition` around route changes with `.tabs` keeping
+`view-transition-name: tabs`; a prefetch of the target route's JSON on `pointerenter`/`touchstart` of a tab
+link (never `/term*`, `fresh=1`, `reclaim=1`); the store keeps each route's scroll offset and the last list, so
+Back and Forward re-render with no request. Actions are still `<form method=post>` elements the shell
+intercepts with `fetch` and that fall back to a normal POST, 303, GET.
 
-Actions stay POST → 303 → GET; a two-line `submit` listener marks the form `.busy` while it runs
-and `pageshow` clears it on a bfcache restore. Proof under automation stops at the prerender
-*request* — Chrome reports `PrerenderingDisabledByDevTools` whenever CDP is attached, so
-activation can only be seen in a real browser.
+**The installed app.** `web/sw.mjs`, served as `/sw.js` behind a precache list of `dist/` by sha256
+(`static.mjs`, `swView`; the bytes change exactly when the build does), answers from its cache only the
+navigation allowlist `/`, `/history`, `/system`, `/device`, `/agents*`, `/s/*`, network first. `/term*`,
+`/oauth2/*`, `/vnc/*`, `/droidview/*`, `/api/*`, `/stream`, `/events`, `/a/*`, `/md` are not intercepted at
+all, and a 3xx or a followed redirect is never cached (the installed app is scoped to `/`, so the worker sees
+all of them; ledger B-10). `scripts/sw-check.mjs` holds that. **Badge and Wake Lock**: `navigator.setAppBadge(n)`
+with `n` the sessions in `needs-you` in the `fleet` signal, cleared on focus; `navigator.wakeLock` held while a
+session is `working` and the tab is visible (`web/pwa.mjs`). **Push**: `GET /api/push/key` is the VAPID public
+key; `POST` and `DELETE /api/push/subscribe` store a subscription (same-origin, JSON, at most 4 KB, an https
+endpoint on a named host). The key pair and `push-subs.json` live next to `settings.json` (`0600`; a dev
+instance that cannot write there keeps them in memory). `sse.mjs` watches the fleet itself, only while someone
+is subscribed, and sends on a session's transition into `needs-you`, once per session per 30 s, a declarative
+payload `{ web_push: 8030, notification, app_badge }` encrypted per RFC 8291 (aes128gcm) and signed per RFC 8292
+with `node:crypto` only (`routes/webpush.mjs`; `scripts/push-check.mjs` decrypts it with WebCrypto). The
+System view's Notifications card subscribes and unsubscribes. Delivery to an installed iPhone is a manual gate
+(owner and date in `specs/cockpit/ARCHITECTURE.md` section 13): no automation can receive a real push.
 
-#### `/ui/*` — the SPA, and what the move cost
+**The gates.** The budgets are gzip-9 per route closure, not one ceiling for the client, and they are in fail
+mode:
 
-`/ui` serves a shell (`uiShellHtml` in `lite.mjs`) holding an import map and one module entry
-point; everything under `infra/dashboard/app/` is served from `/ui/assets/` under a
-content-hashed name and cached `immutable`. It exists because a chat transcript that streams
-token-by-token, a capability panel and a live run list are state a page reload destroys, and
-POST → 303 → GET destroys it on every turn.
+| Gate | Where | What it holds |
+|---|---|---|
+| per-route budgets | preflight, `scripts/budget.mjs --all` | shell 30 kB, each view 15 kB, marked 25 kB, `tokens.css` 12 kB, fonts 80 kB, `/term` 130 kB, server 140 kB, no mermaid in `dist/` |
+| `dist/` is the build | preflight (manifest check) and CI (`node build.mjs && git diff --exit-code -- dist/`) | every committed file hashed in `dist/manifest.json`, two builds byte-identical |
+| served-document ceiling | `e2e-infra.sh` | the real `GET /` response at gzip -9, 20,480 B, with the container's fleet |
+| Lighthouse, parity | `scripts/lh-gate.mjs`, `scripts/parity-diff.mjs` | LCP 2,500 ms and TBT 200 ms on `/`; screenshots within 0.5 % of the frozen baseline |
+| service worker, push | preflight | `scripts/sw-check.mjs`, `scripts/push-check.mjs` |
+| chat-view XSS, capability honesty | preflight 5c, 5d | 91 and 170 assertions over the renderer and the panel |
 
-**Kept, by a different mechanism.** Same-document View Transitions replace the cross-document
-ones: `navigate()` in `app/main.mjs` wraps the `history.pushState` in `document.startViewTransition`,
-and the tab bar keeps its `view-transition-name: tabs`, so the pinned-bar crossfade survives.
-A browser without `startViewTransition` takes the `else` branch and navigates without animation.
+The first two rows replaced the old client-asset ceiling over `infra/dashboard/app/` (preflight 5b still
+checks that tree while `--ui=legacy` ships it). Every gate fails rather than skips when it cannot run: a gate
+that quietly skips itself reports green while guarding nothing, which is the failure the previous branch hit
+four separate times.
 
-That bar is **the same bar**, not a copy of it: `pageChrome()` in `lite.mjs` builds the header,
-the tab bar and the terminal FAB once, and both `page()` (every server-rendered route) and
-`uiShellHtml()` (the SPA) call it. One parameter differs — the Agents tab points at `/ui/agents`
-from inside the app and at `/agents` from outside, so tapping the tab you are on does not eject
-you to the twin you navigated away from. Every other tab is an ordinary cross-document
-navigation, because `main.mjs`'s click handler only intercepts `a[href^="/ui"]`.
+The shell carries a Content-Security-Policy of its own: `default-src 'none'`, no `unsafe-inline`, one nonce
+minted per response admitting the boot snapshot and the module script, and `'self'` for the linked
+stylesheet. The legacy pages carry dozens of inline `style=""` attributes and several inline scripts, and CSP3
+ignores `'unsafe-inline'` the moment a nonce is present, so they take only the directives that say nothing
+about inline code (`BASE_CSP`). The reasoning is in `uiCsp`'s header comment in `core.mjs`; `e2e-infra.sh`
+asserts both policies and that exactly one header is sent.
 
-This is worth spelling out because **for the whole of this branch there was no bar on `/ui` at
-all.** The shell was `<div id="app">` and a `<noscript>`, so with JavaScript on there was no link
-from the app to `/`, `/history`, `/system`, `/device` or `/agents` — the way back was the Back
-button or typing a URL. `scripts/e2e-infra.sh` now asserts both navs link to all four siblings,
-by href and by label: `.tabs` is `display:none` above 701px and `.pnav` is hidden below it, so
-each is the *only* navigation at its width and asserting one would leave the other green and
-unnavigable. One consequence to know before touching the chat view's CSS: the composer and the
-jump button are `position:sticky`, and a sticky element sticks to the scrollport rather than to
-the end of the document, so `body`'s bottom padding does not lift them clear of a fixed bar —
-they carry their own clearance, in a `max()` that collapses when the on-screen keyboard is up.
-
-One deliberate difference from the server-rendered pages: those hide their `<h1>` above 701px
-(`body>h1{display:none}`, because the desktop header replaces it), and the SPA's does **not** —
-its `<h1>` is inside `#app`, so the selector does not reach it, and that is left alone rather than
-extended. The SPA's `<h1>` is not a title, it is the back link: `← <name>` on a run view goes to
-that agent's page and nothing else on the page does. Hiding it to match would cost the only way
-back from a run view on a desktop, so a slightly duplicated heading is the cheaper trade.
-
-**Lost, accepted, and written down here rather than discovered later:**
-
-- **bfcache.** Back and forward are the client's job now. `app/main.mjs` keeps a
-  `scrollByPath` map and restores the offset for the incoming path on the next frame.
-  **This is not complete, and the gap is marked in the source:** `navigate()` saves the outgoing
-  scroll position and the `popstate` handler does not, so scroll → Back → Forward → Back lands
-  on the offset from the last click-navigation rather than the one you just set. The `TODO` in
-  `app/main.mjs` carries the fix and the reason it is not a one-liner.
-- **The no-JS fallback.** `GET /ui/*` serves a `<noscript>` block naming **that route's own**
-  server-rendered twin — `/agents/<name>` from `/ui/agents/<name>`, not a constant `/` — and that
-  is the whole fallback. The mapping is an allow-list (`uiTwinPath`) rather than string surgery on
-  the path: the value goes into an `href`, and the SPA's router falls through to the agents list
-  for any unmatched path, so anything unrecognised resolves to `/agents`, which is the twin of
-  what the app will actually render. When a twin is retired, that `<noscript>` stops being a
-  fallback and becomes a dead end; retiring a twin means revisiting `uiTwinPath` in the same
-  change, and the per-route link is what makes that obvious rather than easy to miss.
-- **Speculation Rules, with nothing yet in their place.** Spec §2 called for prefetch on hover
-  to replace them for app routes. **It was specified and not built** — there is no prefetch,
-  preload or hover handler anywhere in `infra/dashboard/app/`. A first tap on `/ui/agents/<name>`
-  pays its `GET /api/agents/<name>` round trip; the multiplexed `/stream` keeps the *list* live
-  but pre-warms no detail route. Of the three losses on this list it is the only one with no
-  replacement at all, and the only one with a straightforward path back.
-
-**The ceilings that replaced them.** A framework-free page needs no budget; a client-rendered one
-does, or it grows back into the bundle `lite.mjs` was written to delete. Five gates, all blocking:
-
-| Gate | Where | What it holds | Measured now |
-|---|---|---|---|
-| client-asset ceiling | preflight 5b | every `.mjs`/`.css` under `app/`, gzip -9, summed | 45,494 B of 76,800 B |
-| **served-document ceiling** | `e2e-infra.sh` | the real `GET /ui` response, at gzip -9 | **~16,750 B of 20,480 B** |
-| vendored-module hashes | preflight 5b | `app/vendor/SHA256SUMS`, checked with `sha256sum -c` | 4 modules pinned |
-| chat-view XSS gate | preflight 5c | `scripts/chat-view-check.mjs` over the renderer | 91 assertions |
-| capability honesty gate | preflight 5d | `scripts/capability-check.mjs` over the panel | 170 assertions |
-
-**It takes both ceilings to cover the client, and for most of this branch only the first existed
-and `lite.mjs` claimed it covered everything.** 5b is a static file gate and cannot see the shell,
-which inlines the whole `CSS` constant — the *server-rendered* dashboard's entire stylesheet,
-fleet rows and history and terminal included, of which `/ui` uses a fraction. That is roughly a
-third again on top of the gated total; it is re-sent in full on every hard load (the shell is
-`no-cache` and its nonce changes per response, so it can never 304); and it grows every time
-somebody styles an unrelated server-rendered page, which is precisely the direction the ceiling
-exists to police and precisely the one the static gate is blind to. Splitting the stylesheet so
-`/ui` ships only what it uses is the real fix and is not done. Until then the served document is
-measured rather than assumed — proved able to fail by planting ~40 KB of extra rules in the `CSS`
-constant, which takes the response to 27,054 B gzipped and turns the assertion red. (The figure
-is written approximate because it is not byte-stable: gzip output varies by a few bytes between
-runs. The ceiling is what is exact, and it is an integer compared with `-le`, so that variance
-cannot flip it against ~3,700 B of headroom. The check re-compresses at `-9` to match 5b's
-convention; `send()` ships `gzipSync` at zlib's default, which measures about 0.6 % more on the
-wire — so the label says "at gzip -9" rather than "as served", which would be describing something
-adjacent to what it measures.)
-
-The served-document ceiling lives in `e2e-infra.sh` rather than preflight because it needs a
-running dashboard to `GET`, and preflight is a static gate that must not boot a server. That makes
-it weaker than 5b — it runs on the path-filtered push job and nightly, not on every preflight —
-and that is the trade, stated rather than glossed.
-
-5b *fails* rather than skips when `infra/dashboard/app` is absent, and 5c/5d fail rather than
-skip when Node or PyYAML is missing — a gate that quietly skips itself reports green while
-guarding nothing, which is the failure this branch hit four separate times.
-
-`/ui` also carries a Content-Security-Policy that the server-rendered pages cannot: `default-src
-'none'`, no `unsafe-inline`, and one nonce minted per response (not per process) admitting
-exactly the one inline `<style>` and the one inline import map. It is scoped to `/ui` because the
-pages at `/` carry dozens of inline `style=""` attributes written over many months, and CSP3
-ignores `'unsafe-inline'` the moment a nonce is present — so the same policy applied there would
-break those pages rather than harden them. The reasoning is in `uiCsp`'s own header comment,
-directive by directive.
-
-**The capability panel is the other thing `/ui` adds**, and what it is careful *not* to say is the
-point of it. It reports **effective** capability — what the frontmatter actually grants once the
-deny list is subtracted — and names **unknown reach** instead of guessing at it: an agent with no
-`tools:` key inherits everything including Bash and is reported as inheriting, not as empty; an
-`mcp__*` tool reaches whatever its server reaches and is reported as unknown rather than
-classified; unreadable input rounds toward unrestricted, never toward restricted. "Shows what the
-agent can do" is the summary that undoes it. Field by field, with the gaps it declares, in
-[`agents/SETUP.md`](../agents/SETUP.md).
+**The capability panel** (`web/views/capability.mjs`) reports **effective** capability: what the frontmatter
+grants once the deny list is subtracted, and it names **unknown reach** instead of guessing: an agent with no
+`tools:` key inherits everything including Bash and is reported as inheriting, not as empty; an `mcp__*` tool
+reaches whatever its server reaches and is reported as unknown rather than classified; unreadable input rounds
+toward unrestricted, never toward restricted. "Shows what the agent can do" is the summary that undoes it.
+Field by field, with the gaps it declares, in [`agents/SETUP.md`](../agents/SETUP.md).
 
 **What is not verified.** Stated here rather than left for someone to discover:
 
-- **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb`
-  handler is exercised against `visualViewport` at a 375×812 viewport, which is not the same
-  thing — and WebKit ignores `interactive-widget=resizes-content`, which makes that handler the
-  only thing carrying iOS. This one needs a physical phone and nobody has run it on one.
+- **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb` handler is
+  exercised against `visualViewport`, which is not the same thing, and WebKit ignores
+  `interactive-widget=resizes-content`, which makes that handler the only thing carrying iOS.
 - **Real Safari**, as opposed to WebKit the engine: no iOS quirks, no Safari chrome, no bfcache.
-- **A real agent turn through `/ui`.** Every streaming assertion drives the server's own
-  `MOWS_TEST_HOOKS` delta injector; a real `claude -p` turn costs money and needs systemd.
-- **What the Claude Code CLI does with `tools: ''`.** The panel calls it unreadable and rounds
-  toward unrestricted; `mows-agent-meta` calls it the empty list. Neither reads a *tool* out of
-  it, which is what the gate asserts, but which one matches the CLI is unmeasured.
-- **Prerender *activation*.** Chrome reports `PrerenderingDisabledByDevTools` whenever CDP is
-  attached, so automation can only see the prerender request, never the activation.
-- **The chrome's geometry with a keyboard up, and on a real device.** This was previously listed
-  here as unverified *in full*, and the defect was inside the caveat: the terminal FAB covered the
-  Send button at every phone width, in both engines, and eleven grep-over-markup assertions could
-  not see it. The geometry that can be measured now is — `docs/qa/probes/probes.mjs`'s `layout`
-  mode reads `getBoundingClientRect()` and `elementFromPoint()` at four viewports in Chromium and
-  WebKit, and asserts its own sticky-state precondition first, because its first version passed at
-  all four against the broken code. What remains unverified is narrower and honest: the
-  keyboard-up half (Playwright raises no keyboard in any engine, so the `max()` collapse is still
-  reasoned from `resizes-content` semantics) and a physical device.
+- **A real push.** `docs/qa/probes/pwa-check.mjs` drives the real worker with a `push` event and stubs the browser's
+  push service; whether APNs or FCM deliver to a Home Screen install, and whether the badge matches, is the
+  manual gate. Playwright's WebKit has no Push API.
+- **A real agent turn.** Every streaming assertion drives the server's own `MOWS_TEST_HOOKS` delta injector; a
+  real `claude -p` turn costs money and needs systemd.
+- **What the Claude Code CLI does with `tools: ''`.** The panel calls it unreadable and rounds toward
+  unrestricted; `mows-agent-meta` calls it the empty list. Which one matches the CLI is unmeasured.
+- **The terminal on a device.** `/term` (xterm.js 6 and the ttyd 1.7.4 protocol) is tested against a fake
+  socket; the IME shadow line, resume after sleep and the key bar against a real home indicator are the
+  `real-device terminal` manual gate.
 
-The scripted browser evidence that *does* exist, including the WebKit runs, is in
-`docs/qa/probes/` — SKIP-gated on a Playwright install, with the install command in its README
-and in the skip output. **A skip is not a result**: that SKIP was once believed rather than
-checked, on a box where Playwright was in fact installed at the exact path the loader searches,
-and the cost of believing it was a High-severity layout defect shipping. If a probe skips, find
-out why before treating the run as evidence of anything. HTTP/2 against a live host is not in that
-set; it is the `MOWS_HOST` assertion below.
-
-**What was specified and never built** is a different list and is kept with the spec, not here:
-see the ADDENDUM at the end of
-[`docs/superpowers/specs/2026-09-16-dashboard-spa-design.md`](superpowers/specs/2026-09-16-dashboard-spa-design.md)
-— prefetch, `/api/fleet` and `/api/system`, the chat view's tool rows and thinking indicator, and
-the store-backed transcript restore. The plan's own self-review recorded several of those as
-covered, which is why the list lives beside the requirements it belongs to.
+The scripted browser evidence that does exist, including the WebKit runs, is in `docs/qa/probes/`, SKIP-gated
+on a Playwright install, with the install command in its README and in the skip output. **A skip is not a
+result**: that SKIP was once believed rather than checked, on a box where Playwright was in fact installed at
+the exact path the loader searches, and the cost of believing it was a High-severity layout defect shipping. If
+a probe skips, find out why before treating the run as evidence of anything. HTTP/2 against a live host is not
+in that set; it is the `MOWS_HOST` assertion below.
 
 #### Deploying this change — the dashboard is no longer one file
 
@@ -471,28 +378,20 @@ more, and every way of getting this wrong is quiet in a different way. The whole
 
 | Source | Destination | What it is |
 |---|---|---|
-| `infra/dashboard/lite.mjs` | `/opt/claude-dashboard/lite.mjs` | the server |
-| `infra/dashboard/chat-stream.mjs` | `/opt/claude-dashboard/` | imported by `lite.mjs` at load |
-| `infra/dashboard/capability.mjs` | `/opt/claude-dashboard/` | imported by `lite.mjs` at load |
-| `infra/dashboard/app/` (whole tree) | `/opt/claude-dashboard/app/` | the client the shell loads |
+| `infra/dashboard/{lite,core,sse,static,legacy,chat-stream,capability}.mjs` | `/opt/claude-dashboard/` | the server and the modules it imports at load |
+| `infra/dashboard/routes/` | `/opt/claude-dashboard/routes/` | `api`, `actions`, `agents`, `device`, `documents`, `md`, `push`, `webpush` |
+| `dist/` | `/opt/claude-dashboard/dist/` | the shell's build, served under `/assets/`, and `/sw.js`'s precache list |
+| `infra/dashboard/app/` (whole tree) | `/opt/claude-dashboard/app/` | the old client, only while `--ui=legacy` still ships it |
+| `infra/webconsole/themes.json`, `webterm-settle.sh`, `dist/term.html` | `/opt/claude-dashboard/` | the terminal themes, the settle script and the `/term` page (`term-index.html`) |
 | `agents/bin/mows-agent`, `mows-agent-meta` | `~/.local/bin/` (`install.sh --agents`) | the CLI the dashboard **spawns by absolute path** |
 
 `scripts/deploy-dashboard.sh` does all of this (add `--dry-run` to print the commands): it installs every file that
-exists in the checkout, restarts `claude-dash-lite` and smokes `/healthz`. The manual form, for reference:
-
-```sh
-sudo install -m644 infra/dashboard/lite.mjs infra/dashboard/chat-stream.mjs \
-                   infra/dashboard/capability.mjs /opt/claude-dashboard/
-sudo mkdir -p /opt/claude-dashboard/app
-sudo cp -r infra/dashboard/app/. /opt/claude-dashboard/app/
-./install.sh --agents            # mows-agent + mows-agent-meta into ~/.local/bin
-sudo systemctl restart claude-dash-lite
-```
-
-The restart is not optional and not just for the server: `loadUiAssets()` walks `app/` once, on
-the first `/ui` request, and caches the hashed names for the life of the process. A running
-dashboard keeps serving the previous client until it is restarted. (Files left behind from an
-older `app/` are harmless — every asset URL is content-hashed, so nothing references them.)
+exists in the checkout, points the unit's `ExecStart` at `--ui=next` (`UI=legacy` for the rollback), restarts
+`claude-dash-lite` and smokes `/healthz`. The restart is not optional: the server reads `dist/manifest.json` when
+its mtime changes but the modules it imports are loaded once, and `legacy.mjs` walks `app/` once, so a running
+dashboard keeps serving the previous server code until it is restarted. (Files left behind from an older `dist/`
+are harmless: every asset URL is content-hashed and only names listed in `dist/manifest.json` are served.)
+`rm -rf` on `dist/` happens before the copy, so a half-installed build cannot mix hashes.
 
 **The ways to get this wrong, each reproduced rather than reasoned about:**
 
@@ -500,9 +399,9 @@ older `app/` are harmless — every asset URL is content-hashed, so nothing refe
   `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/claude-dashboard/chat-stream.mjs'
   imported from /opt/claude-dashboard/lite.mjs`. The whole dashboard is down, `systemctl status`
   says so, and this is the *good* failure — it is the only one of the three you cannot miss.
-- **The server files without `app/`.** `GET /ui` answers **200** with a perfectly well-formed
-  shell — correct CSP, correct import map, correct nonces — and `GET /ui/assets/main.mjs` answers
-  **404**. The result is a blank page. The `<noscript>` fallback is not shown, because JavaScript
+- **The server files without `dist/`.** `GET /` answers **200** with a perfectly well-formed
+  shell — correct CSP, correct nonces — whose script and stylesheet are `/assets/missing-build`, which
+  answers **404**. The result is a blank page. The `<noscript>` fallback is not shown, because JavaScript
   is enabled and did load; it just had nothing to load. Nothing is logged, server-side or in the
   browser beyond a failed subresource. Every other route keeps working normally, so a spot check
   of `/` reports the deploy healthy.
@@ -520,8 +419,8 @@ older `app/` are harmless — every asset URL is content-hashed, so nothing refe
     `journalctl -u claude-dash-lite` carries `chat <name>:<turn>: dropped N malformed stream
     line(s)`. There is nothing in the browser, nothing in `mows-agent`'s `events.log`, and no
     failed status anywhere.
-- **The mirror case — a stale dashboard beside a new `mows-agent` — is the loud one.** `/ui`,
-  `/api/*` and `/stream` all 404 while `/agents` keeps serving HTML, so chat works exactly as it
+- **The mirror case — a stale dashboard beside a new `mows-agent` — is the loud one.**
+  `/api/*` and `/stream` all 404 while the pages keep serving HTML, so chat works exactly as it
   did before and nothing is corrupted. Worth knowing only so that "the app is 404ing" is read as
   "the dashboard was not deployed" rather than as a routing problem in Caddy.
 
@@ -529,11 +428,10 @@ older `app/` are harmless — every asset URL is content-hashed, so nothing refe
 third is the one that would otherwise go unnoticed for months.
 
 ```sh
-curl -s -o /dev/null -w '/ui %{http_code}\n' http://127.0.0.1:3005/ui       # expect 200
-# the module the shell actually asks for — take it from src=, not from the import map,
-# which also names the unhashed path as a KEY and would give you a URL that 404s by design
-M=$(curl -s http://127.0.0.1:3005/ui | grep -o 'src="/ui/assets/[^"]*"' | cut -d'"' -f2)
-curl -s -o /dev/null -w "$M %{http_code}\n" "http://127.0.0.1:3005$M"      # expect 200, not 404
+curl -s -o /dev/null -w '/ %{http_code}\n' http://127.0.0.1:3005/            # expect 200
+# the module the shell actually asks for, taken from its src=
+M=$(curl -s http://127.0.0.1:3005/ | grep -o 'src="/assets/[^"]*"' | cut -d'"' -f2)
+curl -s -o /dev/null -w "$M %{http_code}\n" "http://127.0.0.1:3005$M"        # expect 200, not 404
 grep -c -- --stream ~/.local/bin/mows-agent                                 # expect > 0
 ```
 
@@ -596,10 +494,10 @@ moment somebody changed the thing it rests on, and none of them has a gate.
 - **The chat replay buffer is bounded by a budget, not by code.** `chatBuf` is append-only with no
   cap and no eviction; what keeps it small is that `mows-agent` caps a chat turn at `$0.25` and
   six turns. Raise either and this becomes unbounded per in-flight turn, with nothing to notice.
-- **`/ui/<anything>` renders the agents list with a 200.** The SPA router falls through to
-  `AgentsList` for every unmatched path, which is better than a blank page and worse than a
-  refusal for `/ui/system` and `/ui/fleet` — paths spec §6 names as future routes. A user who
-  types one gets a different page and no indication anything is wrong.
+- **`/ui/<anything>` redirects to the agents list.** With the default `--ui=next`, `uiTwinPath` sends every
+  unrecognised `/ui/*` path to `/agents` with a 301, which is better than a blank page and worse than a
+  refusal for `/ui/system` and `/ui/fleet`. A user who types one gets a different page and no indication
+  anything is wrong. The route is deleted with `legacy.mjs` in Stage 8 step 4.
 - **The asset content hash is CRC32.** Fine as a cache key, and the spec only asks for "a content
   hash" — but assets are served `immutable, max-age=31536000`, so a CRC32 collision between two
   *versions of the same file* would pin a stale body in every client cache for a year with no

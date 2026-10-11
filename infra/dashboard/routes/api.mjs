@@ -4,6 +4,7 @@ import { agentCapability } from '../capability.mjs';
 import { ACCTS, BY_ID, HOST_ACCT, MSG_PAGE, PAGE, RESUME_DAYS, canResume, claudeVersion, counts, freshen, hostInfo, index, liveSid8, loadSession,
   projName, reclaimScan, sameOrigin, sendJson, titleOf, tmuxLive, usage, usageCache } from '../core.mjs';
 import { DROID_UDID, droidState, watchLive } from './device.mjs';
+import { pushView } from './push.mjs';
 import { AGENTS_STATE, AGENT_RE, RUN_RE, agentChat, agentFrontmatter, agentTimers, agentsConfig, agentsIndex, summarizeTimers, webhookKey } from './agents.mjs';
 
 
@@ -95,6 +96,7 @@ export async function apiView(req, res, rest) {
     if (!pg) { res.writeHead(404); return res.end(); }
     return sendJson(req, res, 200, pg);
   }
+  if (section === 'push') return pushView(req, res, name);
   // the old GET ?fresh=1: re-collect usage now (claude-quota's own cache too), in the background; the view polls /api/system until it lands
   if (section === 'usage' && name === 'refresh') {
     if (!need('POST')) return;

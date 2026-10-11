@@ -1,7 +1,7 @@
 // Cockpit phase 03 views probe (specs/cockpit/03-views.md tasks 2, 3, 4, 5, 8). Exit code is the verdict.
 // usage: node docs/qa/probes/views-check.mjs <webkit|chromium> <history|system|device|session|all>
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
-// Every view runs against the /next shell on the dev instance with FIXTURE data: the boot snapshot in the document is rewritten in flight,
+// Every view runs against the shell on the dev instance with FIXTURE data: the boot snapshot in the document is rewritten in flight,
 // EventSource is replaced by a fake that window.__emit(name, data) drives, and every /api/*, /a/*, /droid/*, /watch/*, /sys/*, /z, /term/*,
 // /droidview/* and /vnc/* request is answered here, so nothing the probe does can reach a real session, container or disk and the result does
 // not depend on what the box holds. The fixture "server" below filters, pages and mutates its rows the way routes/api.mjs does, so a chip, a
@@ -83,11 +83,11 @@ async function open(path, over = {}, ctxOpts = {}) {
     };
     window.__emit = (name, data) => all.forEach(e => (e.l[name] || []).forEach(f => f({ data: JSON.stringify(data), lastEventId: '' })));
   });
-  await ctx.route(u => u.pathname === '/next' || (u.pathname.startsWith('/next/') && !u.pathname.includes('.')), async route => {
+  await ctx.route(u => /^\/(history|system|device|s\/[^/]+\/[^/]+)?$/.test(u.pathname), async route => {
     const u = new URL(route.request().url());
     const r = await route.fetch();
     const html = (await r.text()).replace(/(<script type="application\/json" id="boot"[^>]*>)([\s\S]*?)(<\/script>)/, (_, a, j, c) => {
-      const b = JSON.parse(j), p = u.pathname.replace(/^\/next/, '') || '/';
+      const b = JSON.parse(j), p = u.pathname;
       delete b.history; delete b.system; delete b.device; delete b.session;
       b.fleet = W.fleet; b.live = W.fleet.length;
       if (p === '/history') b.history = histFor(W, u);
@@ -145,7 +145,7 @@ async function open(path, over = {}, ctxOpts = {}) {
   const page = await ctx.newPage();
   page.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', e => errors.push(String(e)));
-  await page.goto(DASH + '/next' + path, { waitUntil: 'load' });
+  await page.goto(DASH + path, { waitUntil: 'load' });
   await page.waitForSelector('#app [data-view]', { state: 'attached' });
   await page.waitForTimeout(100);
   await page.evaluate(() => { window.__doc = 'same-document'; });
@@ -165,7 +165,7 @@ async function history() {
     sz: document.querySelector('.hlist .row .sz').textContent, sid: document.querySelector('.hlist .row .sid').textContent, href: document.querySelector('.hlist .row').getAttribute('href'),
     h1: document.querySelector('#app h1').textContent, summary: [...document.querySelector('details.flt summary').children].map(n => n.textContent).join(' '), open: document.querySelector('details.flt').open }));
   check('1 the first page renders from the boot snapshot: 5 rows in day groups, h1 "mows · history"', d0.n === 5 && d0.days[0] === dayLbl(W.rows[0].mt) && d0.h1.includes('· history'), d0);
-  check('2 a row: age, account, project, title, size, sid8, link into /next/s/<acct>/<sid>', d0.t === '2h' && d0.acct === 'demo' && d0.proj === 'web/app' && d0.ttl === 'Session number 1' && d0.sz === '2K' && d0.sid === '00000001' && d0.href === `/next/s/demo/${SID(1)}`, d0);
+  check('2 a row: age, account, project, title, size, sid8, link into /s/<acct>/<sid>', d0.t === '2h' && d0.acct === 'demo' && d0.proj === 'web/app' && d0.ttl === 'Session number 1' && d0.sz === '2K' && d0.sid === '00000001' && d0.href === `/s/demo/${SID(1)}`, d0);
   check('3 the filter summary: "filter all · all time · 12 sessions", folded while no filter is set', /^filter all · all time · 12 sessions$/.test(d0.summary) && !d0.open, d0.summary);
   const r3 = await page.evaluate(() => [...document.querySelectorAll('.hlist .row')].map(r => [r.querySelector('.ttl .notitle')?.textContent ?? null, !!r.parentElement.querySelector('.go'), !!r.parentElement.querySelector('details.del')]));
   check('4 an empty title reads "(no title)"; .go only for a terminal account within the resume window; delete offered on every idle row', r3[2][0] === '(no title)' && r3[0][1] === true && r3[3][1] === false && r3.every(x => x[2]), r3);
@@ -193,7 +193,7 @@ async function history() {
   await page.waitForFunction(() => new URLSearchParams(location.search).get('q') === 'WEB' && /“web”/.test(document.querySelector('details.flt summary').textContent) && [...document.querySelectorAll('.hlist .proj')].every(n => n.textContent === 'web/app'));
   const q1 = await page.evaluate(() => ({ n: document.querySelectorAll('.hlist .li').length, projs: [...new Set([...document.querySelectorAll('.hlist .proj')].map(n => n.textContent))], summary: [...document.querySelector('details.flt summary').children].map(n => n.textContent).join(' '), v: document.querySelector('input[name=q]').value }));
   check('10 the search form submits without a document load: ?q=WEB, only matching projects, “web” in the summary, the field keeps its (lower-cased) text', await same() && q1.projs.join() === 'web/app' && /“web”/.test(q1.summary) && q1.v === 'web', q1);
-  await page.goto(DASH + '/next/history', { waitUntil: 'load' });
+  await page.goto(DASH + '/history', { waitUntil: 'load' });
   await page.waitForSelector('#app [data-view=history]', { state: 'attached' });
   await page.evaluate(() => { window.__doc = 'same-document'; });
 
@@ -258,7 +258,7 @@ async function system() {
   check('6 usage: "usage updated 2m ago", a limits card and a spend card per account, 5h and week limits, today / week / month spend', u.age === 'usage updated 2m ago' && u.cards.join() === 'demo · limits,demo · spend' && u.q.map(x => x.replace(/\s/g, '')).join() === '5h12%,week61%' && u.spend.replace(/\s/g, '') === 'today$1.50·week$9.25·month$40.00', u);
   await page.click('details.ubd summary');
   const bd = await page.evaluate(() => ({ days: [...document.querySelectorAll('details.ubd .qrow')].map(r => r.innerText.replace(/\s+/g, ' ').trim()), href: document.querySelector('details.ubd a.sid8').getAttribute('href') }));
-  check('7 the 7-day breakdown lists days and sessions, each session a shell link', bd.days[0] === '10-11 $1.50 sonnet-4' && bd.days[2] === '00000001 $0.50 sonnet-4' && bd.days.length === 3 && bd.href === `/next/s/demo/${SID(1)}`, bd);
+  check('7 the 7-day breakdown lists days and sessions, each session a shell link', bd.days[0] === '10-11 $1.50 sonnet-4' && bd.days[2] === '00000001 $0.50 sonnet-4' && bd.days.length === 3 && bd.href === `/s/demo/${SID(1)}`, bd);
 
   // live topics patch in place
   await page.evaluate(() => { document.querySelectorAll('.mbar').forEach(n => { n.__keep = 1; }); });
@@ -378,7 +378,7 @@ async function session() {
   await page.waitForFunction(() => new URLSearchParams(location.search).get('page') === '2' && document.querySelector('.pgnum .cur').textContent === '2');
   const p2 = await page.evaluate(() => ({ cur: document.querySelector('.pgnum .cur').textContent, items: document.querySelectorAll('#app > .m, #app > details').length, first: document.querySelector('#app > .m .mh').textContent }));
   check('5 the older page loads without a document load: 2 / 2, the remaining 7 items', (await same()) && p2.cur === '2' && p2.items === 7, p2);
-  await page.goto(DASH + '/next' + path, { waitUntil: 'load' });
+  await page.goto(DASH + path, { waitUntil: 'load' });
   await page.waitForSelector('#app [data-view=session]', { state: 'attached' });
   await page.evaluate(() => { window.__doc = 'same-document'; });
 

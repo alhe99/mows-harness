@@ -1,5 +1,6 @@
 import { claudeVersion, fleetKey, fleetState, hostInfo, usage, verCache } from './core.mjs';
 import { agentsIndex } from './routes/agents.mjs';
+import { pushAll, subCount } from './routes/webpush.mjs';
 
 
 // ---------- /events: SSE fleet live-update stream (Fleet Redesign §3) ----------
@@ -190,4 +191,31 @@ export async function streamView(req, res) {
   if (done) return;
   poll = setInterval(tick, 2000);
   hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 25000);
+}
+
+// ---------- push on needs-you (K-37) ----------
+// The one sender: it watches the fleet itself, not through a client's stream, because the app being closed is the case a push is for. Nothing is scanned
+// while no one is subscribed. A session already waiting when a subscription appears (or the server starts) does not ring; a transition into
+// `needs-you` does, once per session per 30 s, and the payload carries the number now waiting as the app badge.
+const PUSH_POLL = 5000, PUSH_DEBOUNCE = 30000;
+
+export function startPushWatch() {
+  let prev = null, busy = false;
+  const sentAt = new Map();
+  setInterval(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      if (!(await subCount())) { prev = null; return; }
+      const fleet = await fleetState(), now = Date.now(), waiting = fleet.filter(f => f.state === 'needs-you');
+      for (const [k, t] of sentAt) if (now - t > PUSH_DEBOUNCE) sentAt.delete(k);
+      for (const f of waiting) {
+        const k = fleetKey(f);
+        if (!prev || prev.get(k) === 'needs-you' || sentAt.has(k)) continue;
+        sentAt.set(k, now);
+        await pushAll({ web_push: 8030, notification: { title: `${f.label || f.name} needs you`, body: String(f.snippet || f.proj || '').slice(0, 140), navigate: '/', tag: k }, app_badge: waiting.length });
+      }
+      prev = new Map(fleet.map(f => [fleetKey(f), f.state]));
+    } catch { /* the next poll tries again */ } finally { busy = false; }
+  }, PUSH_POLL).unref();
 }

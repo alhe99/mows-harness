@@ -3,7 +3,7 @@
 #
 #   ./docs/qa/probes/run.sh <journey|lost|repeat|csp|base|layout|all> [chromium|webkit] [--ui legacy|next]
 #
-# --ui next runs the same probes against the cockpit shell at /next (the dashboard is started with --ui=next, the probe gets
+# --ui next runs the same probes against the cockpit shell at / (the dashboard is started with --ui=next, the probe gets
 # MOWS_QA_UI=next); the default is the /ui app. The selectors the probes use are listed in the header of probes.mjs.
 #
 # See README.md in this directory. Needs docker; needs Playwright only for the probe itself, which
@@ -29,7 +29,8 @@ export MOWS_QA_DIRECT="http://127.0.0.1:$UI_PORT"
 export MOWS_QA_BASE="http://127.0.0.1:$PROXY_PORT"
 export MOWS_QA_CUT="http://127.0.0.1:$CUT_PORT"
 export MOWS_QA_CONTAINER="$BOX"
-if [ "$UI" = next ]; then export MOWS_QA_UI=next MOWS_QA_LITE_ARGS=--ui=next; PFX=/next; else PFX=/ui; fi
+# the shell answers at `/` since the cutover (phase 05), so its agent routes carry no prefix; the old /ui app needs --ui=legacy
+if [ "$UI" = next ]; then export MOWS_QA_UI=next MOWS_QA_LITE_ARGS=--ui=next; PFX=; else export MOWS_QA_LITE_ARGS=--ui=legacy; PFX=/ui; fi
 
 PROXY_PID=""
 cleanup() {

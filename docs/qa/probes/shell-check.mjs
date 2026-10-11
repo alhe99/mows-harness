@@ -5,7 +5,7 @@
 // (/term*, /md, /oauth2/*, data-nw, modified or middle clicks) are left to the browser. 1280x800: the header nav shows, the tab bar is gone.
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('shell-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'webkit';
-const base = (process.env.DASH || 'http://127.0.0.1:3105') + '/next/';
+const base = (process.env.DASH || 'http://127.0.0.1:3105') + '/';
 const browser = await pw[engine].launch();
 const errors = [];
 // /api/history and /api/system are served from phase 03; until then the tab links' prefetch (phase 02a) gets a 404 the browser logs
@@ -38,17 +38,17 @@ check('2 no horizontal overflow at 390', m.sw <= 390, m.sw);
 check('3 .tabs keeps view-transition-name: tabs', m.vtn === 'tabs', m.vtn);
 
 const loadsBefore = loads;
-await page.tap('.tb[href="/next/history"]');
+await page.tap('.tb[href="/history"]');
 await page.waitForSelector('#app h1[data-view="history"]');
 const t = await page.evaluate(() => ({ path: location.pathname, doc: window.__doc, on: document.querySelector('.tb.on')?.textContent.trim(), vt: window.__vt, sup: window.__vtSupported,
   h1: document.querySelector('#app h1')?.textContent }));
-check('4 tapping History changes the route and the active tab', t.path === '/next/history' && t.on === 'History' && t.h1 === 'history', t);
+check('4 tapping History changes the route and the active tab', t.path === '/history' && t.on === 'History' && /history$/.test(t.h1), t); // the view's heading reads `mows · history`
 check('5 ...without a document load', t.doc === 'same-document' && loads === loadsBefore, { doc: t.doc, loads: loads - loadsBefore });
 check('6 ...inside document.startViewTransition when supported', !t.sup || t.vt >= 1, { supported: t.sup, calls: t.vt });
 await page.goBack();
 await page.waitForSelector('#app h1[data-view="sessions"]');
 const back = await page.evaluate(() => ({ path: location.pathname, doc: window.__doc, on: document.querySelector('.tb.on')?.textContent.trim() }));
-check('7 Back returns to Sessions in the same document', back.path === '/next/' && back.doc === 'same-document' && back.on === 'Sessions', back);
+check('7 Back returns to Sessions in the same document', back.path === '/' && back.doc === 'same-document' && back.on === 'Sessions', back);
 
 // which clicks the shell routes itself (preventDefault) and which it leaves to the browser; the page is reloaded after each
 const prevented = (href, { attrs = {}, init = {} } = {}) => page.evaluate(([href, attrs, init]) => {
@@ -68,13 +68,13 @@ const prevented = (href, { attrs = {}, init = {} } = {}) => page.evaluate(([href
 }, [href, attrs, init]);
 page.on('popup', p => p.close());
 const cases = [
-  ['8 an ordinary shell link is routed', '/next/system', {}, true],
+  ['8 an ordinary shell link is routed', '/system', {}, true],
   ['9 /term* is left to the browser', '/term/?arg=menu&arg=&arg=00000000&v=3', {}, false],
   ['10 /md is left to the browser', '/md?f=x', {}, false],
   ['11 /oauth2/* is left to the browser', '/oauth2/sign_out', {}, false],
-  ['12 data-nw links are left to the browser', '/next/system', { attrs: { 'data-nw': 't-1' } }, false],
-  ['13 a ctrl-click is left to the browser', '/next/system', { init: { ctrlKey: true } }, false],
-  ['14 a middle click is left to the browser', '/next/system', { init: { button: 1 } }, false],
+  ['12 data-nw links are left to the browser', '/system', { attrs: { 'data-nw': 't-1' } }, false],
+  ['13 a ctrl-click is left to the browser', '/system', { init: { ctrlKey: true } }, false],
+  ['14 a middle click is left to the browser', '/system', { init: { button: 1 } }, false],
 ];
 for (const [id, href, opts, want] of cases) {
   check(id, (await prevented(href, opts)) === want);

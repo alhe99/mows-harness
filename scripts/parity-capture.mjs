@@ -10,8 +10,8 @@
 //     baseline does not age by the day; the host metrics (load, memory, swap, disk) are the host's, not the
 //     fixture's, and are masked. Both are applied to BOTH documents, so a diff is never about them.
 //     A view that renders a volatile value in new markup tags it data-volatile and is masked the same way.
-// --ui next adds `--ui=next` to lite.mjs (phase 01 onward; an older lite.mjs ignores it and serves legacy) and captures the
-// shell, which is mounted at /next until phase 05 swaps it in (/md stays its own document). --route captures that one route only.
+// --ui <mode> starts lite.mjs with `--ui=<mode>`: `next` captures the cockpit shell (at `/` since phase 05, /md stays its own document), `legacy` the old
+// server-rendered pages (the frozen baseline). --route captures that one route only.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -37,7 +37,7 @@ const ROUTES = ALL_ROUTES.filter(([, r]) => !opt('--route') || r === opt('--rout
 if (!ROUTES.length) { console.error(`--route ${opt('--route')} is not one of: ${ALL_ROUTES.map(r => r[1]).join(' ')}`); process.exit(2); }
 // --as <path> captures the single --route from another URL (the agents list's legacy twin is the server page; the SPA being ported is /ui/agents).
 const as = opt('--as');
-const at = r => (as ? as : ui === 'next' && !r.startsWith('/md') ? `/next${r}` : r);
+const at = r => (as ? as : r); // the shell answers at `/` (phase 05); --ui legacy starts the old pages
 const VIEWPORTS = [[390, 844, 3, true], [1280, 800, 1, false]];
 const MASK = '.mbar-row, [data-volatile]';
 
@@ -68,7 +68,7 @@ let pw;
 try { pw = await import('playwright'); } catch { console.error('parity-capture: playwright is not installed (npm install --ignore-scripts; browsers: npx playwright install chromium webkit)'); process.exit(2); }
 
 cleanup();
-const up = docker('run', '-d', '--name', BOX, '-e', 'MOWS_QA_PARITY=1', '-e', `MOWS_QA_LITE_ARGS=${ui === 'next' ? '--ui=next' : ''}`,
+const up = docker('run', '-d', '--name', BOX, '-e', 'MOWS_QA_PARITY=1', '-e', `MOWS_QA_LITE_ARGS=--ui=${ui}`,
   '-p', `127.0.0.1:${port}:3005`, '-v', `${repo}:/r:ro`, '-v', `${join(repo, 'docs/qa/probes')}:/probes:ro`, 'node:20-slim', 'bash', '/probes/fixture.sh');
 if (up.status !== 0) { console.error(`parity-capture: docker run failed: ${up.stderr.trim()}`); process.exit(2); }
 const base = `http://127.0.0.1:${port}`;

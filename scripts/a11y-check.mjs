@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // a11y-check.mjs — the legacy page and the shell page carry the same accessibility attributes (MAP 8 M-13, 2.7).
-//   node scripts/a11y-check.mjs [--route /] [--engine chromium|webkit]       env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT
-// Loads <route> (legacy) and /next<route> (shell) on the dev instance with the same fixture fleet pushed over each page's own event
+//   node scripts/a11y-check.mjs [--route /] [--engine chromium|webkit]       env: DASH (default http://127.0.0.1:3105), LEGACY_DASH, PLAYWRIGHT
+// Loads <route> on LEGACY_DASH (a second dashboard started with --ui=legacy: the default is the shell since phase 05) and on DASH (the shell) with the same fixture fleet pushed over each page's own event
 // stream (a fake EventSource), then compares, as multisets, every aria-label / aria-hidden / aria-live / aria-expanded / aria-current /
 // role / title / alt in the live DOM (keyed by tag.classes[attr=value]; template contents are not live) and the :focus-visible rules of the
 // stylesheets. Exit 1 on any attribute the shell lacks or adds, or a focus-ring rule it lacks.
@@ -10,6 +10,8 @@ const opt = (f, d) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : d);
 const route = opt('--route', '/');
 const engine = opt('--engine', 'chromium');
 const dash = process.env.DASH || 'http://127.0.0.1:3105';
+const legacyDash = process.env.LEGACY_DASH;
+if (!legacyDash) { console.error('a11y-check: set LEGACY_DASH to a dashboard started with --ui=legacy (both would otherwise be the shell, and the comparison empty)'); process.exit(2); }
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('a11y-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 if (route !== '/') { console.error('a11y-check: only --route / has a fixture so far'); process.exit(2); }
 
@@ -58,8 +60,8 @@ async function collect(url, ready) {
   await page.close();
   return r;
 }
-const legacy = await collect(dash + route);
-const shell = await collect(dash + '/next' + route);
+const legacy = await collect(legacyDash + route);
+const shell = await collect(dash + route);
 await browser.close();
 
 let bad = 0;

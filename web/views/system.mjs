@@ -56,6 +56,13 @@ function Account({ a, u, now }) {
           a.sess.length ? a.sess.map(t => h('div', { class: 'qrow', key: t.sid }, h('a', { class: 'sid8', href: `${base()}/s/${a.id}/${t.sid}` }, t.sid.slice(0, 8)), h('b', null, money(t.cost)), sub(t.models.join(', ')))) : mlist('muted', 'none this week')))));
 }
 
+// the Notifications card is its own chunk, loaded after the view paints: push is an enhancement, and the card is not part of this route's budget
+function Notifications() {
+  const [Card, set] = useState(/** @type {any} */ (null));
+  useEffect(() => { import('../push.mjs').then(m => set(() => m.default), () => {}); }, []);
+  return Card ? h(Card, null) : null;
+}
+
 export default function System() {
   const reclaiming = !!new URLSearchParams(location.search).get('reclaim');
   const [d, reload, err] = useApi('/api/system' + location.search);
@@ -104,7 +111,8 @@ export default function System() {
                   h('button', { class: 'ab danger' }, 'Restart Them'))))
               : h('div', { class: 'dangerbtn off', 'aria-disabled': 'true' }, h(Icon, { d: iRefresh }), 'restart all sessions'),
             h('p', { class: 'dangercap' }, live ? 'Restarts every live terminal session on this host — including the one you’re reading this from. Transcripts stay on disk; nothing is deleted.' : 'No live sessions right now — nothing to restart.'),
-            flash.rs ? h('span', { class: 'chip on' }, h('span', { class: 'dot', style: 'background:var(--ok)' }), 'restarted ' + flash.rs) : null)))),
+            flash.rs ? h('span', { class: 'chip on' }, h('span', { class: 'dot', style: 'background:var(--ok)' }), 'restarted ' + flash.rs) : null)),
+        h(Notifications, null))),
     h('div', { class: 'sysextra' }, section('Usage & Reclaim', 'Claude account limits, daily spend, and disk reclaim.'),
       h('div', { class: 'bar' }, h('span', { class: 'chip' }, 'usage updated ', h('b', null, age), d.busy ? ' · refreshing…' : ''),
         h('a', { class: 'chip', href: base() + '/system?fresh=1', onClick: refresh }, h(Icon, { d: iRefresh }), 'Refresh'),

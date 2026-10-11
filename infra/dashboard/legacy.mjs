@@ -2185,7 +2185,7 @@ const cssText = () => (cssCache ??= CSS
 // the same patterns the API and the server-rendered routes validate with — reused, not restated,
 // so a twin link can never name a shape those routes would refuse, and nothing that is not
 // [a-z0-9-] or a run id can reach the attribute in the first place.
-function uiTwinPath(p) {
+export function uiTwinPath(p) {
   let m;
   if ((m = p.match(/^\/ui\/agents\/([^/]+)\/([^/]+)\/?$/)) && AGENT_RE.test(m[1]) && RUN_RE.test(m[2]))
     return `/agents/${m[1]}/${m[2]}`;

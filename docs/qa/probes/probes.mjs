@@ -24,12 +24,13 @@ const BASE = process.env.MOWS_QA_BASE || 'http://127.0.0.1:3205';       // ...th
 const CUT = process.env.MOWS_QA_CUT || 'http://127.0.0.1:3206';
 const BOX = process.env.MOWS_QA_CONTAINER || 'mows-qa-ui';
 const AGENT = 'harness-reviewer';
-// MOWS_QA_UI=next (run.sh --ui next): the same probes against the cockpit shell, mounted at /next until phase 05 swaps it in.
+// MOWS_QA_UI=next (run.sh --ui next): the same probes against the cockpit shell, served at `/` since phase 05 (the legacy app is --ui=legacy, at /ui).
 // The agent pages keep their markup in the shell (.chatbox, .m.me/.claude, .chat .chatf, .cherr, button.jump, .termfab, .agchat,
 // nav.tabs, header.hdr, .agback-in), so the selectors below serve both; only the path prefix differs. Two things differ in
 // behaviour and are asserted accordingly: the shell ignores the import-map comment (its modules are bundled), and `csp` runs
 // against the shell's nonce policy, which also admits 'self' stylesheets.
-const UI = process.env.MOWS_QA_UI === 'next' ? '/next' : '/ui';
+const SHELL = process.env.MOWS_QA_UI === 'next';
+const UI = SHELL ? '' : '/ui';
 
 // ---- finding Playwright, without naming anyone's home directory in a tracked file --------------
 async function loadPlaywright() {
@@ -308,7 +309,7 @@ async function journey() {
   // The chatend gap (ledger D-04, K-34), shell only: a turn that ENDS while the stream is cut. A chatend carries no id: and is never
   // replayed (K-14), so the reconnect cannot deliver it; the store refetches the transcript instead and the view settles from that.
   // The /ui app has no such recovery (its composer stays on "…" until a reload), so the case is the shell's alone.
-  if (UI === '/next') {
+  if (SHELL) {
     const gapTurn = turn + 1000;
     saveRecord('user', 'gap question');
     await inject(gapTurn, 1, 'A second turn, ');

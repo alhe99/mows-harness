@@ -176,6 +176,7 @@ docs/qa/probes/md-check.mjs
 docs/qa/probes/mobile-facelift.mjs
 docs/qa/probes/probes.mjs
 docs/qa/probes/proxy.mjs
+docs/qa/probes/pwa-check.mjs
 docs/qa/probes/run.sh
 docs/qa/probes/sessions-check.mjs
 docs/qa/probes/shell-check.mjs
@@ -232,6 +233,8 @@ infra/dashboard/routes/api.mjs
 infra/dashboard/routes/device.mjs
 infra/dashboard/routes/documents.mjs
 infra/dashboard/routes/md.mjs
+infra/dashboard/routes/push.mjs
+infra/dashboard/routes/webpush.mjs
 infra/dashboard/sse.mjs
 infra/dashboard/static.mjs
 infra/droid/SETUP.md
@@ -298,9 +301,11 @@ scripts/manifest.txt
 scripts/parity-capture.mjs
 scripts/parity-diff.mjs
 scripts/preflight.sh
+scripts/push-check.mjs
 scripts/store-check.mjs
 scripts/stream-cap-check.mjs
 scripts/stream-replay-check.mjs
+scripts/sw-check.mjs
 scripts/term-proto-check.mjs
 scripts/theme-tokens-check.mjs
 scripts/tokens-check.mjs
@@ -348,9 +353,12 @@ web/pages/term/term.mjs
 web/pages/term/theme.mjs
 web/pages/term/themes.d.ts
 web/pages/term/ttyd.mjs
+web/pwa.mjs
+web/push.mjs
 web/shared.mjs
 web/standalone.mjs
 web/store.mjs
+web/sw.mjs
 web/term.mjs
 web/tokens.css
 web/tsconfig.json

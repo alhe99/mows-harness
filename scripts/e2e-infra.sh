@@ -73,6 +73,9 @@ HOME=$DH MOWS_TEST_HOOKS=1 node /r/infra/dashboard/lite.mjs --port 3005 --host 1
 # Captured here, read at the very end of the script: the RSS ceiling is only meaningful once
 # this process has served every request the suite makes, not four seconds after it booted.
 DASH_PID=$!
+# The same dashboard once more with --ui=legacy on :3006 (cockpit phase 05, K-21): the rollback flag has to keep serving the old server-rendered pages
+# and the old /ui client until Stage 8 step 4 deletes them, so the assertions that are only true of those documents run against this one.
+HOME=$DH node /r/infra/dashboard/lite.mjs --port 3006 --host 127.0.0.1 --ui=legacy >/tmp/dash-legacy.log 2>&1 &
 # ttyd on :7681, the /term upstream
 ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable /bin/sh >/tmp/ttyd.log 2>&1 &
 # oauth2-proxy on :4180 from the RENDERED config, dummy Google creds
@@ -81,6 +84,7 @@ mkdir -p /etc/oauth2-proxy && echo "admin@example.test" > /etc/oauth2-proxy/emai
 oauth2-proxy --config /etc/oauth2-proxy.cfg >/tmp/oauth.log 2>&1 &
 sleep 4
 chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/'
+chk "legacy dashboard listening :3006 (--ui=legacy)" 'curl -sf -o /dev/null http://127.0.0.1:3006/'
 # /api/* reads the same agentsIndex() the HTML views do, so it needs the same fixture: a
 # real (if empty) directory under AGENTS_STATE named harness-reviewer. Without this, agent
 # detail/chat would 404 for "no such agent" — a true statement about the fixture, not about
@@ -147,16 +151,49 @@ chk "cap: the webhook secret never leaves the box" '! curl -s http://127.0.0.1:3
 # be passing for a reason that has nothing to do with the honest-unknown path it is meant to prove.
 chk "cap: no agent file -> null, not an empty capability" \
   'curl -s http://127.0.0.1:3005/api/agents/ghost | jq -e "has(\"capability\") and .capability == null"'
-chk "cap: the panel module is actually served to the browser" \
-  'curl -s http://127.0.0.1:3005/ui/ | grep -q "views/capability"'
+# was: GET /ui/ names views/capability in its import map. The shell has no import map: the view is a hashed chunk the router import()s, so the
+# assertion is that the build's own capability chunk is served from /assets/ as JavaScript, immutable.
+CAPJS=$(basename /r/dist/capability.*.mjs)
+chk "cap: the panel module is actually served to the browser (the built chunk under /assets/)" \
+  '[ -f /r/dist/$CAPJS ] && curl -sD - -o /dev/null http://127.0.0.1:3005/assets/$CAPJS | tr -d "\r" | grep -qiE "^content-type: text/javascript" && [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/assets/$CAPJS)" = 200 ]'
+chk "cap: the legacy /ui still names it in its import map (--ui=legacy, until Stage 8 step 4)" \
+  'curl -s http://127.0.0.1:3006/ui/ | grep -q "views/capability"'
 chk "api: unknown agent -> 404"         '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/nope)" = 404 ]'
 chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/api/agents/BAD_NAME)" = 404 ]'
 chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'
 chk "stream: emits fleet on connect"   'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 400 | grep -q "event: fleet"'
 chk "stream: heartbeat or data, never silence" 'timeout 30 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 200 | grep -qE "event:|: hb"'
 chk "stream: the additive system topic emits on connect (K-13)" 'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=system" | head -c 400 | grep -q "event: system"'
-chk "shell: /next serves the boot snapshot and a hashed tokens stylesheet from dist/" \
-  'curl -s http://127.0.0.1:3005/next/ | grep -q "id=\"boot\"" && curl -s http://127.0.0.1:3005/next/ | grep -qE "/assets/tokens\.[A-Za-z0-9_-]+\.css"'
+# was: GET /next/. The shell answers at / since the cutover.
+chk "shell: / serves the boot snapshot and a hashed tokens stylesheet from dist/" \
+  'curl -s http://127.0.0.1:3005/ | grep -q "id=\"boot\"" && curl -s http://127.0.0.1:3005/ | grep -qE "/assets/tokens\.[A-Za-z0-9_-]+\.css"'
+chk "cutover: /next/* answers 301 to the same path without the prefix, query kept" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" "http://127.0.0.1:3005/next/history?page=2")" = "301 http://127.0.0.1:3005/history?page=2" ]'
+chk "cutover: /next//x cannot become a protocol-relative redirect" \
+  '[ "$(curl -s -o /dev/null -w "%{redirect_url}" "http://127.0.0.1:3005/next//evil.test")" = "http://127.0.0.1:3005/evil.test" ]'
+chk "cutover: /ui/agents/<name> answers 301 to the shell route /agents/<name>" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" http://127.0.0.1:3005/ui/agents/harness-reviewer)" = "301 http://127.0.0.1:3005/agents/harness-reviewer" ]'
+chk "cutover: an unrecognised /ui path answers 301 to /agents, never to itself" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code} %{redirect_url}" "http://127.0.0.1:3005/ui/agents/%3Cimg%20src=x%3E")" = "301 http://127.0.0.1:3005/agents" ]'
+chk "cutover: the manifest is the installed one (id /, start_url /app, scope /) and /app still 302s into the terminal" \
+  'curl -s http://127.0.0.1:3005/manifest.webmanifest | grep -q "\"id\":\"/\"" && curl -s http://127.0.0.1:3005/manifest.webmanifest | grep -q "\"start_url\":\"/app\"" && curl -s http://127.0.0.1:3005/manifest.webmanifest | grep -q "\"scope\":\"/\"" && [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/app)" = 302 ] && curl -s -o /dev/null -w "%{redirect_url}" http://127.0.0.1:3005/app | grep -q "/term/"'
+chk "sw: /sw.js is the built worker behind a precache list of dist/ by sha256, and never lists the term, md or metafile outputs" \
+  'curl -s http://127.0.0.1:3005/sw.js | head -1 | grep -q "^self.PRECACHE={\"files\":{\"" && curl -s http://127.0.0.1:3005/sw.js | head -1 | grep -qE "\"tokens\.[A-Za-z0-9_-]+\.css\":\"[0-9a-f]{64}\"" && ! curl -s http://127.0.0.1:3005/sw.js | head -1 | grep -qE "\"(term|md|metafile|sw)\."'
+chk "sw: /sw.js is revalidated, not cached for a year" \
+  'curl -sD - -o /dev/null http://127.0.0.1:3005/sw.js | tr -d "\r" | grep -qi "^cache-control: no-cache"'
+chk "push: GET /api/push/key is the 65-byte VAPID public key, base64url" \
+  'curl -s http://127.0.0.1:3005/api/push/key | jq -e "(.key | length) == 87 and (.key | test(\"^[A-Za-z0-9_-]+$\"))"'
+PUSHSUB=$(node -e "const c=require(\"crypto\"),e=c.createECDH(\"prime256v1\");e.generateKeys();console.log(JSON.stringify({endpoint:\"https://push.example.test/e2e\",keys:{p256dh:e.getPublicKey().toString(\"base64url\"),auth:c.randomBytes(16).toString(\"base64url\")}}))")
+PUSHID=$(curl -s -X POST -H "content-type: application/json" -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe | jq -r .id)
+chk "push: POST /api/push/subscribe stores a well-formed subscription and returns its id" '[ "${#PUSHID}" = 16 ]'
+chk "push: a foreign Origin is refused (same-origin guard)" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -H "origin: https://evil.test" -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe)" = 403 ]'
+chk "push: a body over 4 KB, a non-https endpoint and a non-JSON content type are refused" \
+  '[ "$(head -c 5000 /dev/zero | tr "\0" a | curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" --data-binary @- http://127.0.0.1:3005/api/push/subscribe)" = 400 ] && [ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -d "{\"endpoint\":\"http://push.example.test/x\",\"keys\":{}}" http://127.0.0.1:3005/api/push/subscribe)" = 400 ] && [ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe)" = 415 ]'
+chk "push: DELETE /api/push/subscribe removes it by id" \
+  '[ "$(curl -s -X DELETE -H "content-type: application/json" -d "{\"id\":\"$PUSHID\"}" http://127.0.0.1:3005/api/push/subscribe | jq -r .ok)" = true ]'
+chk "push: the key pair was written once, 0600, next to the settings" \
+  '[ "$(stat -c %a /opt/claude-dashboard/vapid.json)" = 600 ] && jq -e ".privateJwk.d and .publicKey" /opt/claude-dashboard/vapid.json'
 # --max-time, NOT `timeout`. An SSE response never ends, so the curl has to be cut short either
 # way — but `timeout` cuts it short with SIGTERM from outside, and a SIGTERMed curl dies before
 # it ever emits --write-out. The command substitution therefore expanded to the empty string and
@@ -186,72 +223,73 @@ chk "stream: replay resumes without duplicating" 'PORT=3005 node /r/scripts/stre
 # on '/' since that reskin; the check outlived its subject by pointing at a page that had
 # deliberately stopped rendering the thing it looks for. Verified by dumping both pages against
 # this exact fixture: '/' contains "aaaa1111" 0 times, /history 7, including data-nw="t-aaaa1111".
-chk "dashboard: >_ carries data-nw"   'curl -s http://127.0.0.1:3005/history | grep -q "data-nw=\"t-aaaa1111\""'
+# The three assertions below are about the server-rendered pages, which --ui=legacy still serves (:3006); the shell renders its rows in the browser.
+chk "dashboard: >_ carries data-nw (legacy /history)"   'curl -s http://127.0.0.1:3006/history | grep -q "data-nw=\"t-aaaa1111\""'
 # stays on '/': the window-target gate lives in the base page script, served on every page.
-chk "dashboard: window-target script" 'curl -s http://127.0.0.1:3005/ | grep -q "a.target=a.dataset.nw"'
-chk "dashboard: /agents renders" 'curl -sf http://127.0.0.1:3005/agents | grep -q "· agents"'
-# /ui must carry the SAME pinned tab bar as every other page. It shipped without one for a whole
-# branch: the document was `<div id="app">` plus a <noscript>, so with JavaScript ON there was no
-# link out of the app to any sibling page and the only way back was Back or typing a URL (final
-# review, H1). Asserted link by link against the served document, because "a nav element exists"
-# would stay green if the bar rendered with the wrong hrefs or lost a tab.
-UIDOC=$(curl -s http://127.0.0.1:3005/ui)
-chk "dashboard: /ui carries the pinned tab bar" 'grep -q "<nav class=\"tabs\">" <<<"$UIDOC"'
+chk "dashboard: window-target script (legacy /)" 'curl -s http://127.0.0.1:3006/ | grep -q "a.target=a.dataset.nw"'
+chk "dashboard: /agents renders (legacy)" 'curl -sf http://127.0.0.1:3006/agents | grep -q "· agents"'
+chk "dashboard: /agents is the shell document: a boot snapshot with the agent list and the agent route's own tab on" \
+  'curl -sf http://127.0.0.1:3005/agents | grep -q "id=\"boot\"" && curl -s http://127.0.0.1:3005/agents | grep -q "\"agents\":\[" && curl -s http://127.0.0.1:3005/agents | grep -qF "class=\"tb on\" href=\"/agents\""'
+# The shell at / must carry the SAME pinned tab bar as every other page. /ui shipped without one for a whole branch: the document was `<div id="app">`
+# plus a <noscript>, so with JavaScript ON there was no link out of the app to any sibling page and the only way back was Back or typing a URL (final
+# review, H1). Asserted link by link against the served document, because "a nav element exists" would stay green if the bar rendered with the wrong
+# hrefs or lost a tab. Rewritten for the cutover (cockpit phase 05, MAP 6.1 G-23): the document is `/`, every href is a shell route with no /ui or /next
+# prefix, and the Agents tab is "on" on /agents itself.
+UIDOC=$(curl -s http://127.0.0.1:3005/)
+chk "dashboard: / carries the pinned tab bar" 'grep -q "<nav class=\"tabs\">" <<<"$UIDOC"'
 # BOTH bars, because they are not redundant: .tabs is display:none above 701px and .pnav (inside
 # the .navdup header) is display:none below it, so each is the ONLY navigation at its width.
 # Asserting one would leave the other width with no link out of the app and a green suite.
-chk "dashboard: /ui carries the desktop pill nav" 'grep -q "<nav class=\"pnav\">" <<<"$UIDOC"'
-for pair in /:Sessions /history:History /system:System /device:Device; do
+chk "dashboard: / carries the desktop pill nav" 'grep -q "<nav class=\"pnav\">" <<<"$UIDOC"'
+for pair in /:Sessions /history:History /system:System /device:Device /agents:Agents; do
   href=${pair%:*}; label=${pair#*:}
   # The trailing quote in the tab pattern is load-bearing: without it href="/" would also match
-  # href="/history" and the four assertions would collapse into one. The pill nav is matched by
+  # href="/history" and the assertions would collapse into one. The pill nav is matched by
   # href AND label rather than by its class attribute, which is the empty string for an inactive
   # tab and would make these assertions hostage to a cosmetic change in how that is emitted.
-  chk "dashboard: /ui tab bar links to $href" \
-    "grep -qF 'class=\"tb\" href=\"$href\"' <<<\"\$UIDOC\""
-  chk "dashboard: /ui pill nav links to $href" \
-    "grep -qF 'href=\"$href\">$label</a>' <<<\"\$UIDOC\""
+  chk "dashboard: / tab bar links to $href" \
+    "grep -qF 'class=\"tb\" href=\"$href\"' <<<\"\$UIDOC\" || grep -qF 'class=\"tb on\" href=\"$href\"' <<<\"\$UIDOC\""
+  chk "dashboard: / pill nav links to $href" \
+    "grep -qE 'href=\"$href\">$label( <b[^>]*>[0-9]+</b>)?</a>' <<<\"\$UIDOC\""
 done
-# ...and the Agents tab stays INSIDE the app, so tapping the tab you are already on does not eject
-# you to the server-rendered twin you deliberately navigated away from.
-chk "dashboard: /ui Agents tab points back into the app" 'grep -q "class=\"tb on\" href=\"/ui/agents\"" <<<"$UIDOC"'
-# Spec §2 asks the <noscript> block to link to "the server-rendered equivalent"; it was a constant
-# pointing at / for the whole branch (final review, L3).
-chk "dashboard: /ui noscript names the route's own twin" \
-  '[ "$(curl -s http://127.0.0.1:3005/ui/agents/harness-reviewer | grep -c "is at <a href=\"/agents/harness-reviewer\">")" = 1 ]'
-chk "dashboard: ...and an unrecognised /ui path falls back to /agents, not to the path itself" \
-  '[ "$(curl -s "http://127.0.0.1:3005/ui/agents/%3Cimg%20src=x%3E" | grep -c "is at <a href=\"/agents\">")" = 1 ]'
-# THE OTHER HALF OF THE D3 CEILING. preflight 5b is a static file gate over ./app/ and cannot see
-# this document, which inlines the server-rendered dashboard's ENTIRE stylesheet -- a third again
-# on top of the gated total, no-cache, never 304-able because the nonce changes per response, and
-# growing every time somebody styles an unrelated page (final review, M2). Measured here because
-# this is the only place in the repo where a real GET /ui exists.
+chk "dashboard: no tab, link or asset in / points at /ui or /next (the retired mounts)" \
+  '! grep -qE "(href|src)=\"/(ui|next)(/|\")" <<<"$UIDOC"'
+# Spec §2 asked the <noscript> block of /ui to link to "the server-rendered equivalent"; it was a constant pointing at / for the whole branch (final
+# review, L3). The check STAYS until Stage 8 step 4 deletes legacy.mjs, and runs against what still has that block: the --ui=legacy instance (:3006),
+# where /ui is still the client-rendered app. On :3005 /ui is a 301 (asserted above).
+chk "dashboard: legacy /ui noscript names the route's own twin (--ui=legacy, :3006)" \
+  '[ "$(curl -s http://127.0.0.1:3006/ui/agents/harness-reviewer | grep -c "is at <a href=\"/agents/harness-reviewer\">")" = 1 ]'
+chk "dashboard: ...and an unrecognised legacy /ui path falls back to /agents, not to the path itself" \
+  '[ "$(curl -s "http://127.0.0.1:3006/ui/agents/%3Cimg%20src=x%3E" | grep -c "is at <a href=\"/agents\">")" = 1 ]'
+# THE OTHER HALF OF THE D3 CEILING. The per-route budgets of scripts/budget.mjs are static file gates over dist/ and cannot see the DOCUMENT: no-cache,
+# never 304-able because the nonce changes per response, and carrying the boot snapshot (K-07), which grows with the fleet (final review, M2). Before the
+# cutover this measured GET /ui, which inlined the server-rendered dashboard's ENTIRE stylesheet; the shell links tokens.css instead, so what is measured
+# now is `/` with this fixture's fleet. The 20480 B ceiling stays as written: it is the number the document is held to, and 1.4 kB against it is real headroom.
 # "at gzip -9", not "as served": this re-compresses the body locally at -9, matching preflight
 # 5b's convention, while send() ships gzipSync at zlib's default level. Measured, so the label is
 # not guessing: 16,105 B here against 16,198 B actually on the wire, a 93 B / 0.6% gap. Immaterial
 # against 4,375 B of headroom, but a label describing something adjacent to what it measures is
 # this branch's own recurring defect and is not worth committing twice (re-review, M2 note).
-UIGZ=$(curl -s http://127.0.0.1:3005/ui | gzip -9 -c | wc -c)
-echo "  the /ui document at gzip -9: ${UIGZ}B of 20480B ceiling"
-chk "dashboard: /ui document <= 20480B at gzip -9 (spec D3, the half 5b cannot see)" \
+UIGZ=$(curl -s http://127.0.0.1:3005/ | gzip -9 -c | wc -c)
+echo "  the / document at gzip -9: ${UIGZ}B of 20480B ceiling"
+chk "dashboard: / document <= 20480B at gzip -9 (spec D3, the half the budgets cannot see)" \
   '[ -n "$UIGZ" ] && [ "$UIGZ" -le 20480 ]'
-# The server-rendered pages must NOT prerender /ui links. Today no /ui href matches the
-# href_matches allowlist anyway, so the BEHAVIOUR would be right even with the exclusion removed —
-# which is exactly why the exclusion is written down and pinned here rather than left implicit.
-# That allowlist is a list people widen (it already grew /agents, /agents?* and /agents/* once),
-# and the first broader pattern added would silently re-enable prerendering of an app route. A
-# prerender runs the page's scripts, so that means a whole second copy of the SPA and a second
-# EventSource on /stream, against a cap of STREAM_MAX_CLIENTS=16, for a tap that may never come.
-# Asserted against the SERVED html, not the source. Proved able to fail: deleting a[href^='/ui']
-# from the selector and re-serving the page turns this red.
-chk "dashboard: speculation rules exclude /ui" \
-  'curl -s http://127.0.0.1:3005/ | grep -o "<script type=\"speculationrules\">[^<]*" | grep -q "a\[href\^='"'"'/ui'"'"'\]"'
+# The server-rendered pages must NOT prerender /ui links. That allowlist is a list people widen (it already grew /agents, /agents?* and /agents/* once),
+# and the first broader pattern added would silently re-enable prerendering of an app route. A prerender runs the page's scripts, so that means a whole
+# second copy of the SPA and a second EventSource on /stream, against a cap of STREAM_MAX_CLIENTS=16, for a tap that may never come. Asserted against the
+# SERVED html. The exclusion now only matters to the legacy pages (:3006); the shell replaced prerender with prefetch (K-35) and carries no rules at all.
+chk "dashboard: legacy speculation rules exclude /ui (--ui=legacy, :3006)" \
+  'curl -s http://127.0.0.1:3006/ | grep -o "<script type=\"speculationrules\">[^<]*" | grep -q "a\[href\^='"'"'/ui'"'"'\]"'
+chk "dashboard: the shell at / carries no speculation rules (prefetch on hover replaces prerender)" \
+  '! curl -s http://127.0.0.1:3005/ | grep -q speculationrules'
 
-# ---- the SPA's Content-Security-Policy -------------------------------------------------------
+# ---- the shell's Content-Security-Policy -----------------------------------------------------
 # Defence BEHIND the escaping in views/chat.mjs, never instead of it. This branch shipped a stored
 # XSS in that renderer whose exploitability rested partly on nothing standing behind it, and the
-# policy is scoped to /ui because that is the surface that renders agent replies (see uiCsp's own
-# comment in legacy.mjs for why the server-rendered pages at / are NOT in scope).
+# policy is per document (K-10) because the shell is the surface that renders agent replies (see uiCsp's own
+# comment in core.mjs for why the legacy server-rendered pages are NOT in scope). Rewritten for the cutover (phase 05,
+# G-23): every assertion that read GET /ui reads GET / now, and the same five-then-four checks hold for the shell's
+# policy: it is the one `uiCsp(nonce, "'self' ", true)` builds.
 #
 # Measured in two real engines before these lines were written, against a build with the header
 # removed as the control: without it an injected `onerror=` handler AND a dynamically inserted
@@ -260,60 +298,59 @@ chk "dashboard: speculation rules exclude /ui" \
 # cannot, so what it asserts here is the part a curl CAN see — that the policy is served, that it
 # is the strict shape, and that its nonce is real rather than decorative.
 CSPD=/tmp/ui-csp.h; CSPB=/tmp/ui-csp.b
-curl -s -D "$CSPD" -o "$CSPB" http://127.0.0.1:3005/ui
+curl -s -D "$CSPD" -o "$CSPB" http://127.0.0.1:3005/
 CSPH=$(tr -d '\r' < "$CSPD" | grep -i '^content-security-policy:' | cut -d: -f2-)
 CSPN=$(grep -oE "nonce-[A-Za-z0-9_-]+" <<<"$CSPH" | head -1 | cut -c7-)
 DOCN=$(grep -oE 'nonce="[A-Za-z0-9_-]+"' "$CSPB" | head -1 | cut -d'"' -f2)
-CSPN2=$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ui | tr -d '\r' \
+CSPN2=$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ | tr -d '\r' \
   | grep -i '^content-security-policy:' | grep -oE "nonce-[A-Za-z0-9_-]+" | head -1 | cut -c7-)
-echo "  /ui CSP: ${CSPH:-<none>}"
-chk "ui: a Content-Security-Policy is served at all" '[ -n "$CSPH" ]'
-chk "ui: default-src is none, so an undeclared directive refuses rather than allows" \
+echo "  / CSP: ${CSPH:-<none>}"
+chk "shell: a Content-Security-Policy is served at all" '[ -n "$CSPH" ]'
+chk "shell: default-src is none, so an undeclared directive refuses rather than allows" \
   'grep -qF "default-src '\''none'\''" <<<"$CSPH"'
-chk "ui: script-src is nonced and carries no unsafe-inline" \
+chk "shell: script-src is nonced and carries no unsafe-inline" \
   'grep -qE "script-src [^;]*'\''nonce-" <<<"$CSPH" && ! grep -qF "unsafe-inline" <<<"$CSPH"'
-# A header naming a nonce the document does not carry is WORSE than no header: the inline import
-# map and the inline <style> would both be refused and the SPA would not boot at all.
-chk "ui: the nonce in the header is the one the document actually carries" \
+# A header naming a nonce the document does not carry is WORSE than no header: the boot snapshot
+# and the module script would both be refused and the shell would not boot at all.
+chk "shell: the nonce in the header is the one the document actually carries" \
   '[ -n "$CSPN" ] && [ "$CSPN" = "$DOCN" ]'
 # A per-process nonce is decoration — anyone who can inject markup can also read it off the page.
 # This is the one assertion of the five that a constant-nonce build still passes the other four of.
-chk "ui: the nonce is minted per response, not once per process" \
+chk "shell: the nonce is minted per response, not once per process" \
   '[ -n "$CSPN" ] && [ -n "$CSPN2" ] && [ "$CSPN" != "$CSPN2" ]'
 
 # ---- and now the DOCUMENT, which none of the five above looks at (Task 9 review, F3) ----------
 # A CSP breaks an application silently. One inline style="" attribute added to a view, or a second
-# inline <script>, and /ui renders unstyled or does not boot at all in production -- with all five
+# inline <script>, and the shell renders unstyled or does not boot at all in production -- with all five
 # assertions above green, preflight ALL CLEAN and both mutation sweeps clean, because nothing in
 # this repo runs a browser. scripts/csp-admits.mjs decides, by CSP's own rules, whether the served
 # markup survives the header it was served with. It is not a browser and does not claim to be: it
 # cannot say the page LOOKS right, only that nothing in it would be refused.
-node /r/scripts/csp-admits.mjs http://127.0.0.1:3005/ui > /tmp/ui-admits.json 2>/tmp/ui-admits.err || true
-echo "  /ui admissibility: $(jq -c "{nonced,wrongNonce,styleAttrs,eventAttrs,offOrigin,refused:(.refused|length)}" /tmp/ui-admits.json 2>/dev/null || head -2 /tmp/ui-admits.err)"
-chk "ui: nothing in the served document is refused by the policy it was served with" \
+node /r/scripts/csp-admits.mjs http://127.0.0.1:3005/ --expect nonce > /tmp/ui-admits.json 2>/tmp/ui-admits.err || true
+echo "  / admissibility: $(jq -c "{nonced,wrongNonce,styleAttrs,eventAttrs,offOrigin,refused:(.refused|length)}" /tmp/ui-admits.json 2>/dev/null || head -2 /tmp/ui-admits.err)"
+chk "shell: nothing in the served document is refused by the policy it was served with" \
   'jq -e ".refused == []" /tmp/ui-admits.json'
-chk "ui: the document carries no inline style attribute, which style-src-attr would refuse" \
+chk "shell: the document carries no inline style attribute, which style-src-attr would refuse" \
   'jq -e ".styleAttrs == 0" /tmp/ui-admits.json'
-chk "ui: the document carries no inline event handler, which script-src-attr would refuse" \
+chk "shell: the document carries no inline event handler, which script-src-attr would refuse" \
   'jq -e ".eventAttrs == 0" /tmp/ui-admits.json'
-# The nonce-match assertion above reads the FIRST nonce in the document, which is the inline
-# <style>. The import map and the module script were unchecked, and a wrong nonce on either leaves
-# the SPA dead with that assertion green -- the exact failure its own comment says it prevents
-# (review F9). All three are counted here.
-chk "ui: all three nonced elements carry the header's nonce, not just the first one" \
-  'jq -e ".nonced == 3 and .wrongNonce == 0" /tmp/ui-admits.json'
-chk "ui: every subresource the document names is same-origin, which is all self permits" \
+# The nonce-match assertion above reads the FIRST nonce in the document. A wrong nonce on a later element leaves the shell dead with that assertion
+# green -- the exact failure its own comment says it prevents (review F9). All of them are counted: /ui carried three (an inline <style>, an import map,
+# the module script); the shell carries two (the boot snapshot and the module script) because its stylesheet is linked from 'self'.
+chk "shell: both nonced elements (boot snapshot, module script) carry the header's nonce" \
+  'jq -e ".nonced == 2 and .wrongNonce == 0" /tmp/ui-admits.json'
+chk "shell: every subresource the document names is same-origin, which is all self permits" \
   'jq -e ".offOrigin == 0" /tmp/ui-admits.json'
 
 # ---- the server-rendered pages get the directives inline styles cannot object to (review F7) ---
-# uiCsp is scoped to /ui because those pages are full of inline styles and inline scripts, and CSP3
+# uiCsp is per document because the legacy pages are full of inline styles and inline scripts, and CSP3
 # ignores 'unsafe-inline' once a nonce is present. That argument covers script-src and style-src
 # and nothing else: base-uri, object-src, form-action and frame-ancestors say nothing about inline
 # anything and were simply not taken. /app is the persistent terminal launcher, which is the page
-# here where clickjacking is actually interesting.
-BCSP=$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ | tr -d "\r" | grep -i "^content-security-policy:" | cut -d: -f2-)
+# here where clickjacking is actually interesting. Those pages are the --ui=legacy instance's (:3006).
+BCSP=$(curl -s -D - -o /dev/null http://127.0.0.1:3006/ | tr -d "\r" | grep -i "^content-security-policy:" | cut -d: -f2-)
 echo "  server-page CSP: ${BCSP:-<none>}"
-chk "dashboard: the server-rendered pages carry a policy at all" '[ -n "$BCSP" ]'
+chk "dashboard: the server-rendered pages carry a policy at all (legacy)" '[ -n "$BCSP" ]'
 chk "dashboard: it closes base-uri, object-src, form-action and frame-ancestors" \
   'grep -q "base-uri" <<<"$BCSP" && grep -q "object-src" <<<"$BCSP" && grep -q "form-action" <<<"$BCSP" && grep -q "frame-ancestors" <<<"$BCSP"'
 # ...and says NOTHING about scripts, styles or frames: naming script-src or style-src there would
@@ -321,9 +358,9 @@ chk "dashboard: it closes base-uri, object-src, form-action and frame-ancestors"
 chk "dashboard: and names no script-src, style-src or frame-src, which would break those pages" \
   '! grep -qE "script-src|style-src|frame-src" <<<"$BCSP"'
 # Two Content-Security-Policy headers are enforced as an INTERSECTION, which is far harder to
-# reason about than one policy that says everything. /ui must replace the baseline, not join it.
-chk "dashboard: the strict /ui policy replaces the baseline rather than being sent beside it" \
-  '[ "$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ui | tr -d "\r" | grep -ci "^content-security-policy:")" = 1 ]'
+# reason about than one policy that says everything. The shell's policy must replace the baseline, not join it.
+chk "dashboard: the strict shell policy replaces the baseline rather than being sent beside it" \
+  '[ "$(curl -s -D - -o /dev/null http://127.0.0.1:3005/ | tr -d "\r" | grep -ci "^content-security-policy:")" = 1 ]'
 
 SIG="sha256=$(printf '{"ref":"refs/heads/main"}' | openssl dgst -sha256 -hmac s3cret | awk '{print $NF}')"
 chk "webhook: good HMAC -> 202"      '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-Mows-Signature: $SIG" --data-binary "{\"ref\":\"refs/heads/main\"}" http://127.0.0.1:3005/wh/harness-reviewer)" = 202 ]'
@@ -386,8 +423,8 @@ chk "caddy listening :80" 'curl -s -o /dev/null http://127.0.0.1:80/'
 chk "caddy: /wh/* bypasses the auth gate" '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST --data-binary "{}" http://127.0.0.1/wh/nobody)" = 404 ]'
 # The site-wide `header` block in the Caddyfile sets its OWN Content-Security-Policy, and Caddy's
 # plain `header` directive is a Set. Two CSP headers are enforced as an intersection, so the day
-# someone adds a `default-src` or a `script-src` to that snippet, /ui breaks for everyone and no
-# test in this repo would notice (Task 9 review, F8). Pinned two ways: Caddy's header does reach the
+# someone adds a `default-src` or a `script-src` to that snippet, the shell breaks for everyone and no
+# test in this repo would notice (Task 9 review, F8). (/ui before the cutover; the shell now.) Pinned two ways: Caddy's header does reach the
 # client on a proxied response, and the snippet contains only the directive that cannot narrow /ui.
 # The apex, not a PWA static: `@pwa` is handled BEFORE `import gauth` in the Caddyfile, so those
 # paths skip the header block entirely (measured -- the first version of this assertion used
@@ -402,7 +439,7 @@ chk "caddy: its own CSP reaches the client, on a response the dashboard never sa
 # them. They are served by the dashboard, which sends its own on HTML and nothing on a manifest.
 chk "caddy: the PWA statics bypass that header block, so its CSP is not site-wide" \
   '[ "$(curl -s -D - -o /dev/null http://127.0.0.1/manifest.webmanifest | tr -d "\r" | grep -ci "^content-security-policy:")" = 0 ]'
-chk "caddy: the site-wide policy is frame-ancestors only, so it cannot narrow /ui" \
+chk "caddy: the site-wide policy is frame-ancestors only, so it cannot narrow the shell's" \
   'grep -i "Content-Security-Policy" rendered/Caddyfile | grep -q "frame-ancestors" && ! grep -i "Content-Security-Policy" rendered/Caddyfile | grep -qE "default-src|script-src|style-src|connect-src"'
 
 echo "### THE ACTUAL CLAIM: everything is gated behind Google sign-in"

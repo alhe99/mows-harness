@@ -152,20 +152,8 @@ export function manifest(req, res) {
   }), 'application/manifest+json');
 }
 
-// ponytail: no caching in the SW — every page is live data and ~4KB; an offline
-// console is useless, so offline just says so instead of the browser dino.
-export const SW = `self.addEventListener('install',()=>self.skipWaiting());
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
-const OFF='<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>offline</title><body style="background:#09090b;color:#9f9fa9;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center"><div><div style="color:#00d492;font-size:26px;padding-bottom:10px">&gt;_</div>offline — the console needs a connection.<br><br><a style="color:#00d492" href="/">retry</a></div>';
-self.addEventListener('fetch',e=>{
-  if(e.request.mode==='navigate')
-    e.respondWith(fetch(e.request).catch(()=>new Response(OFF,{headers:{'content-type':'text/html; charset=utf-8'}})));
-});
-`;
-
-
 // ---------- /next: the cockpit shell (cockpit phase 01) ----------
-// One document for every route of the rebuilt UI, served beside the current one until phase 05 swaps them. The chrome is the
+// One document for every route of the UI: `/` since the cutover (phase 05); --ui=legacy keeps it mounted at /next beside the old pages. The chrome is the
 // SAME pageChrome() markup as every other page (hrefs prefixed with NEXT_BASE); the view, the tab state and the stream are the
 // client's (web/main.mjs, web/store.mjs, built into dist/ and served by static.mjs). The first paint carries data (K-07): the
 // BootSnapshot for the route is inlined, so LCP needs no fetch and no SSE round trip.
@@ -187,7 +175,7 @@ async function nextBoot(req, url, route) {
   return boot;
 }
 
-// base is NEXT_BASE while the current UI owns `/`, and '' when --ui=next lets the shell answer there
+// base is NEXT_BASE while --ui=legacy owns `/`, and '' when the shell answers there (the default)
 export async function nextView(req, res, url, p, base = NEXT_BASE) {
   const route = p.slice(base.length).replace(/\/+$/, '') || '/';
   const boot = await nextBoot(req, url, route);

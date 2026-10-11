@@ -1,7 +1,7 @@
 // Cockpit phase 02a sessions probe (specs/cockpit/02a-sessions.md tasks 1-9). Exit code is the verdict.
 // usage: node docs/qa/probes/sessions-check.mjs <webkit|chromium> <render|actions|keys|links|standalone|prefetch|history|all>
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
-// Every mode runs against the /next shell on the dev instance with a FIXTURE fleet: the boot snapshot in the document is rewritten
+// Every mode runs against the shell on the dev instance with a FIXTURE fleet: the boot snapshot in the document is rewritten
 // in flight, EventSource is replaced by a fake that window.__emit(name, data) drives, and every /a/*, /z and /api/* request is
 // answered here, so nothing the probe does can reach a real session and the result does not depend on what tmux holds.
 import http from 'node:http';
@@ -10,7 +10,7 @@ const engine = process.argv[2] || 'webkit';
 const mode = process.argv[3] || 'all';
 const MODES = ['render', 'actions', 'keys', 'links', 'standalone', 'prefetch', 'history'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`sessions-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
-const base = (process.env.DASH || 'http://127.0.0.1:3105') + '/next/';
+const base = (process.env.DASH || 'http://127.0.0.1:3105') + '/';
 const browser = await pw[engine].launch();
 
 let bad = 0, errors = [];
@@ -61,7 +61,7 @@ async function open(opts = {}) {
     document.addEventListener('DOMContentLoaded', () => new MutationObserver(rs => rs.forEach(r => { if (!/display:\s*none/.test(r.oldValue || '')) window.__tog++; }))
       .observe(document.body, { attributes: true, attributeFilter: ['style'], attributeOldValue: true }));
   }, stub);
-  await ctx.route('**/next/', async route => {
+  await ctx.route(u => u.pathname === '/', async route => {
     const r = await route.fetch();
     const html = (await r.text()).replace(/(<script type="application\/json" id="boot"[^>]*>)([\s\S]*?)(<\/script>)/, (_, a, j, c) => {
       const b = JSON.parse(j); b.fleet = fleet; b.live = fleet.length;
@@ -78,7 +78,7 @@ async function open(opts = {}) {
   page.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', e => errors.push(String(e)));
   let loads = 0; page.on('load', () => loads++);
-  await page.goto(origin ? origin + '/next/' : base, { waitUntil: 'load' });
+  await page.goto(origin ? origin + '/' : base, { waitUntil: 'load' });
   await page.waitForSelector('#app h1[data-view="sessions"]', { state: 'attached' }); // the h1 is display:none on a desktop, as in the legacy page
   await page.evaluate(() => { window.__doc = 'same-document'; });
   return { ctx, page, z, api, loads: () => loads };
@@ -150,10 +150,10 @@ async function actions() {
   const srv = http.createServer((q, r) => {
     if (q.method === 'POST' && q.url.startsWith('/a/')) {
       let body = ''; q.on('data', c => { body += c; });
-      q.on('end', () => { posts.push({ path: q.url, method: 'POST', body, type: /text\/html/.test(q.headers.accept || '') ? 'document' : 'fetch' }); setTimeout(() => { r.writeHead(303, { location: '/next/' }); r.end(); }, 300); });
+      q.on('end', () => { posts.push({ path: q.url, method: 'POST', body, type: /text\/html/.test(q.headers.accept || '') ? 'document' : 'fetch' }); setTimeout(() => { r.writeHead(303, { location: '/' }); r.end(); }, 300); });
       return;
     }
-    if (q.url === '/next/') nextGets++;
+    if (q.url === '/') nextGets++;
     const u = http.request({ host: dash.hostname, port: dash.port, path: q.url, method: q.method, headers: q.headers }, p => { r.writeHead(p.statusCode, p.headers); p.pipe(r); });
     u.on('error', () => r.destroy());
     q.pipe(u);
@@ -172,7 +172,7 @@ async function actions() {
   const forms = await page.evaluate(() => [...document.querySelectorAll('#fleet-rows > .li[data-sid=cccc3333] form')].map(f => ({ method: f.method, action: new URL(f.action).pathname, cls: f.className,
     hidden: Object.fromEntries([...f.querySelectorAll('input[type=hidden]')].map(i => [i.name, i.value])), btn: f.querySelector('button').textContent.trim() })));
   check('2 each menu action is a <form method=post> with name + back: paused session offers /a/resume, rename /a/label, kill /a/kill',
-    forms.length === 3 && forms.every(f => f.method === 'post' && f.hidden.name === 'cc-gamma' && f.hidden.back === '/next/')
+    forms.length === 3 && forms.every(f => f.method === 'post' && f.hidden.name === 'cc-gamma' && f.hidden.back === '/')
     && forms.map(f => f.action).join() === '/a/resume,/a/label,/a/kill' && forms[0].btn === 'Resume' && forms[1].cls === 'af lf', forms);
   const al = await page.evaluate(() => { const f = document.querySelector('#fleet-rows > .li[data-sid=aaaa1111] form[data-f=pauseform]'); return [new URL(f.action).pathname, f.querySelector('button').textContent.trim(), f.querySelector('button').className]; });
   check('3 a working session offers /a/pause (the pause/resume swap follows state)', al.join() === '/a/pause,Pause,ab', al);
@@ -187,8 +187,8 @@ async function actions() {
   await page.waitForTimeout(150);
   const after = await page.evaluate(() => ({ doc: window.__doc, open: document.querySelectorAll('details[name=fm][open]').length }));
   check('5 POST /a/pause with name and back, answered 303, cleared on response, menu closed, same document', posts.length === 1 && posts[0].method === 'POST' && posts[0].path === '/a/pause'
-    && /(^|&)name=cc-alpha(&|$)/.test(posts[0].body) && /(^|&)back=%2Fnext%2F(&|$)/.test(posts[0].body) && after.doc === 'same-document' && loads() === before && after.open === 0, { posts, after });
-  check('6 the 303 target is not fetched (one GET of /next/ in all: the page load; the fleet arrives over the stream)', nextGets === 1, nextGets);
+    && /(^|&)name=cc-alpha(&|$)/.test(posts[0].body) && /(^|&)back=%2F(&|$)/.test(posts[0].body) && after.doc === 'same-document' && loads() === before && after.open === 0, { posts, after });
+  check('6 the 303 target is not fetched (one GET of / in all: the page load; the fleet arrives over the stream)', nextGets === 1, nextGets);
 
   // rename
   await sum('bbbb2222').click();
@@ -216,7 +216,7 @@ async function actions() {
   await page.evaluate(() => HTMLFormElement.prototype.submit.call(document.querySelector('#fleet-rows > .li[data-sid=aaaa1111] form[data-f=pauseform]')));
   await nav;
   const nat = posts[3];
-  check('10 ...and submits natively without the view\'s handler: a document POST, 303 followed to /next/', nat && nat.type === 'document' && nat.path === '/a/pause' && /name=cc-alpha/.test(nat.body) && new URL(page.url()).pathname === '/next/', { nat, url: page.url() });
+  check('10 ...and submits natively without the view\'s handler: a document POST, 303 followed to /', nat && nat.type === 'document' && nat.path === '/a/pause' && /name=cc-alpha/.test(nat.body) && new URL(page.url()).pathname === '/', { nat, url: page.url() });
   await ctx.close();
   srv.close();
 }
@@ -289,7 +289,7 @@ async function links() {
   await page.waitForTimeout(400);
   await page.click('#fleet-rows > .li[data-sid=aaaa1111] [data-f=attach]');
   await page.waitForTimeout(400);
-  check('6 clicking attach opens the named window t-<name> (reused on a second click) and leaves the shell page in place', popups.length === 1 && /\/term\//.test(popups[0].url()) && new URL(page.url()).pathname === '/next/' && (await page.evaluate(() => window.__doc)) === 'same-document', { popups: popups.map(p => p.url()), page: page.url() });
+  check('6 clicking attach opens the named window t-<name> (reused on a second click) and leaves the shell page in place', popups.length === 1 && /\/term\//.test(popups[0].url()) && new URL(page.url()).pathname === '/' && (await page.evaluate(() => window.__doc)) === 'same-document', { popups: popups.map(p => p.url()), page: page.url() });
   await ctx.close();
 
   for (const [id, o, why] of [
@@ -372,22 +372,22 @@ async function prefetch() {
   const { ctx, page, api } = await open();
   const reqs = () => api.filter(u => !u.startsWith('/api/agents/'));
   check('1 nothing is fetched before a hover', reqs().length === 0, reqs());
-  await page.hover('.pnav a[href="/next/history"]');
+  await page.hover('.pnav a[href="/history"]');
   await page.waitForFunction(() => true); await page.waitForTimeout(250);
   check('2 pointerenter on History fetches /api/history into the store', reqs().join() === '/api/history', reqs());
-  await page.hover('.pnav a[href="/next/system"]');
-  await page.hover('.pnav a[href="/next/agents"]');
+  await page.hover('.pnav a[href="/system"]');
+  await page.hover('.pnav a[href="/agents"]');
   await page.waitForTimeout(250);
   check('3 ...System fetches /api/system, Agents /api/agents', reqs().join() === '/api/history,/api/system,/api/agents', reqs());
-  await page.hover('.pnav a[href="/next/history"]'); await page.hover('.pnav a[href="/next/system"]');
+  await page.hover('.pnav a[href="/history"]'); await page.hover('.pnav a[href="/system"]');
   await page.waitForTimeout(250);
   check('4 a second hover does not refetch (one GET per url)', reqs().length === 3, reqs());
   await page.evaluate(() => {
     const l = document.querySelectorAll('.pnav a');
-    l[1].setAttribute('href', '/next/history?fresh=1');
-    l[2].setAttribute('href', '/next/system?reclaim=1');
+    l[1].setAttribute('href', '/history?fresh=1');
+    l[2].setAttribute('href', '/system?reclaim=1');
     l[3].setAttribute('href', '/term/?arg=menu&arg=&arg=00000000&v=3');
-    l[4].setAttribute('href', '/next/agents'); l[4].setAttribute('data-norun', '');
+    l[4].setAttribute('href', '/agents'); l[4].setAttribute('data-norun', '');
   });
   for (const i of [2, 3, 4, 5]) await page.hover(`.pnav a:nth-child(${i})`);
   await page.waitForTimeout(250);
@@ -396,10 +396,10 @@ async function prefetch() {
 
   // touch, and a tap after the prefetch renders with no request
   const m = await open({ w: 390, h: 844, mobile: true });
-  await m.page.dispatchEvent('.tb[href="/next/system"]', 'touchstart');
+  await m.page.dispatchEvent('.tb[href="/system"]', 'touchstart');
   await m.page.waitForTimeout(250);
   check('6 touchstart on a tab link prefetches it', m.api.join() === '/api/system', m.api);
-  await m.page.tap('.tb[href="/next/system"]');
+  await m.page.tap('.tb[href="/system"]');
   await m.page.waitForSelector('#app h1[data-view="system"]');
   await m.page.waitForTimeout(250);
   check('7 the tap that follows renders the route without another request', m.api.join() === '/api/system' && (await m.page.evaluate(() => window.__doc)) === 'same-document', m.api);
@@ -416,7 +416,7 @@ async function history() {
   const tall = await page.evaluate(() => document.documentElement.scrollHeight);
   check('0 the fixture is taller than the screen, and the shell took over scroll restoration', tall > 2000 && (await page.evaluate(() => history.scrollRestoration)) === 'manual', { tall });
   await to(300);
-  await page.click('.tb[href="/next/history"]');
+  await page.click('.tb[href="/history"]');
   await page.waitForSelector('#app h1[data-view="history"]');
   await page.waitForTimeout(150);
   const h0 = await y();

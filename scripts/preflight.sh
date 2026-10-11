@@ -188,6 +188,31 @@ else
   bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
 
+# 5b2. The cockpit's gates, in fail mode since phase 05 (ARCHITECTURE section 9, K-30). budget.mjs --all measures every route closure of web/views/ and the
+# shell, the marked chunk, tokens.css, the fonts, the term closure and the server, and refuses mermaid in dist/; each limit is the BUDGET of
+# web/contract.d.ts. sw-check and push-check load the service worker and the Web Push implementation with no browser and no network. Node only, so they run
+# wherever preflight does. (The Lighthouse, parity and `build.mjs && git diff --exit-code -- dist/` gates need the installed devDependencies, a browser and
+# docker and run in CI, not here.)
+if [ -f scripts/budget.mjs ] && [ -d dist ]; then
+  BUDOUT=$(node scripts/budget.mjs --all 2>&1) && BUDRC=0 || BUDRC=$?
+  if [ "$BUDRC" -ne 0 ]; then
+    printf '%s\n' "$BUDOUT" | grep -E '^(FAIL|WARN|budget:)'
+    bad "budget.mjs --all: a size budget is exceeded (see above)"
+  else
+    note "budgets: every route, chunk, font, the term closure and the server are within ARCHITECTURE section 9"
+  fi
+else
+  bad "scripts/budget.mjs or dist/ missing — the per-route size budgets did not run"
+fi
+for t in sw-check push-check; do
+  if [ -f "scripts/$t.mjs" ]; then
+    TOUT=$(node "scripts/$t.mjs" 2>&1) && TRC=0 || TRC=$?
+    if [ "$TRC" -ne 0 ]; then printf '%s\n' "$TOUT" | grep '^FAIL' || printf '%s\n' "$TOUT" | tail -3; bad "$t: failed (see above)"; fi
+  else
+    bad "scripts/$t.mjs missing — the $t gate did not run"
+  fi
+done
+
 # 5c-e take UI_SRC (the client source under test): infra/dashboard/app now, web/ from phase 01 (K-26). The check and
 # coverage scripts read it from the environment.
 UI_SRC=${UI_SRC:-infra/dashboard/app}; export UI_SRC

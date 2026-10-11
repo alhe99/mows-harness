@@ -63,7 +63,7 @@ async function ensureClient(session) {
   return true;
 }
 const route = r => /\/term\/(ws|token)/.test(r.request().url()) ? r.fulfill({ status: 404, body: '' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: TERM });
-// --ui=next answers `/` with the cockpit shell (floating tab bar, no .li/.pg rows, no /app tab, no a.ab links); legacy is the default UI
+// the cockpit shell answers `/` by default since phase 05 (floating tab bar, no .li/.pg rows, no /app tab, no a.ab links); a dashboard started with --ui=legacy serves the old pages
 const SHELL = (await (await fetch(`${DASH}/`)).text()).includes('class="pnav"');
 const IGNORE = /Failed to load resource|WebSocket connection to|Transition was skipped/;
 const PHONES = { 'iPhone 17 Pro Max': { w: 440, h: 956, sat: 62, sab: 34 }, 'iPhone 15': { w: 393, h: 852, sat: 59, sab: 34 }, 'iPhone SE': { w: 375, h: 667, sat: 20, sab: 0 }, 'landscape Pro Max': { w: 956, h: 440, sat: 0, sab: 21 } };

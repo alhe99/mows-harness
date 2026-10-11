@@ -10,14 +10,13 @@
 // "resume in terminal" affordance — this dashboard only drives ONE tmux
 // server, see TMUX_USER: the first non-agent login found).
 // Routes: /            the fleet (live tmux sessions)
-//         /history /system /device /agents   the other server-rendered tabs (--ui=next: the cockpit shell answers these)
-//         /s/<a>/<sid> paginated transcript (newest page first)
-//         /next /next/*  the cockpit shell, served beside the above until the cutover (phase 05)
+//         /history /system /device /agents   the other tabs; /s/<a>/<sid> a transcript (newest page first)
+//                      all of them the cockpit shell (--ui=next, the default); --ui=legacy serves the server-rendered pages of legacy.mjs instead
+//         /next /next/*  301 to the same path without the prefix (--ui=legacy: the shell stays mounted there, for comparison)
+//         /ui /ui/*    301 into the shell's /agents routes (--ui=legacy: the old client-rendered app, /ui/assets/* from ./app/)
 //         /healthz     index stats
 //         /manifest.webmanifest /sw.js /icon-*.png   PWA (installable app)
-//         /ui /ui/*    the client-rendered app (see uiShellHtml below)
-//         /ui/assets/* content-hashed modules from ./app/, immutable-cached
-//         /api/*       JSON for the app · /stream  one multiplexed SSE per tab
+//         /api/*       JSON for the app (and /api/push/*) · /stream  one multiplexed SSE per tab
 // ponytail: the server-rendered routes above have no client JS by design —
 // pagination/filtering are plain links, so they work identically on 2G, with
 // JS disabled, and in text browsers. (Sole exception: a one-line service-worker
@@ -56,21 +55,21 @@
 // or the unit will not start (missing sibling) or /ui will answer 200 with a blank page (missing app/). HTML and CSS live in
 // legacy.mjs and routes/documents.mjs only. See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
-import { assetView } from './static.mjs';
+import { assetView, swView } from './static.mjs';
 import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage } from './core.mjs';
-import { chatBroadcast, chatEnd, eventsView, sseClients, streamView } from './sse.mjs';
+import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamView } from './sse.mjs';
 import { apiView } from './routes/api.mjs';
-import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiView } from './legacy.mjs';
-import { NEXT_BASE, SW, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
+import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
+import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
 import { mdView } from './routes/md.mjs';
 
-// --ui=legacy|next (ARCHITECTURE section 10, K-21; the rollback is this flag, not a second mount): which document answers `/` and the
-// tab routes. `legacy` is today's server-rendered dashboard (legacy.mjs) and the default until the cutover; `next` serves the cockpit shell
-// there. The shell is also mounted at /next under both until then. Anything else is refused at boot, so a typo cannot silently roll back.
-const UI = (args.find(a => a.startsWith('--ui=')) || '').slice(5) || flag('--ui', 'legacy');
+// --ui=next|legacy (ARCHITECTURE section 10, K-21; the rollback is this flag, not a second mount): which document answers `/` and the
+// tab routes. `next` is the cockpit shell and the default since the cutover (phase 05); `legacy` is the old server-rendered dashboard
+// (legacy.mjs), one flag and a restart away until Stage 8 step 4 deletes it. Anything else is refused at boot, so a typo cannot silently roll back.
+const UI = (args.find(a => a.startsWith('--ui=')) || '').slice(5) || flag('--ui', 'next');
 if (UI !== 'legacy' && UI !== 'next') { console.error(`lite: --ui is legacy or next, not "${UI}"`); process.exit(2); }
 // the routes the shell owns when it answers at `/` (web/main.mjs routes, MAP 3.2)
 const SHELL_RE = /^\/(history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
@@ -84,8 +83,11 @@ const server = http.createServer(async (req, res) => {
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
-    if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
+    if (UI === 'legacy' && p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
     if (p.startsWith('/assets/')) return await assetView(req, res, p.slice(8));
+    // the cutover (K-28): the shell lives at `/`, so its old mount and the retired /ui client answer 301 into it, query kept
+    if (UI === 'next' && (p === NEXT_BASE || p.startsWith(NEXT_BASE + '/'))) { res.writeHead(301, { location: '/' + p.slice(NEXT_BASE.length).replace(/^\/+/, '') + url.search }); return res.end(); }
+    if (UI === 'next' && (p === '/ui' || p.startsWith('/ui/'))) { res.writeHead(301, { location: uiTwinPath(p) + url.search }); return res.end(); }
     if (p === NEXT_BASE || p.startsWith(NEXT_BASE + '/')) return await nextView(req, res, url, p);
     // GET ?fresh= and ?reclaim= are side-effect links of the server-rendered pages; the shell uses POST /api/usage/refresh instead
     if (UI === 'next' && req.method === 'GET' && SHELL_RE.test(p) && !['fresh', 'reclaim'].some(k => url.searchParams.has(k))) return await nextView(req, res, url, p, '');
@@ -216,7 +218,7 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(SESSION_PATH_RE);
     if (m) return await detailView(req, res, m[1], m[2]);
     if (p === '/manifest.webmanifest') return manifest(req, res);
-    if (p === '/sw.js') return send(req, res, 200, SW, 'text/javascript; charset=utf-8');
+    if (p === '/sw.js') return await swView(req, res);
     const isz = { '/icon-192.png': 192, '/icon-512.png': 512, '/apple-touch-icon.png': 180,
                   '/favicon.png': 48, '/favicon.ico': 48 }[p];
     if (isz) {
@@ -281,5 +283,6 @@ await scan().catch(e => console.error('initial scan:', e.message));
 await loadUiAssets();
 
 setInterval(freshen, 30000).unref();
+startPushWatch();
 
 server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));
