@@ -183,13 +183,16 @@ chk "sw: /sw.js is revalidated, not cached for a year" \
   'curl -sD - -o /dev/null http://127.0.0.1:3005/sw.js | tr -d "\r" | grep -qi "^cache-control: no-cache"'
 chk "push: GET /api/push/key is the 65-byte VAPID public key, base64url" \
   'curl -s http://127.0.0.1:3005/api/push/key | jq -e "(.key | length) == 87 and (.key | test(\"^[A-Za-z0-9_-]+$\"))"'
-PUSHSUB=$(node -e "const c=require(\"crypto\"),e=c.createECDH(\"prime256v1\");e.generateKeys();console.log(JSON.stringify({endpoint:\"https://push.example.test/e2e\",keys:{p256dh:e.getPublicKey().toString(\"base64url\"),auth:c.randomBytes(16).toString(\"base64url\")}}))")
+PUSHSUB=$(node -e "const c=require(\"crypto\"),e=c.createECDH(\"prime256v1\");e.generateKeys();console.log(JSON.stringify({endpoint:\"https://fcm.googleapis.com/fcm/send/e2e\",keys:{p256dh:e.getPublicKey().toString(\"base64url\"),auth:c.randomBytes(16).toString(\"base64url\")}}))")
 PUSHID=$(curl -s -X POST -H "content-type: application/json" -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe | jq -r .id)
 chk "push: POST /api/push/subscribe stores a well-formed subscription and returns its id" '[ "${#PUSHID}" = 16 ]'
 chk "push: a foreign Origin is refused (same-origin guard)" \
   '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -H "origin: https://evil.test" -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe)" = 403 ]'
 chk "push: a body over 4 KB, a non-https endpoint and a non-JSON content type are refused" \
   '[ "$(head -c 5000 /dev/zero | tr "\0" a | curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" --data-binary @- http://127.0.0.1:3005/api/push/subscribe)" = 400 ] && [ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -d "{\"endpoint\":\"http://push.example.test/x\",\"keys\":{}}" http://127.0.0.1:3005/api/push/subscribe)" = 400 ] && [ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -d "$PUSHSUB" http://127.0.0.1:3005/api/push/subscribe)" = 415 ]'
+PUSHSUB_BAD=${PUSHSUB//fcm.googleapis.com/push.example.test}
+chk "push: an https endpoint off the push-service allowlist is refused (no SSRF target can be stored)" \
+  '[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "content-type: application/json" -d "$PUSHSUB_BAD" http://127.0.0.1:3005/api/push/subscribe)" = 400 ]'
 chk "push: DELETE /api/push/subscribe removes it by id" \
   '[ "$(curl -s -X DELETE -H "content-type: application/json" -d "{\"id\":\"$PUSHID\"}" http://127.0.0.1:3005/api/push/subscribe | jq -r .ok)" = true ]'
 chk "push: the key pair was written once, 0600, next to the settings" \
