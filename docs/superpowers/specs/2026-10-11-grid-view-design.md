@@ -186,6 +186,6 @@ Recorded in `docs/qa/` like the mobile gates.
 2. `views/grid.mjs` + `grid.css`: sidebar (grouped/flat, filter), tab strip, pane grid, state in localStorage.
 3. Resizing: column and sidebar handles.
 4. Keys: chord set in the shell; `grid-key` forwarding in `pages/term/term.mjs` when framed.
-5. Tab drag-reorder; zoom; ended overlay.
-6. Probe `grid-check.mjs`, manifest, run.sh and CI wiring; budgets green.
+5. Tab drag-reorder; zoom; ended overlay; parking of hidden tabs and of the hidden page (10 min).
+6. Probe `grid-check.mjs` including the `leak` mode, manifest, run.sh and CI wiring; budgets green.
 7. ARCHITECTURE §2 route list and a ledger row; manual gate record; deploy from branch, verify live, merge.
