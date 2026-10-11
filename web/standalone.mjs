@@ -11,6 +11,10 @@ const hidden = 'position:fixed;visibility:hidden;pointer-events:none;';
 // icons. On a light-theme phone a light bar is the one place the dark icons read (2026-10-11). Same line in web/pages/term/term.mjs.
 if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
 
+// the footer's "no-js" is the server's word for the page before this script runs (legacy.mjs footerHtml, kept for the real no-JS render);
+// once the shell is up it says so, which is what the operator reads to tell the two apart (2026-10-11)
+for (const el of document.querySelectorAll('footer span')) if (el.textContent.includes(' · no-js · ')) el.textContent = el.textContent.replace(' · no-js · ', ' · shell · ');
+
 function envout() {
   const o = document.getElementById('envout');
   if (!o) return;
