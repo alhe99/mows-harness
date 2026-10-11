@@ -1,0 +1,733 @@
+{
+  "$comment": "Source of truth for scripts/gen-cockpit-specs.mjs. Edit here, regenerate; never hand-edit 0N-*.md. Verify lines run from the repo root with DASH (default http://127.0.0.1:3105, the dev instance) and RUN (the .agent-team run id) exported by scripts/verify-spec.mjs.",
+  "common": {
+    "repos": [
+      {
+        "path": ".",
+        "stack": "frontend"
+      }
+    ],
+    "outward": "none",
+    "dev_server": "node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next",
+    "budgets": {
+      "shell_js_kb": 30,
+      "view_js_kb": 15,
+      "md_vendor_kb": 25,
+      "css_kb": 12,
+      "fonts_kb": 80,
+      "term_js_kb": 130,
+      "server_js_kb": 140,
+      "lcp_ms": 2500,
+      "tbt_ms": 200,
+      "parity_diff_pct": 0.5
+    },
+    "owner": "alhe99"
+  },
+  "phases": [
+    {
+      "file": "00-baseline.md",
+      "phase": 0,
+      "slug": "cockpit-00-baseline",
+      "release": "patch",
+      "depends_on": null,
+      "title": "Phase 0 — Baseline, tooling and gates in warn mode",
+      "goal": "Every number the later phases are judged against exists, every gate that will judge them runs (in warn mode) on the current UI, the parity baseline is frozen and diffable, and the deploy is a script. No user-visible change.",
+      "constraints": [
+        "K-24",
+        "K-25",
+        "K-26",
+        "K-29",
+        "K-33",
+        "K-23",
+        "K-16"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [],
+      "tasks": [
+        {
+          "t": "`scripts/verify-spec.mjs <spec>`: parse every task's **Verify** line, run each from the repo root with `DASH` and `RUN` exported, write raw stdout+exit to `.agent-team/$RUN/verify/<task>.log`, print `VERDICT: ship` or `VERDICT: fix:[ids]`; `--dry-run` lists the commands.",
+          "e": "ARCHITECTURE.md §12",
+          "v": "node scripts/verify-spec.mjs --dry-run specs/cockpit/00-baseline.md",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/budget.mjs`: gzip-9 of a route closure (`--route <entry>` = entry + statically imported chunks from `dist/manifest.json` + the esbuild metafile), `--chunk <name>`, `--file <name>`, `--fonts` (identity bytes), `--server` (sum of `infra/dashboard/{lite.mjs,routes/*,sse.mjs,static.mjs}`), `--legacy-app` (today's `infra/dashboard/app`, must reproduce 130 776 B); `--max <kb>` exits 1 over, `--warn` exits 0 and prints the overage.",
+          "e": "ARCHITECTURE.md §9; MAP.md §6.2 C-1; ledger K-02, K-06",
+          "v": "node scripts/budget.mjs --legacy-app --max 160 && node scripts/budget.mjs --self-test",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/lh-gate.mjs`: Lighthouse 13.5.0 (pinned devDependency), `--form-factor=mobile`, `--only-categories=performance`, `CHROME_PATH` resolved to Playwright's Chromium (never `/opt/google/chrome`, which is x86-64), `--max-wait-for-load=60000`, median of `--runs`, exit 1 if LCP > `--lcp` or TBT > `--tbt`, `--warn` exits 0; writes the JSON next to the log.",
+          "e": "MAP.md §7.5; ledger K-29, C-07",
+          "v": "node scripts/lh-gate.mjs --url http://127.0.0.1:3005/ --lcp 2500 --tbt 200 --runs 1 --warn",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/parity-capture.mjs`: against `docs/qa/probes/fixture.sh` (fixed fleet, usage, host data), `Date.now` frozen by `addInitScript`, animations and caret off, capture every route (`/`, `/history`, `/system`, `/device`, `/agents`, `/agents/<fixture>`, `/agents/<fixture>/<run>`, `/s/<fixture>`, `/md?f=<fixture>`) at 390×844 DPR 3 and 1280×800 on WebKit and Chromium into `<out>/<engine>/<route>-<w>.png`; `--ui legacy|next` picks the document.",
+          "e": "ledger D-03, K-33; MAP.md §8 M-06",
+          "v": "node scripts/parity-capture.mjs --ui legacy --out docs/qa/baseline/cockpit && test $(ls docs/qa/baseline/cockpit/webkit | wc -l) -ge 18",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/parity-diff.mjs <baseDir> <newDir> [--route r] --max <pct>`: per-image differing-pixel percentage (pngjs + pixelmatch, devDependencies installed off-server), exit 1 if any image exceeds `--max`, `--warn` prints only; a self-diff is 0.",
+          "e": "ARCHITECTURE.md §4; ledger K-33",
+          "v": "node scripts/parity-diff.mjs docs/qa/baseline/cockpit docs/qa/baseline/cockpit --max 0.5",
+          "o": "builder"
+        },
+        {
+          "t": "Gates take `UI_SRC` (default `infra/dashboard/app` now, `web` from phase 01): `scripts/chat-view-check.mjs`, `scripts/capability-check.mjs`, `scripts/chat-view-coverage.mjs`, `scripts/capability-coverage.mjs`, preflight 5c/5d/5e. Behaviour unchanged at the default.",
+          "e": "MAP.md §6 'Gates that would break' 1–5; ledger K-26",
+          "v": "UI_SRC=infra/dashboard/app node scripts/chat-view-check.mjs && UI_SRC=infra/dashboard/app node scripts/capability-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "preflight: `dist/` is one manifest line whose contents are verified against `dist/manifest.json` sha256s (G-13); `PREFLIGHT_NO_LOCAL=1` skips the gitignored local pattern file so the shipped gates can be run as a Verify line; everything else unchanged.",
+          "e": "MAP.md §6.4; ledger K-25",
+          "v": "PREFLIGHT_NO_LOCAL=1 ./scripts/preflight.sh",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/deploy-dashboard.sh [--dry-run]`: installs `lite.mjs`, `chat-stream.mjs`, `capability.mjs`, `routes/`, `sse.mjs`, `static.mjs`, `legacy.mjs` (those that exist), `dist/`, `themes.json`, `webterm-settle.sh`, the term page; restarts `claude-dash-lite`; smokes `/healthz`; `install.sh --infra` prints it instead of the echoed `install` lines.",
+          "e": "ledger C-01, K-24; MAP.md §8 M-03",
+          "v": "bash -n scripts/deploy-dashboard.sh && scripts/deploy-dashboard.sh --dry-run | grep -q healthz",
+          "o": "builder"
+        },
+        {
+          "t": "Settle the `ccimg` drift: `infra/webconsole/blocks/40-ccimg.html` becomes the deployed v2 (any file type, `x-name` header) and `POST /shot` honours `x-name` for the stored filename (sanitised to `[A-Za-z0-9._-]`).",
+          "e": "MAP.md §4.1 'Drift found'; ledger B-13, K-23",
+          "v": "grep -q 'ccimg-v2' infra/webconsole/blocks/40-ccimg.html && grep -q 'x-name' infra/dashboard/lite.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "Caddy: `/stream` joins `@nosse` and the `(sse)` snippet (`flush_interval -1`) in both site blocks of `infra/caddy/Caddyfile.template`; `e2e-infra.sh` gains a `chk` that the first `/stream` event arrives through Caddy within 3 s (`curl -N --max-time 3`).",
+          "e": "MAP.md §1.2 'Caddy handling'; ledger B-05, K-16",
+          "v": "test $(grep -c '/stream' infra/caddy/Caddyfile.template) -ge 3 && grep -q 'stream.*3 s\\|first /stream event' scripts/e2e-infra.sh",
+          "o": "builder"
+        },
+        {
+          "t": "`templates/spec.md` (the three fixed sub-lines, front-matter keys `gates`, `budgets`, `outward`, `manual_gates`, `dev_server`) and a paragraph in `docs/architecture.md` saying when to use `templates/spec.md` and `scripts/verify-spec.mjs`.",
+          "e": "plan 'Stage 8' reusable artifacts; ARCHITECTURE.md §12",
+          "v": "test -f templates/spec.md && grep -q 'verify-spec' docs/architecture.md",
+          "o": "builder"
+        },
+        {
+          "t": "Record the baseline: `budget.mjs --legacy-app`, `lh-gate.mjs` on `/`, `/history`, `/system`, `/ui/agents` (3 runs each, warn), parity self-diff — all logs under `.agent-team/$RUN/verify/`.",
+          "e": "MAP.md §7",
+          "v": "node scripts/lh-gate.mjs --url http://127.0.0.1:3005/ --lcp 2500 --tbt 200 --runs 3 --warn && node scripts/lh-gate.mjs --url http://127.0.0.1:3005/ui/agents --lcp 2500 --tbt 200 --runs 3 --warn",
+          "o": "verifier"
+        },
+        {
+          "t": "Every new script is in `scripts/manifest.txt`, `bash -n`/`shellcheck` clean, and `e2e-agents.sh` still passes.",
+          "e": "MAP.md §6.1 G-13, G-14, G-25",
+          "v": "PREFLIGHT_NO_LOCAL=1 ./scripts/preflight.sh && bash scripts/e2e-agents.sh",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "Any change to what `/`, `/ui` or `/term` render. `web/`, `build.mjs`, `dist/` — phase 01."
+    },
+    {
+      "file": "01-shell.md",
+      "phase": 1,
+      "slug": "cockpit-01-shell",
+      "release": "feature",
+      "depends_on": "specs/cockpit/00-baseline.md",
+      "title": "Phase 1 — Shell, build and the data layer at /next",
+      "goal": "A Preact 11 shell with the chrome, tab bar and token stylesheet of the current UI, one signals store on one resumable EventSource, served at `/next` beside the current UI from a committed `dist/`, inside the shell budget, with the contract type-checked.",
+      "constraints": [
+        "K-04",
+        "K-07",
+        "K-11",
+        "K-12",
+        "K-13",
+        "K-14",
+        "K-17",
+        "K-25",
+        "K-30",
+        "K-32"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [
+        {
+          "name": "phone layout review",
+          "what": "the shell at 390×844 beside docs/qa/baseline/cockpit/webkit/home-390.png, screenshot pair attached",
+          "due": "2026-10-14"
+        }
+      ],
+      "tasks": [
+        {
+          "t": "`package.json` + `package-lock.json`: `preact@11.0.1`, `@preact/signals@2.11.x`, `preact-iso@2.12.x`, `marked` (pinned), `esbuild@0.28.x` exact; devDependencies `typescript`, `lighthouse@13.5.0`, `pngjs`, `pixelmatch`. `npm ci --ignore-scripts` succeeds off-server; nothing is installed on the box by any script.",
+          "e": "ARCHITECTURE.md §1; ledger D-07, M-4",
+          "v": "npm ci --ignore-scripts --no-audit --no-fund && node -e \"const p=require('./package.json');process.exit(p.dependencies.preact==='11.0.1'?0:1)\"",
+          "o": "builder"
+        },
+        {
+          "t": "`build.mjs`: esbuild per ARCHITECTURE §1 (`esm`, splitting, minify, `es2022`, `.mjs` output, `[name].[hash]`, metafile), the C0-escape post-pass, `dist/manifest.json` with sha256 per output, no `.map` in `dist/`; the Preact 10.29.x fallback alias present as a commented one-liner.",
+          "e": "ARCHITECTURE.md §1; ledger A-04, A-11, K-04, K-11, K-25",
+          "v": "node build.mjs && test -f dist/manifest.json && ! grep -rlP '[\\x00-\\x08\\x0B-\\x1F\\x7F]' dist/ && ! ls dist/*.map 2>/dev/null",
+          "o": "builder"
+        },
+        {
+          "t": "`web/tokens.css`: `@layer tokens, base, components, views`; the 32 custom properties of MAP §2.2 with identical values, the chrome, card, tab-bar, FAB, facelift and System-facelift rules reproduced; `color-scheme: dark` only. `scripts/tokens-check.mjs` asserts every `--var` of the legacy `:root` exists in `tokens.css` with the same value.",
+          "e": "MAP.md §2.2 (tokens, @media table, facelift blocks); ledger B-01, K-12",
+          "v": "node scripts/tokens-check.mjs && node scripts/budget.mjs --file tokens.css --max 12",
+          "o": "builder"
+        },
+        {
+          "t": "`infra/dashboard/static.mjs`: serves `dist/` names verbatim under `/assets/` with `cache-control: public, max-age=31536000, immutable`, ETag from `manifest.json`, 304 on match, types `mjs css woff2 json` only, never `.map`; `UI_ASSET_TYPES` and preflight G-02 updated together.",
+          "e": "MAP.md §1.4; ledger A-11, K-11, K-32",
+          "v": "F=$(node -p \"Object.keys(require('./dist/manifest.json').files).find(f=>f.endsWith('.mjs'))\") && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/assets/$F)\" = 200 && curl -sI $DASH/assets/$F | grep -qi immutable",
+          "o": "builder"
+        },
+        {
+          "t": "`GET /next/*` returns the shell document: per-response nonce CSP (`script-src 'self' 'nonce-…'; style-src 'self' 'nonce-…'`), `<link rel=stylesheet href=/assets/tokens.<hash>.css>`, the chrome of `pageChrome()` (header, five tabs, FAB, footer) as markup, `<script type=\"application/json\" id=\"boot\">` with the `BootSnapshot` for the route, module script for `main.<hash>.mjs`; manifest link and meta tags byte-identical to `page()`.",
+          "e": "MAP.md §2.1, §3.7; contract.d.ts BootSnapshot; ledger K-07, K-20",
+          "v": "curl -s $DASH/next/ | grep -q 'id=\"boot\"' && curl -s $DASH/next/ | grep -q 'tokens\\.' && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/next/history)\" = 200",
+          "o": "builder"
+        },
+        {
+          "t": "`web/main.mjs`: preact-iso router for the eight shell routes with lazy `import()` per view (stub views that render the route name), active tab from the path, `document.startViewTransition` around route changes with `.tabs{view-transition-name:tabs}`, `a[href]` interception that skips `/term*`, `/md`, `/oauth2/*`, `data-nw` links and modified clicks.",
+          "e": "MAP.md §2.1 'Tab list', §3.2 R-04..R-07; ledger K-35",
+          "v": "node docs/qa/probes/shell-check.mjs webkit",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/shell-check.mjs <engine>`: at 390×844 the five `.tb` tabs render inside the safe area with no horizontal overflow, `.tabs` is fixed and floating (left ≥ 10, right ≤ 380), tapping a tab changes the route without a document load, `startViewTransition` was invoked when supported; at 1280×800 the header nav shows and the tab bar is hidden.",
+          "e": "MAP.md §2.1; docs/qa/journeys/mobile-facelift.md",
+          "v": "node docs/qa/probes/shell-check.mjs webkit && node docs/qa/probes/shell-check.mjs chromium",
+          "o": "builder"
+        },
+        {
+          "t": "`web/store.mjs`: one `EventSource` on `/stream?topics=…`, signals for `fleet`, `agents`, `chat`, `chatend`, `usage`, `system`; the boot snapshot seeds the signals before the stream opens; reconnect on `error`+`CLOSED` with 1 s→30 s jittered backoff; close after 60 s hidden, reopen on visible; after a reconnect that skipped a `chatend`, refetch `/api/agents/<n>/chat`. `scripts/store-check.mjs` drives it with a fake EventSource.",
+          "e": "MAP.md §3.4; contract.d.ts StreamEvent; ledger B-06, K-14, K-17, K-34",
+          "v": "node scripts/store-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "Server: `/stream` emits the additive `usage` and `system` topics (shapes from `usage()` and `hostInfo()`), cap raised to 16 (`STREAM_MAX_CLIENTS`), `/events` unchanged; `stream-cap-check.mjs` reads the new constant.",
+          "e": "MAP.md §1.2, §1.3; contract.d.ts; ledger K-13, K-17",
+          "v": "PORT=3105 node scripts/stream-cap-check.mjs && PORT=3105 MOWS_TEST_HOOKS=1 node scripts/stream-replay-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "`scripts/contract-check.mjs`: a stub server that emits one of each `StreamEvent` and answers each `/api/*` route with its declared shape; `web/tsconfig.json` with `checkJs` over `web/` and the stub; `tsc --noEmit` is the check.",
+          "e": "ARCHITECTURE.md §11; web/contract.d.ts",
+          "v": "npx tsc --noEmit -p web/tsconfig.json",
+          "o": "builder"
+        },
+        {
+          "t": "`/stream` reaches the browser unbuffered through Caddy: the `e2e-infra` suite's new `chk` passes inside the container.",
+          "e": "ledger K-16; MAP.md §1.2 'Caddy handling'",
+          "v": "./scripts/e2e-infra",
+          "o": "verifier"
+        },
+        {
+          "t": "Shell budget and determinism.",
+          "e": "ARCHITECTURE.md §9; ledger K-30",
+          "v": "node scripts/budget.mjs --route shell --max 30 && node build.mjs && git diff --exit-code -- dist/",
+          "o": "verifier"
+        },
+        {
+          "t": "Lighthouse on `/next` (warn) and the parity screenshot pair for the phone layout review.",
+          "e": "ARCHITECTURE.md §9, §13",
+          "v": "node scripts/lh-gate.mjs --url $DASH/next/ --lcp 2500 --tbt 200 --runs 3 --warn && node scripts/parity-capture.mjs --ui next --route / --out .agent-team/$RUN/parity",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "View content (every route renders its name only), terminal, device, markdown, push, service worker. The current UI at `/` is untouched."
+    },
+    {
+      "file": "02a-sessions.md",
+      "phase": 2,
+      "slug": "cockpit-02a-sessions",
+      "release": "feature",
+      "depends_on": "specs/cockpit/01-shell.md",
+      "title": "Phase 2a — The Sessions view at parity",
+      "goal": "The fleet view (`/`) in the shell: cards and rows at pixel parity, live over `fleet` events, every action and keyboard invariant preserved, prefetch and Back/Forward replacing prerender and bfcache.",
+      "constraints": [
+        "K-07",
+        "K-15",
+        "K-18",
+        "K-19",
+        "K-35"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [],
+      "tasks": [
+        {
+          "t": "`web/views/sessions.mjs`: rows (≥ 701 px) and cards (≤ 700 px) from the boot snapshot then `fleet` events; `data-state` and glyphs `◉ ● ⏸ ○`, words waiting/working/paused/idle, label = `label || proj || name`, sort needs-you < working < paused < idle then mtime, relative time re-rendered every 30 s, `#fleet-count`/`#fleet-empty`/`#pnav-live` semantics, reorder by moving nodes (keyed render).",
+          "e": "MAP.md §2.3.1, §2.4 '/fleet.js internals'; contract.d.ts FleetItem",
+          "v": "node docs/qa/probes/sessions-check.mjs webkit render",
+          "o": "builder"
+        },
+        {
+          "t": "Card menu: `<details name=fm>` exclusive menus, rename form (`/a/label`), pause/resume swap (`/a/pause`, `/a/resume`), kill confirm (`/a/kill`) — each a `<form method=post>` the view submits with `fetch` (same `back` field) and that still submits natively without JS; `form.busy` while in flight, cleared on response and on `pageshow`.",
+          "e": "MAP.md §2.3.1 'Menu', §2.4 'Card menu behavior', §2.1 'Other base-script behaviors'; ledger K-19",
+          "v": "node docs/qa/probes/sessions-check.mjs webkit actions",
+          "o": "builder"
+        },
+        {
+          "t": "Filter input (`[data-f=filter]`, substring over label+proj+snippet, `/` focuses it), digit keys 1–9 click the nth attach link (ignored inside inputs or with modifiers), `.fnum` badges on pointer:fine.",
+          "e": "MAP.md §2.4 'Keys'; §2.2 @media L1534",
+          "v": "node docs/qa/probes/sessions-check.mjs chromium keys",
+          "o": "builder"
+        },
+        {
+          "t": "Attach links: `termHref('attach', name)` mints a fresh 8-hex tabid per render, `data-nw=t-<name>` becomes `target` only in browser display-mode at ≥ 700 px with a fine pointer; the `+ New Session` card and the FAB use `termHref('menu','')`.",
+          "e": "MAP.md §2.1 '.termfab', §4.5 termHref; infra/webconsole/mobile-journey.mjs:81-100 regex",
+          "v": "node docs/qa/probes/sessions-check.mjs chromium links",
+          "o": "builder"
+        },
+        {
+          "t": "Standalone-only behaviours: pull-to-refresh (`#ptr`, 56 px threshold, `location.reload()`), the `vpfix` re-measure loop (≤ 6 toggles, one reload per 30 s), top-anchored `.tabs`/`.termfab`; `#envout` diagnostic and the `/z?t=dash3` + `/z?t=vpfix` beacons.",
+          "e": "MAP.md §2.1 'Safe-area handling', §2.4 'Base script detail'",
+          "v": "node docs/qa/probes/sessions-check.mjs webkit standalone",
+          "o": "builder"
+        },
+        {
+          "t": "Prefetch replaces prerender: on `pointerenter`/`touchstart` of a tab link the view's JSON (`/api/history?…`, `/api/system`, `/api/agents`) is fetched into the store, never for `/term*`, `fresh=1` or `reclaim=1` links; a later tap renders without a request.",
+          "e": "MAP.md §2.1 'Speculation rules'; ledger B-07, K-35",
+          "v": "node docs/qa/probes/sessions-check.mjs chromium prefetch",
+          "o": "builder"
+        },
+        {
+          "t": "Back/Forward replace bfcache: the store keeps the last list and scroll offset per route; `popstate` re-renders from the store with no request and restores the offset, including the scroll → Back → Forward → Back case the SPA left open.",
+          "e": "infra/dashboard/app/main.mjs TODO (scroll-restore gap); docs/architecture.md 'Lost, accepted'; ledger K-35",
+          "v": "node docs/qa/probes/sessions-check.mjs webkit history",
+          "o": "builder"
+        },
+        {
+          "t": "Accessibility parity: every `aria-label`, `aria-hidden`, `title` and focus-ring rule the legacy `/` carries is present; `scripts/a11y-check.mjs` diffs the attribute sets of legacy vs shell on the fixture.",
+          "e": "MAP.md §8 M-13; §2.7 'Accessibility'",
+          "v": "node scripts/a11y-check.mjs --route /",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/sessions-check.mjs <engine> <mode>`: modes `render` (fixture fleet, injected `fleet` event patches and reorders without rebuild), `actions` (menus exclusive, forms post and 303, busy class), `keys`, `links`, `standalone` (display-mode stub), `prefetch` (network log), `history`.",
+          "e": "docs/qa/probes/README.md conventions; MAP.md §6.3",
+          "v": "node docs/qa/probes/sessions-check.mjs webkit all",
+          "o": "builder"
+        },
+        {
+          "t": "Parity: `/` at 390×844 and 1280×800 on both engines against the frozen baseline.",
+          "e": "ledger K-33; ARCHITECTURE.md §4",
+          "v": "node scripts/parity-capture.mjs --ui next --route / --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route / --max 0.5",
+          "o": "verifier"
+        },
+        {
+          "t": "The existing phone journey passes against the shell.",
+          "e": "docs/qa/journeys/mobile-facelift.md",
+          "v": "node docs/qa/probes/mobile-facelift.mjs webkit .agent-team/$RUN/facelift --base $DASH/next",
+          "o": "verifier"
+        },
+        {
+          "t": "View budget and Lighthouse.",
+          "e": "ARCHITECTURE.md §9",
+          "v": "node scripts/budget.mjs --route sessions --max 15 && node scripts/lh-gate.mjs --url $DASH/next/ --lcp 2500 --tbt 200 --runs 3 --warn",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "Agents, History, System, Device, session transcript — later phases."
+    },
+    {
+      "file": "02b-agents.md",
+      "phase": 2,
+      "slug": "cockpit-02b-agents",
+      "release": "feature",
+      "depends_on": "specs/cockpit/02a-sessions.md",
+      "title": "Phase 2b — Agents, chat and runs at parity",
+      "goal": "The `/ui` app's three views ported to Preact 11 in the shell with streaming markdown that re-parses only the open block, the capability panel as a lazy chunk, and every existing chat gate and probe green against the new code.",
+      "constraints": [
+        "K-02",
+        "K-08",
+        "K-14",
+        "K-15",
+        "K-26",
+        "K-34"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [
+        {
+          "name": "10-minute heap",
+          "what": "heap delta after 10 min of agent streaming on one iPhone and one Android, screenshots of the memory panel",
+          "due": "phase Gate 1"
+        }
+      ],
+      "tasks": [
+        {
+          "t": "`web/views/agents.mjs`: list (`a.agent.card`, pill, `<rel> · N runs · 7d $x`, empty string \"No agents yet.\"), detail (the `.agwrap > .ag2` layout, five aside cards Telemetry / Capabilities / Recent Runs / Memory / Events with the exact copy and `runLabel` rule), `Run now` form; `ui.mjs` helpers `rel`, `usd`, `Pill` unchanged.",
+          "e": "MAP.md §8 M-07; §3.5 S-07..S-09",
+          "v": "UI_SRC=web node scripts/capability-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/capability.mjs` as its own lazy chunk: the `CapabilityPanel` render rules verbatim (text nodes only, `${' '}` trimming, the `quiet` condition, `money()`/`count()` wording).",
+          "e": "MAP.md §8 M-08; scripts/capability-check.mjs",
+          "v": "UI_SRC=web node scripts/capability-check.mjs && node scripts/budget.mjs --route agent --max 15",
+          "o": "builder"
+        },
+        {
+          "t": "`web/md.mjs`: marked with `safeHref`, `renderer.html`, `renderer.link/image`, `tokenizer.tag`, `renderer.code` (mows-memory details) and `renderPartial` moved verbatim from `app/views/chat.mjs`; block-level memoisation (split on blank lines, closed blocks cached by content hash, only the open tail re-parsed per delta); exports `renderPartial`, `reconcile` for the gate.",
+          "e": "MAP.md §3.6; ledger A-08, K-08",
+          "v": "UI_SRC=web node scripts/chat-view-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/chat.mjs`: turns + live buffer from the store, optimistic send to `/a/agent-chat` with withdrawal on failure, `reconcile` on `chatend` refetch, system dividers from events, `p.chint`, `button.sendb` states, `p.cherr[role=alert]`, the Cmd/Ctrl+Enter send.",
+          "e": "MAP.md §3.6, §8 M-09",
+          "v": "docs/qa/probes/run.sh journey webkit --ui next && docs/qa/probes/run.sh lost chromium --ui next && docs/qa/probes/run.sh repeat chromium --ui next",
+          "o": "builder"
+        },
+        {
+          "t": "Composer and keyboard: `visualViewport` sets `--kb`, `html.kb-open` hides the tab bar, hand-written bottom anchoring (< 40 px = at bottom), `Jump to latest`, placeholder switch at 500 px.",
+          "e": "MAP.md §3.6 'Scroll anchoring', 'Composer / keyboard'",
+          "v": "docs/qa/probes/run.sh layout webkit --ui next",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/run.mjs` and `web/views/session.mjs` stubs stay; `/agents/<n>/<run>` renders status JSON + assistant text as today.",
+          "e": "MAP.md §3.2 R-01; §2.3.6 run page",
+          "v": "node docs/qa/probes/agents-check.mjs webkit run",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/run.sh --ui next` runs every existing probe mode against the shell routes (selectors updated where the markup moved, listed in the probe header); `csp` still proves injection is refused under the shell's nonce policy; `docs/qa/probes/agents-check.mjs <engine> run` renders the fixture run page and asserts the status block, cost and assistant text.",
+          "e": "MAP.md §6.3, §6.5; ledger K-10",
+          "v": "docs/qa/probes/run.sh all webkit --ui next",
+          "o": "builder"
+        },
+        {
+          "t": "The chatend-gap case: a turn that ends while the stream is cut → on reconnect the client refetches the transcript and `busy` clears; added to `stream-replay-check.mjs` and the `journey` probe.",
+          "e": "ledger D-04, K-34",
+          "v": "PORT=3105 MOWS_TEST_HOOKS=1 node scripts/stream-replay-check.mjs --chatend-gap",
+          "o": "builder"
+        },
+        {
+          "t": "Mutation coverage still bites: `chat-view-coverage.mjs` and `capability-coverage.mjs` run against `web/` with every mutation detected.",
+          "e": "MAP.md §6.1 G-21, G-22; ledger K-26",
+          "v": "UI_SRC=web node scripts/chat-view-coverage.mjs && UI_SRC=web node scripts/capability-coverage.mjs",
+          "o": "verifier"
+        },
+        {
+          "t": "Budgets: agents, agent, chat route closures ≤ 15 kB; marked chunk ≤ 25 kB.",
+          "e": "ARCHITECTURE.md §9; ledger A-02, K-02",
+          "v": "node scripts/budget.mjs --route agents --max 15 && node scripts/budget.mjs --route agent --max 15 && node scripts/budget.mjs --chunk marked --max 25",
+          "o": "verifier"
+        },
+        {
+          "t": "Parity on `/agents`, `/agents/<fixture>` and the run page at both sizes, both engines; Lighthouse on `/next/agents`.",
+          "e": "ledger K-33; MAP.md §7.5 (`/ui/agents` 2 765 ms is the number to beat)",
+          "v": "node scripts/parity-capture.mjs --ui next --route /agents --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /agents --max 0.5 && node scripts/lh-gate.mjs --url $DASH/next/agents --lcp 2500 --tbt 200 --runs 3 --warn",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "History, System, Device, transcript; the server-rendered `/agents` twin stays."
+    },
+    {
+      "file": "03-views.md",
+      "phase": 3,
+      "slug": "cockpit-03-views",
+      "release": "feature",
+      "depends_on": "specs/cockpit/02b-agents.md",
+      "title": "Phase 3 — History, System, Device, transcript, and the server split",
+      "goal": "The remaining tabs in the shell at parity, live where data exists, and `lite.mjs` split into `routes/`, `sse.mjs`, `static.mjs` and `legacy.mjs` behind `--ui=legacy|next` with no behaviour change.",
+      "constraints": [
+        "K-13",
+        "K-21",
+        "K-27",
+        "K-31",
+        "K-35"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [],
+      "tasks": [
+        {
+          "t": "`GET /api/history?acct&q&d&s&page` and `GET /api/system[?reclaim=1]` return the `HistoryPage` and `SystemEvent + usage` shapes; `GET /api/session/<acct>/<sid>?page=` returns the paged transcript the detail view renders; `?fresh=1` becomes `POST /api/usage/refresh`.",
+          "e": "MAP.md §2.3.2, §2.3.3, §2.3.4; contract.d.ts HistoryPage, BootSnapshot",
+          "v": "test \"$(curl -s -o /dev/null -w '%{http_code}' \"$DASH/api/history?d=7d\")\" = 200 && curl -s $DASH/api/system | grep -q '\"load\"'",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/history.mjs`: the `details.flt` filter summary, account/range/live chips, search form, day groups, rows (`.t .acct .proj .ttl .sz .sid`, LIVE pill, attach/resume `.go` with `data-nw`, delete `<details class=kx del>` confirm → `/a/del`), pager; `/` key opens the filter.",
+          "e": "MAP.md §2.3.2",
+          "v": "node docs/qa/probes/views-check.mjs webkit history",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/system.mjs`: Metrics (`.mbars` 2×2 on phones with `b.mbar-pct`, warn states), Environment rows, Terminal card with the `Restart All` confirm → `/a/restartall`, Usage & Reclaim (refresh via `POST /api/usage/refresh` with the 4 s re-poll while collecting, reclaim preview checkboxes → `/sys/reclaim`), per-account limits/spend/breakdown; `usage` and `system` topics update it live.",
+          "e": "MAP.md §2.3.4, §2.2 'System facelift'; contract.d.ts UsageEvent, SystemEvent",
+          "v": "node docs/qa/probes/views-check.mjs webkit system",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/device.mjs`: Mobile/Web segments, info and control cards (`/droid/*`, `/watch/*` forms), remote-keys card driving the noVNC iframe via `window.rfb`, the phone-UA \"Open Screen\" link, `body.devfs` full-screen toggle; the iframe mounts on route enter and unmounts on leave or `visibilitychange: hidden`; booting state re-polls every 4 s.",
+          "e": "MAP.md §2.3.5, §5.2, §5.5; ledger D-U4",
+          "v": "node docs/qa/probes/views-check.mjs chromium device",
+          "o": "builder"
+        },
+        {
+          "t": "`web/views/session.mjs` (`/s/<acct>/<sid>`): meta grid, LIVE pill, attach/resume button, pause/resume/rename/kill forms when live, the 8 MB note, newest-first pages of 25 with `details` for long messages, tool/result/compaction disclosures.",
+          "e": "MAP.md §2.3.3",
+          "v": "node docs/qa/probes/views-check.mjs webkit session",
+          "o": "builder"
+        },
+        {
+          "t": "Split the server: `routes/{documents,api,actions,agents,device,md}.mjs`, `sse.mjs`, `static.mjs`, `legacy.mjs` (the inline dashboard: `page()`, `pageChrome()`, `CSS`, `FLEET_JS`, every `*View`), `lite.mjs` = boot + dispatcher + `--ui` flag; no HTML/CSS template literal outside `legacy.mjs` and `routes/documents.mjs`.",
+          "e": "MAP.md §1.1, §1.6; ledger C-04, K-21, K-27, K-31",
+          "v": "! grep -lE '<style|<div|class=\"' infra/dashboard/lite.mjs infra/dashboard/sse.mjs infra/dashboard/static.mjs infra/dashboard/routes/api.mjs && node infra/dashboard/lite.mjs --selftest",
+          "o": "builder"
+        },
+        {
+          "t": "`--ui=legacy` serves exactly today's documents at `/` (byte-identical HTML for the fixture, modulo the nonce), `--ui=next` serves the shell; the service template gains the flag; `deploy-dashboard.sh` copies the new modules; `scripts/legacy-parity-check.mjs` fetches the fixture's `/`, `/history`, `/system`, `/device`, `/agents` under `--ui=legacy` and compares them with the pre-split HTML captured in phase 00 modulo the CSP nonce.",
+          "e": "ledger B-11, K-21; MAP.md §1.6",
+          "v": "node scripts/legacy-parity-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/views-check.mjs <engine> <view>` for history, system, device, session: fixture data renders, filters/chips/pager navigate without a document load, forms post and the view updates, live topics patch the DOM.",
+          "e": "docs/qa/probes/README.md conventions",
+          "v": "node docs/qa/probes/views-check.mjs webkit all",
+          "o": "builder"
+        },
+        {
+          "t": "`e2e-infra` green on the split server (the 84 existing assertions plus phase 01's), `e2e-agents` green, preflight green.",
+          "e": "MAP.md §6.1 G-23, G-25",
+          "v": "./scripts/e2e-infra && bash scripts/e2e-agents.sh && PREFLIGHT_NO_LOCAL=1 ./scripts/preflight.sh",
+          "o": "verifier"
+        },
+        {
+          "t": "Server budgets: total server JS ≤ 140 KB, no markup in server modules.",
+          "e": "ledger K-27",
+          "v": "node scripts/budget.mjs --server --max 140",
+          "o": "verifier"
+        },
+        {
+          "t": "View budgets and parity on `/history`, `/system`, `/device`, `/s/<fixture>` at both sizes, both engines.",
+          "e": "ARCHITECTURE.md §9; ledger K-33",
+          "v": "for r in history system device session; do node scripts/budget.mjs --route $r --max 15 || exit 1; done && node scripts/parity-capture.mjs --ui next --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --max 0.5",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "`/term`, `/md`, service worker, push, cutover."
+    },
+    {
+      "file": "04-heavy-pages.md",
+      "phase": 4,
+      "slug": "cockpit-04-heavy-pages",
+      "release": "feature",
+      "depends_on": "specs/cockpit/03-views.md",
+      "title": "Phase 4 — /term on xterm.js 6 and /md as a lazy document",
+      "goal": "The terminal page rebuilt as our own document over the same ttyd socket with a tested protocol client and the key-bar behaviours ported, themed from `themes.json`; `/md` as a separate document with pinned mermaid loaded only when a diagram scrolls in.",
+      "constraints": [
+        "K-05",
+        "K-09",
+        "K-10",
+        "K-22",
+        "K-23",
+        "K-32"
+      ],
+      "gates": {
+        "size_limit": "warn",
+        "lighthouse": "warn"
+      },
+      "manual_gates": [
+        {
+          "name": "real-device terminal",
+          "what": "IME shadow-line typing, resume after screen lock, key bar geometry on one iPhone and one Android; `?ime=off` and `?paint=off` tried",
+          "due": "phase Gate 1"
+        }
+      ],
+      "tasks": [
+        {
+          "t": "`web/pages/term/ttyd.mjs`: the ttyd 1.7.4 client — `GET /term/token`, ws to `/term/ws` + the page's `?arg=` query with subprotocol `tty` and `arraybuffer`, unprefixed JSON first frame `{AuthToken, columns, rows}`, `'0'` input / `'1'` resize / `'2'` pause / `'3'` resume up, `'0'` output / `'1'` title / `'2'` prefs (allowlist: `fontSize`, `disableLeaveAlert`, `disableResizeOverlay`, `disableReconnect`, `titleFixed`) down, flow control 1e5 / 10 / 4, reconnect: close code 1000 → `Press ⏎ to Reconnect`, else auto after a fresh token. `scripts/term-proto-check.mjs` drives it with a fake socket.",
+          "e": "MAP.md §4.3; ledger D-08, K-22",
+          "v": "node scripts/term-proto-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "`web/pages/term/index.html` + `term.mjs`: `@xterm/xterm@6.0.0`, `addon-fit`, `addon-unicode11` (`unicode.activeVersion='11'`), `addon-web-links`; DOM renderer by default, `addon-webgl` lazy on Chromium with `onContextLoss` → DOM; `window.term` exposed; the mobile head set (viewport, `<!--cc-pwa-->` metas, manifest `use-credentials`) reproduced; assets from `/assets/`, never `/term/`.",
+          "e": "MAP.md §4.1, §4.3 defaults, §4.7 mobile-journey:110; ledger K-32",
+          "v": "node scripts/budget.mjs --route term --max 130 && curl -s $DASH/assets/$(node -p \"Object.keys(require('./dist/manifest.json').files).find(f=>f.startsWith('term.'))\") -o /dev/null -w '%{http_code}' | grep -qx 200",
+          "o": "builder"
+        },
+        {
+          "t": "Themes: the `[data-theme]` blocks generated from `themes.json` at build time (the inline copy in `46-cctheme.html` goes), picker in the key bar + `?theme=<Name>` + `window.cctheme()`, precedence `localStorage.cctheme` → global `/settings/term-theme.json` (polled 30 s) → default; applies `term.options.theme`, body background and `theme-color`; `scripts/theme-tokens-check.mjs` asserts every theme and every one of its 20 keys from `themes.json` appears in the generated `[data-theme]` CSS, and that no second copy of the themes exists in the tree.",
+          "e": "MAP.md §4.4; ledger B-01, K-12",
+          "v": "node scripts/theme-tokens-check.mjs && node docs/qa/probes/term-check.mjs chromium theme",
+          "o": "builder"
+        },
+        {
+          "t": "Key bar (`#cckb`): the same keys in the same order (`‹`, pill, 📸, ⧉, 📋, ⟳, Esc NL IND Tab S-Tab UP DN LT RT PgUp PgDn ^C ^Bd KB, A- size A+, theme select) via `term.input()`; touch-scroll to wheel notches; `visualViewport` fit with the 120/520 ms debounce; `body.nozone`; standalone geometry CSS.",
+          "e": "MAP.md §4.2 B-10, B-20, B-30, B-45, B-70; 'Key-bar final child order'",
+          "v": "node docs/qa/probes/term-check.mjs webkit keybar",
+          "o": "builder"
+        },
+        {
+          "t": "IME shadow-line (`?ime=off`): capture-phase interception on coarse pointers, value diff replayed as `\\x7f`×N + tail via `term.input`, Enter as a synthetic keydown, `enterkeyhint=send`, multiline paste → bracketed paste; reconnect kick on `visibilitychange`/`pageshow`/`online`.",
+          "e": "MAP.md §4.2 B-50",
+          "v": "node docs/qa/probes/term-check.mjs webkit ime",
+          "o": "builder"
+        },
+        {
+          "t": "Clipboard: OSC 52 via `term.parser.registerOscHandler(52, …)` → `navigator.clipboard.writeText` with the pending-until-gesture fallback; copy-on-select; the `⧉` overlay from `buffer.active` (wrapped rows re-joined) and the `📋` paste key; `?clip=off`.",
+          "e": "MAP.md §4.2 B-00, B-60",
+          "v": "node docs/qa/probes/term-check.mjs chromium clipboard",
+          "o": "builder"
+        },
+        {
+          "t": "Image/file attach (📸, paste, drop) → `POST /shot` with `x-name`, reply path pasted into the terminal; the session pill + bottom sheet (`/app/live.json?tab=`, `POST /a/switch`, mint-and-reload fallback, `allow-discrete` motion); back key; the `/z?t=term-v8` beacon.",
+          "e": "MAP.md §4.2 B-40, B-75, B-30; §4.5; ledger K-23",
+          "v": "node docs/qa/probes/term-check.mjs webkit sheet",
+          "o": "builder"
+        },
+        {
+          "t": "Repaint on foreground (`?paint=off`): `term.refresh(0, rows-1)` on `visibilitychange`/`pageshow`/`focus`/first content, resize coalesced 150 ms, the boot ladder (repaint → kick → reload ≤ 2), `/z?t=termdiag` beacons; the private `_writeBuffer` unjam watchdog is dropped and its absence noted in the page header.",
+          "e": "MAP.md §4.2 B-80; ledger B-12",
+          "v": "node docs/qa/probes/term-check.mjs chromium paint",
+          "o": "builder"
+        },
+        {
+          "t": "Caddy `@termhtml` serves `/opt/claude-dashboard/term-index.html` = the new document; `make-term-index.sh` now copies `dist/term.html` and keeps the previous file as `term-index.legacy.html`; `deploy-dashboard.sh` does both; `/term/__shim` pings removed.",
+          "e": "MAP.md §4.6, §4.7 make-term-index self-checks; ledger D-02, K-32",
+          "v": "bash -n infra/webconsole/make-term-index.sh && infra/webconsole/make-term-index.sh --dry-run | grep -q legacy",
+          "o": "builder"
+        },
+        {
+          "t": "`web/pages/md/`: the `/md` document — server `mdHtml` output, `.mdhead` with download, `article.mdv`, CSP = BASE_CSP + `script-src 'self' https://cdn.jsdelivr.net 'sha256-…'` for the one pinned `mermaid@12.1.0` module with `integrity=`, loaded by `IntersectionObserver` when the first `pre[data-lang=mermaid]` enters the viewport, default layout, tap-to-toggle full size; shares `tokens.css`; `docs/qa/probes/md-check.mjs <engine>` asserts the download link, the rendered README, mermaid absent from the network log until a diagram scrolls in, then one pinned CDN request with `integrity`, and tap-to-toggle.",
+          "e": "MAP.md §2.3.7, §2.4 'mermaid loader'; ledger A-03, A-09, K-09, K-10, O-3",
+          "v": "node docs/qa/probes/md-check.mjs chromium && ! grep -rl mermaid dist/",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/term-check.mjs <engine> <mode>` (fake ttyd via `MOWS_TEST_HOOKS` ws echo) and `md-check.mjs`: the modes named above plus `proto` (bytes on the wire for each key).",
+          "e": "MAP.md §4.7 'Not asserted anywhere'",
+          "v": "node docs/qa/probes/term-check.mjs webkit all && node docs/qa/probes/term-check.mjs chromium all",
+          "o": "builder"
+        },
+        {
+          "t": "`mobile-journey.mjs` and `web-term-selfcheck.sh` pass against the new page (journey fixed to read `TERM_PAGE`, not `TERM`).",
+          "e": "MAP.md §4.7; §6.1 G-30, G-31",
+          "v": "TERM_PAGE=dist/term.html DASH=$DASH node infra/webconsole/mobile-journey.mjs && infra/webconsole/web-term-selfcheck.sh",
+          "o": "verifier"
+        },
+        {
+          "t": "Per-document CSP: `csp-admits.mjs` run on `/next/`, `/term/` and `/md` with each document's expected policy; term budget; parity of `/md` at both sizes.",
+          "e": "ledger K-10, K-05; MAP.md §6.2 C-6",
+          "v": "node scripts/csp-admits.mjs $DASH/next/ --expect nonce && node scripts/csp-admits.mjs $DASH/md?f=$HOME/Documents/Projects/mows-harness/README.md --expect inline-style && node scripts/budget.mjs --route term --max 130 && node scripts/parity-capture.mjs --ui next --route /md --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /md --max 0.5",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "Service worker, push, badge, cutover; the ttyd unit and `web-term.sh` are unchanged."
+    },
+    {
+      "file": "05-pwa-cutover.md",
+      "phase": 5,
+      "slug": "cockpit-05-pwa-cutover",
+      "release": "feature",
+      "depends_on": "specs/cockpit/04-heavy-pages.md",
+      "title": "Phase 5 — Service worker, badge, push, gates to fail, /next → /",
+      "goal": "The installed-app layer (shell-caching worker with an allowlist, badge and push on `needs-you`), every gate flipped to `fail`, the shell at `/` with the old UI one flag away, `/ui/*` retired by redirect.",
+      "constraints": [
+        "K-20",
+        "K-21",
+        "K-28",
+        "K-37",
+        "K-38"
+      ],
+      "gates": {
+        "size_limit": "fail",
+        "lighthouse": "fail"
+      },
+      "manual_gates": [
+        {
+          "name": "push + badge on iOS",
+          "what": "Home Screen install, one needs-you push received with the app closed, badge count equals the waiting sessions, Wake Lock held while a session is working",
+          "due": "phase Gate 1"
+        }
+      ],
+      "tasks": [
+        {
+          "t": "`web/sw.mjs` → `/sw.js`: precache the shell document, `dist/` and `tokens.css` by manifest hash; answer navigations from cache only for `/`, `/history`, `/system`, `/device`, `/agents*`, `/s/*`; network-only for `/term*`, `/oauth2/*`, `/vnc/*`, `/droidview/*`, `/api/*`, `/stream`, `/events`, `/a/*`, `/md`; never cache a 3xx; the inline offline page kept; `skipWaiting` + `clients.claim` as today; `scripts/sw-check.mjs` loads the worker in a fake `ServiceWorkerGlobalScope` and asserts the allowlist, that a 3xx is never cached, that `/term/` is passed through, and the offline fallback body.",
+          "e": "MAP.md §2.5 'Service worker'; ledger B-10, K-20",
+          "v": "node scripts/sw-check.mjs",
+          "o": "builder"
+        },
+        {
+          "t": "Badge: `navigator.setAppBadge(n)` with `n` = `needs-you` sessions from the `fleet` signal, `clearAppBadge()` on `focus`; `navigator.wakeLock.request('screen')` while any session is `working` and the tab is visible.",
+          "e": "contract.d.ts FleetItem; ledger O-4",
+          "v": "node docs/qa/probes/pwa-check.mjs chromium badge",
+          "o": "builder"
+        },
+        {
+          "t": "Push server: VAPID key pair generated once into the settings directory, `GET /api/push/key`, `POST`/`DELETE /api/push/subscribe` (same-origin, ≤ 4 KB, stored as JSON), sender in `sse.mjs` on a `needs-you` transition (debounced 30 s per session) implementing RFC 8291 aes128gcm + RFC 8292 VAPID on `node:crypto` with the declarative payload `{web_push: 8030, notification, app_badge}`; `scripts/push-check.mjs` encrypts to a generated key and decrypts with WebCrypto.",
+          "e": "contract.d.ts push section; ledger C-06, K-37",
+          "v": "node scripts/push-check.mjs && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/api/push/key)\" = 200",
+          "o": "builder"
+        },
+        {
+          "t": "Push client: a `Notifications` card on the System view (permission state, subscribe/unsubscribe, last delivery), subscription posted with the VAPID key; the worker's `push` handler shows the notification and `notificationclick` navigates.",
+          "e": "MAP.md §2.3.4 System layout; ledger K-37",
+          "v": "node docs/qa/probes/pwa-check.mjs chromium push",
+          "o": "builder"
+        },
+        {
+          "t": "Cutover: `--ui=next` is the default, `/` serves the shell, `GET /next/*` 301s to the same path without the prefix, `GET /ui/*` 301s into the shell routes via `uiTwinPath`'s inverse, the manifest is byte-identical, `start_url: /app` still 302s to `/term/`.",
+          "e": "MAP.md §1.1 S-04, S-29, S-38; ledger K-20, K-28",
+          "v": "test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/)\" = 200 && curl -s $DASH/ | grep -q 'id=\"boot\"' && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/ui/agents)\" = 301 && curl -s $DASH/manifest.webmanifest | grep -q '\"start_url\":\"/app\"'",
+          "o": "builder"
+        },
+        {
+          "t": "`e2e-infra.sh`: the `/ui` assertions (lines 195–234, 259–323: chrome greps, the 20 480 B document ceiling, `views/capability` import-map grep, the 3-nonce rule, `<noscript>` twin) are rewritten for `/` + `/assets/` one by one, each listed in the commit message; the `<noscript>` twin check stays until Stage 8 step 4.",
+          "e": "MAP.md §6.1 G-23, §6 'would break' #7; ledger C-05, K-28, K-36",
+          "v": "./scripts/e2e-infra",
+          "o": "builder"
+        },
+        {
+          "t": "Gates to `fail`: `budget.mjs`, `lh-gate.mjs`, `parity-diff.mjs` and `git diff --exit-code -- dist/` run in `ci.yml` without `--warn`; `preflight.sh` runs `budget.mjs` for every route.",
+          "e": "ARCHITECTURE.md §9, §12; ledger K-30",
+          "v": "grep -q 'budget.mjs' .github/workflows/ci.yml && grep -q 'lh-gate' .github/workflows/e2e-infra.yml && grep -q 'budget.mjs' scripts/preflight.sh",
+          "o": "builder"
+        },
+        {
+          "t": "README screenshots regenerated from the new UI by `docs/assets/stage-demo.sh` (its `'/home'` literal hooks moved to `legacy.mjs`/`routes/documents.mjs`); `docs/architecture.md` 'Two navigation models' rewritten for one model + the `--ui=legacy` flag.",
+          "e": "MAP.md §8 M-05, M-10; docs/architecture.md:256-372",
+          "v": "bash -n docs/assets/stage-demo.sh && ! grep -q 'Two navigation models' docs/architecture.md",
+          "o": "builder"
+        },
+        {
+          "t": "`docs/qa/probes/pwa-check.mjs <engine> <mode>`: `badge` (fixture fleet with one needs-you → `setAppBadge(1)` observed via a stub), `push` (subscribe posts the key, the worker's handler shows a notification from a `push` event dispatched in-page), `sw` (allowlisted navigation served from cache offline; `/term/` not intercepted).",
+          "e": "docs/qa/probes/README.md conventions",
+          "v": "node docs/qa/probes/pwa-check.mjs chromium all",
+          "o": "builder"
+        },
+        {
+          "t": "All gates in fail mode on `/`: every route budget, Lighthouse on `/`, `/history`, `/system`, `/agents` inside the e2e-infra container, parity on every route, `dist/` determinism, preflight.",
+          "e": "ARCHITECTURE.md §9",
+          "v": "node scripts/budget.mjs --all && node scripts/lh-gate.mjs --url $DASH/ --lcp 2500 --tbt 200 --runs 3 && node scripts/parity-capture.mjs --ui next --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --max 0.5 && node build.mjs && git diff --exit-code -- dist/ && PREFLIGHT_NO_LOCAL=1 ./scripts/preflight.sh",
+          "o": "verifier"
+        },
+        {
+          "t": "Deploy dry-run for Stage 8 step 3 and the rollback line: `deploy-dashboard.sh --dry-run` lists the flag flip, and `--ui=legacy` on the dev instance serves the old `/`.",
+          "e": "ledger K-21, K-24; ARCHITECTURE.md §10",
+          "v": "scripts/deploy-dashboard.sh --dry-run | grep -q 'claude-dash-lite' && node scripts/legacy-parity-check.mjs",
+          "o": "verifier"
+        }
+      ],
+      "out_of_scope": "Removing `legacy.mjs`, the `/agents` twin and the `<noscript>` checks — Stage 8 step 4, one release later, its own spec."
+    }
+  ]
+}
