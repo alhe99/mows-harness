@@ -5,6 +5,8 @@
 // (an unknown name such as "default" clears it), ?theme=off turns the picker and the theming off, window.cctheme(name) does the same by hand.
 import NAMES from 'themes:names';
 import { el, param, store } from './dom.mjs';
+// Android in a light system theme keeps the light status bar term.mjs set (its icons follow the system theme there): the theme must not repaint it
+const LIGHT_BAR = /Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches;
 
 const KEYS = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow',
   'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite', 'background', 'foreground', 'cursor', 'selectionBackground'];
@@ -28,7 +30,7 @@ export function themes(/** @type {import('@xterm/xterm').Terminal} */ term) {
     if (t.selectionBackground.length === 7) t.selectionBackground += '80'; // the ports assume Windows Terminal's 50 % selection alpha
     term.options.theme = t;
     document.body.style.background = t.background; // the safe-area edges around the terminal
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t.background);
+    if (!LIGHT_BAR) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t.background);
     select.value = known(store.get(KEY)) ? store.get(KEY) : 'Default';
     return n;
   }

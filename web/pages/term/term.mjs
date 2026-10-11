@@ -18,6 +18,8 @@ import { sessions } from './sess.mjs';
 import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
 import { el, key, off } from './dom.mjs';
+// Android, light system theme: a light status bar so its dark icons read — the reasoning is in web/standalone.mjs, next to the same line.
+if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
 
 const term = new Terminal({ fontSize: 14, fontFamily: 'Consolas,Liberation Mono,Menlo,Courier,monospace', allowProposedApi: true });
 /** @type {any} */ (window).term = term;
