@@ -113,6 +113,7 @@ docs/assets/stage-demo.sh
 docs/assets/system.png
 docs/assets/term-phone.png
 docs/assets/theme-cycle.gif
+docs/qa/2026-10-11-cockpit-manual-gates.md
 docs/qa/2026-10-11-mobile-facelift-report.md
 docs/qa/baseline/2026-10-11-mobile-facelift/home-1280.png
 docs/qa/baseline/2026-10-11-mobile-facelift/home-390.png
