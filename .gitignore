@@ -7,3 +7,4 @@ rendered/
 .superpowers/
 scripts/preflight-local.pat
 tasks/
+.agent-team/
