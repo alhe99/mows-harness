@@ -13,7 +13,7 @@
 //   node scripts/capability-coverage.mjs --self-test  prove THIS tool can fail, three ways
 //
 // Requires Node >= 22.15 and python3 with PyYAML, same as the check it drives.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -352,6 +352,56 @@ const MUTATIONS = [
     find: 'WRITE_CAPABLE_TOOLS = {"Bash", "Task"}', repl: 'WRITE_CAPABLE_SET = {"Bash", "Task"}' },
 ];
 
+// The /ui view is written in htm templates; web/views/capability.mjs is the same panel written with h(). Each view mutation below
+// has the same intent in both, so `web` holds the find/replace for the h() source (the htm one stays for the /ui app). A view
+// mutation with no entry here is reported as failing to apply, which is the point of the three-way accounting.
+const LEGACY = existsSync(path.join(UI, 'vendor/preact.mjs'));
+const FALSE_AT = (find) => ({ find, repl: find.replace(/^(\s*)(\S+ && )/, '$1false && ') });
+const WEB_VIEW = {
+  V1: { find: "    h('h2', null, 'What this agent can do'),\n    !!auth.length && h('div'", repl: "    h('h2', null, 'What this agent can do'),\n    h('p', { class: 'muted' }, 'Tools: ', String(c.effective)),\n    !!auth.length && h('div'" },
+  V2: null, V3: null, V11: null, V15: null, V31: null, V32: null, V35: null,
+  V4: null,
+  V5: { find: ' — the directory it starts in, not a boundary it is held to.', repl: '.' },
+  V6: { find: ' — a Claude profile, which selects an account and its subscription. Every agent on this box runs under the same OS login and can reach the same files, so this is not an identity boundary.', repl: '.' },
+  V7: { find: ' — the daily cap is checked before a run starts, so it does not stop a run already under way', repl: '' },
+  V8: { find: "    p.webhookArmed && h('p', { class: 'cap-warn' },", repl: "    true && h('p', { class: 'cap-warn' }," },
+  V9: { find: "b('every tool')", repl: "b('none')" },
+  V10: FALSE_AT('    !!c.denyNoop?.length && h('),
+  V19: { find: "    !!auth.length && h('div', { class: 'cap-warn' },", repl: "    true && h('div', { class: 'cap-warn' }," },
+  V20: { find: "b(AUTHORITY_TEXT[a.kind][0]), ' ', AUTHORITY_TEXT[a.kind][1]", repl: 'b(AUTHORITY_TEXT[a.kind][0]), AUTHORITY_TEXT[a.kind][1]' },
+  V21: { find: "code('disallowedTools'), ' ', 'names '", repl: "code('disallowedTools'), 'names '" },
+  V12: { find: "      h('li', null, 'in ', b(p.workdir || 'unknown'),", repl: "      h('li', { title: p.workdir || 'unknown' }, 'in ', b(p.workdir || 'unknown')," },
+  V13: { find: "      : h('p', { class: 'muted' }, 'Tools its file grants: ', c.effective ? (c.effective.join(', ') || 'none') : 'unknown'),",
+         repl: "      : h('p', { class: 'muted', dangerouslySetInnerHTML: { __html: 'Tools its file grants: ' + (c.effective || []).join(', ') } })," },
+  V14: { find: "      h('li', null, 'runs as ', b(p.profile || 'unknown'),", repl: "      h('li', null, 'runs as ', h('iframe', null, p.profile || 'unknown')," },
+  V16: { find: "'It can read and write any file this account can reach, regardless of the tool list below.'],", repl: "'It is a broad agent.']," },
+  V17: { find: '. A chat turn below is capped separately by mows-agent and is not covered by the per-run figure; it carries this same tool list (measured, not assumed).', repl: '.' },
+  V23: { find: "'What constrains it is its account, its budget, its triggers and the permission rules of its profile — not the tool list, and not the directory.'",
+         repl: "'What actually constrains it is its account, directory, budget and triggers — not the tool list.'" },
+  V24: { find: "      h('li', null, 'under ', b('permissionMode: ', p.permissionMode || 'not set'),\n        ', as written in its file. This page reports what it read; it cannot check what the CLI does with it.'),\n", repl: '' },
+  V25: { find: "    h('p', { class: 'muted' }, 'What this page cannot see:", repl: "    false && h('p', { class: 'muted' }, 'What this page cannot see:" },
+  V26: FALSE_AT("      planned && h('p', null, 'Its file sets '"),
+  V28: FALSE_AT('    p.webhookDeclaredInert && h('),
+  V29: FALSE_AT('    !!c.miscasedTools?.length && h('),
+  V30: FALSE_AT('    c.malformedDenied && h('),
+  V33: { find: ", ' ', h('span', { class: 'muted' }, '(', a.tools.join(', '), ')')", repl: '' },
+  V36: { find: '        p.turnCapDisagreement\n          ? [', repl: '        false\n          ? [' },
+  V37: FALSE_AT('    !!c.mcpTools?.length && h('),
+  V38: FALSE_AT('    !!c.unclassifiedTools?.length && h('),
+  V39: FALSE_AT("    c.inherits && h('p', { class: 'cap-warn' },"),
+  V40: { find: '  const quiet = !auth.length && !c.inherits && !c.malformedTools && !c.malformedDenied\n    && !c.miscasedTools?.length && !c.mcpTools?.length && !c.unclassifiedTools?.length;', repl: '  const quiet = !auth.length;' },
+  V41: FALSE_AT("    quiet && h('p', { class: 'muted' },"),
+  V42: { find: "'. A file\\'s ', code('disallowedTools'),\n      ' was honoured in every case measured here: three tools across both paths, each removing exactly itself and nothing else.'", repl: "'.'" },
+  V43: { find: 'run measured on this box it granted a subset of what the file declared', repl: 'run measured on this box things happened' },
+  V46: { find: "', which removes', ' ', c.denyLoadBearing.join(', '),", repl: "', which removes', c.denyLoadBearing.join(', ')," },
+  V44: { find: '      c.denyLoadBearing?.length\n        ? [', repl: '      false\n        ? [' },
+  V45: { find: '      c.denyLoadBearing?.length\n        ? [', repl: '      true\n        ? [' },
+  V18: { find: '        bd.usd_per_day != null', repl: '        true' },
+  V34: { find: "      planned && h('p', null, 'Its file sets '", repl: "      true && h('p', null, 'Its file sets '" },
+};
+// V4 differs only in the surrounding text the htm file shares; V2 V3 V11 V15 V31 V32 V35 are textually identical in both files.
+const MUTATIONS_IN_USE = MUTATIONS.map(m => (!LEGACY && m.file === 'view' && WEB_VIEW[m.id]) ? { ...m, ...WEB_VIEW[m.id] } : m);
+
 const read = f => readFileSync(FILES[f], 'utf8');
 const write = (f, s) => writeFileSync(FILES[f], s);
 
@@ -434,7 +484,7 @@ function report(r) {
     for (const b of r.broken) console.log('  ' + b);
     console.log('SOME MUTATIONS DID NOT RUN — the numbers above are NOT trustworthy');
   } else {
-    console.log(`all ${MUTATIONS.length} mutations applied`);
+    console.log(`all ${MUTATIONS_IN_USE.length} mutations applied`);
   }
   return (r.broken.length || r.neverRed.length) ? 1 : 0;
 }
@@ -487,14 +537,14 @@ if (process.argv.includes('--self-test')) {
   try {
     write('check', orig.replace('process.exit(failed ? 1 : 0);',
       "check('AN ASSERTION NOTHING CAN BREAK', 1 === 1);\nprocess.exit(failed ? 1 : 0);"));
-    const c = sweep(MUTATIONS);
+    const c = sweep(MUTATIONS_IN_USE);
     expect('an assertion no mutation can break is named',
       c.neverRed.includes('AN ASSERTION NOTHING CAN BREAK'), c.neverRed);
   } finally {
     write('check', orig);
   }
 
-  const d = sweep(MUTATIONS);
+  const d = sweep(MUTATIONS_IN_USE);
   expect('the real sweep is clean: every assertion red at least once, every mutation applied',
     d.neverRed.length === 0 && d.broken.length === 0, { neverRed: d.neverRed, broken: d.broken });
   expect('all files restored byte-identically',
@@ -502,4 +552,4 @@ if (process.argv.includes('--self-test')) {
   process.exit(bad);
 }
 
-process.exit(report(sweep(MUTATIONS)));
+process.exit(report(sweep(MUTATIONS_IN_USE)));

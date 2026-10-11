@@ -160,6 +160,7 @@ docs/qa/journeys/agent-chat.md
 docs/qa/journeys/agents-tab.md
 docs/qa/journeys/mobile-facelift.md
 docs/qa/probes/README.md
+docs/qa/probes/agents-check.mjs
 docs/qa/probes/fixture.sh
 docs/qa/probes/mobile-facelift.mjs
 docs/qa/probes/probes.mjs
@@ -317,12 +318,16 @@ web/contract.d.ts
 web/fonts/inter-var-latin.woff2
 web/fonts/jetbrains-mono-var-latin.woff2
 web/main.mjs
+web/md.mjs
 web/standalone.mjs
 web/store.mjs
 web/tokens.css
 web/tsconfig.json
+web/ui.mjs
 web/views/agent.mjs
 web/views/agents.mjs
+web/views/capability.mjs
+web/views/chat.mjs
 web/views/device.mjs
 web/views/history.mjs
 web/views/run.mjs

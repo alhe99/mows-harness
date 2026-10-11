@@ -227,6 +227,8 @@ details pre{background:#050506;border:1px solid var(--bd);border-radius:var(--r)
 footer{padding:18px 0;color:var(--dim);display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px}
 footer a{color:var(--mut)}
 footer a:hover{color:var(--fg2)}
+/* the chat screens end where the legacy SPA ends: no server footer under them (phase 05 decides the footer for good) */
+body:has([data-view=agent],[data-view=run]) footer{display:none}
 @media(max-width:700px){body{padding:max(8px,env(safe-area-inset-top,8px)) 8px calc(72px + env(safe-area-inset-bottom,0))}.chip{min-height:40px}.proj{max-width:55%;order:1}.ttl{flex-basis:100%;order:9}.sz{display:none}.sid{margin-left:auto}.pg a,.pg .off{width:40px;height:40px}input[type=search]{width:140px}.li2{font-size:16px}
 .fleet-rows{display:none}.fleet-cards{display:flex;flex-direction:column;gap:12px;margin:4px 0 14px}
 .ab{min-height:40px}

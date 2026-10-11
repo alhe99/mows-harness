@@ -79,6 +79,30 @@ first, so a two-line fixture cannot make the card shorter than a real chat and p
 precondition was red, unnoticed, for the day between the redesign and this rewrite: `layout` was the
 one mode not run in that day's probe passes. Run `all`.
 
+## Against the cockpit shell: `--ui next`
+
+```sh
+./docs/qa/probes/run.sh all webkit --ui next      # every mode above, against /next on the same fixture
+node docs/qa/probes/agents-check.mjs webkit all   # the agent pages around the chat: list, detail, run (fixture data, no docker)
+```
+
+`--ui next` starts the fixture dashboard with `--ui=next`, gives the probe `MOWS_QA_UI=next`, and the probe prefixes every
+agent route with `/next` instead of `/ui`. **No selector moved**: the shell's agent pages keep `.chatbox`, `.m.me` / `.m.claude`
+(`.streaming`), `.chat .chatf`, `.cherr`, `button.jump`, `.agchat`, `.agback-in`, `.termfab`, `nav.tabs`, `header.hdr`, so the
+same assertions hold, and the probe header lists them. Three things are different on purpose:
+
+- **`csp`** proves the shell's nonce policy refuses an injected handler, an inline `<script>` and a foreign script (the policy
+  also admits `'self'` stylesheets, which is how the shell links `tokens.css`).
+- **`journey`** seeds the user's question into the saved transcript before the first delta, as `mows-agent` does (`cmd_chat`
+  appends it before it spawns claude). The store decides after a reconnect whether a turn is still running from the last saved
+  turn's role, so a fixture with an agent turn last would read as an ended turn. It also saves the reply as the raw text it
+  injected, not the rendered `innerText`: WebKit's `innerText` has one newline between paragraphs where the deltas have two, so the
+  old probe's reply missed the view's `includes` salvage rule and showed twice. That made `webkit/journey` red on `/ui` as well.
+- **`journey` ends with the chatend gap** (`--ui next` only; ledger D-04, K-34): the stream is cut mid-turn, the turn ends while
+  nobody is connected, and after the reconnect the saved reply must be on screen once, the live bubble gone and the composer
+  usable. `/ui` has no such recovery. `scripts/stream-replay-check.mjs --chatend-gap` runs the same case against the server with
+  `web/store.mjs`.
+
 ## What they cannot tell you
 
 - **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb`
@@ -105,3 +129,7 @@ The message is also not incidental: WebKit ignoring `interactive-widget` is prec
 divergence the chat view's hand-written `--kb` handler exists to compensate for. A check labelled
 "no uncaught JS errors" failing on it is measuring something other than its own name. A *different*
 viewport warning still fails.
+
+## Cockpit parity baseline: agents, agent, run (re-baselined in phase 02b)
+
+`docs/qa/baseline/cockpit/{chromium,webkit}/{agents,agent,run}-{390,1280}.png` were re-captured from the `/ui` SPA, not from the server-rendered twin, because the SPA is what the shell ports (ledger K-33). Command per route: `node scripts/parity-capture.mjs --route /agents/<fixture> --as /ui/agents/<fixture> --out docs/qa/baseline/cockpit` (likewise `/agents` as `/ui/agents`, and the run page). The chat screens (`agent`, `run`) hide the server footer in the shell, as `/ui` has none; the footer's fate is a phase 05 decision.

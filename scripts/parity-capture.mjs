@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // parity-capture.mjs — the visual-parity baseline (ledger D-03, K-33). Every route of the dashboard at
 // 390x844 (DPR 3) and 1280x800 on WebKit and Chromium -> <out>/<engine>/<slug>-<width>.png.
-//   node scripts/parity-capture.mjs [--ui legacy|next] [--route /path] [--out dir] [--engine webkit,chromium] [--port 3921]
+//   node scripts/parity-capture.mjs [--ui legacy|next] [--route /path] [--out dir] [--engine webkit,chromium] [--port 3921] [--as /ui/agents]
 // Data is fixed by docs/qa/probes/fixture.sh run in a throwaway container (MOWS_QA_PARITY=1: one agent, one
 // run, two transcripts, one markdown file, empty fleet). Needs docker and Playwright; fails loudly without.
 // Determinism, in the order it can bite:
@@ -35,7 +35,9 @@ const ALL_ROUTES = [
 ];
 const ROUTES = ALL_ROUTES.filter(([, r]) => !opt('--route') || r === opt('--route'));
 if (!ROUTES.length) { console.error(`--route ${opt('--route')} is not one of: ${ALL_ROUTES.map(r => r[1]).join(' ')}`); process.exit(2); }
-const at = r => (ui === 'next' && !r.startsWith('/md') ? `/next${r}` : r);
+// --as <path> captures the single --route from another URL (the agents list's legacy twin is the server page; the SPA being ported is /ui/agents).
+const as = opt('--as');
+const at = r => (as ? as : ui === 'next' && !r.startsWith('/md') ? `/next${r}` : r);
 const VIEWPORTS = [[390, 844, 3, true], [1280, 800, 1, false]];
 const MASK = '.mbar-row, [data-volatile]';
 

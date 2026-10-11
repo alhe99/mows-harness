@@ -30,7 +30,10 @@ export function createStore(env = globalThis) {
     return p;
   };
 
-  let es = /** @type {any} */ (null), url = '', attempt = 0, retry = null, hiddenTimer = null, wasOpen = false, lastId = '';
+  let es = /** @type {any} */ (null), url = '', attempt = 0, retry = null, hiddenTimer = null, wasOpen = false, lastId = '', pending = false;
+  /** topic -> watchers: the per-view topics (chat:<agent>) added to the one stream's base topics while a view needs them. */
+  const extra = new Map();
+  const streamUrl = () => url + [...extra.keys()].map(t => ',' + t).join('');
   const setBusy = (agent, turn) => { const b = { ...busy.value }; if (turn == null) delete b[agent]; else b[agent] = turn; busy.value = b; };
 
   function open() {
@@ -38,7 +41,7 @@ export function createStore(env = globalThis) {
     env.clearTimeout(retry); retry = null;
     // A new EventSource sends no Last-Event-ID of its own (only the browser's built-in retry does), so a manual reopen carries it
     // in the query and the server replays the in-flight turn from there.
-    es = new env.EventSource(lastId ? `${url}&lastEventId=${encodeURIComponent(lastId)}` : url);
+    es = new env.EventSource(lastId ? `${streamUrl()}&lastEventId=${encodeURIComponent(lastId)}` : streamUrl());
     const mine = es;
     const on = (name, fn) => mine.addEventListener(name, e => fn(JSON.parse(e.data), e));
     on('fleet', d => { fleet.value = d; });
@@ -80,6 +83,19 @@ export function createStore(env = globalThis) {
     }
   }
 
+  // A view that needs a topic the default four do not carry (the agent chat: chat:<name>) holds it with watch(); the stream is reopened
+  // once per burst of changes, with the last chat id so the server replays the in-flight turn, and the returned function lets go.
+  function watch(topic) {
+    extra.set(topic, (extra.get(topic) || 0) + 1);
+    const reopen = () => {
+      if (pending || !url) return;
+      pending = true;
+      queueMicrotask(() => { pending = false; if (es) { es.close(); es = null; open(); } });
+    };
+    if (extra.get(topic) === 1) reopen();
+    return () => { const n = (extra.get(topic) || 1) - 1; if (n) extra.set(topic, n); else { extra.delete(topic); reopen(); } };
+  }
+
   function onVisibility() {
     if (env.document.visibilityState === 'hidden') {
       hiddenTimer = env.setTimeout(() => { hiddenTimer = null; close(); }, HIDDEN_MS);
@@ -101,7 +117,7 @@ export function createStore(env = globalThis) {
     open();
   }
 
-  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
+  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, watch, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
 }
 
 export const store = createStore();

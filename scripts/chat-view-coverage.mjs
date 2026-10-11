@@ -20,17 +20,21 @@
 //   node scripts/chat-view-coverage.mjs --self-test  prove THIS tool can fail, three ways
 //
 // Requires Node >= 22.15, same as the check it drives (node:module.registerHooks).
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UI = path.resolve(ROOT, process.env.UI_SRC || 'infra/dashboard/app'); // K-26: same switch as the check it drives
+// The /ui app keeps its renderer in views/chat.mjs beside a vendored marked; web/ (the cockpit shell) keeps it in md.mjs and takes
+// marked from node_modules. Same mutations, same check: only where the text lives differs, and the memoisation mutations (W*) exist
+// only for web/.
+const LEGACY = existsSync(path.join(UI, 'vendor/marked.mjs'));
 const FILES = {
-  view: path.join(UI, 'views/chat.mjs'),
+  view: path.join(UI, LEGACY ? 'views/chat.mjs' : 'md.mjs'),
   check: path.join(ROOT, 'scripts/chat-view-check.mjs'),
-  vendor: path.join(UI, 'vendor/marked.mjs'),
+  vendor: LEGACY ? path.join(UI, 'vendor/marked.mjs') : path.join(ROOT, 'node_modules/marked/lib/marked.esm.js'),
 };
 const CHECK = FILES.check;
 
@@ -171,6 +175,28 @@ const MUTATIONS = [
     find: `const TAG = /<([a-zA-Z][^\\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\\/?>/g;`,
     repl: `const TAG = /(?:<|&lt;)([a-zA-Z][^\\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)\\/?(?:>|&gt;)/g;` },
 
+  // --- block-level memoisation (web/md.mjs only) ----------------------------------------------------
+  { id: 'W1', web: true, file: 'view', desc: 'closed blocks are never cached, so every delta re-parses the whole buffer',
+    find: '      closed.set(b, h);\n', repl: '' },
+  { id: 'W2', web: true, file: 'view', desc: 'a blank line inside a fence is a block boundary',
+    find: '    if (fenced || l.trim()) continue;', repl: '    if (l.trim()) continue;' },
+  { id: 'W3', web: true, file: 'view', desc: 'a blank line before a list item is a block boundary (loose lists split)',
+    find: '    if (j < lines.length && !CONTINUES.test(lines[j])) {', repl: '    if (j < lines.length) {' },
+  { id: 'W4', web: true, file: 'view', desc: 'a list marker with nothing after it yet (a delta that stopped there) is not a continuation',
+    find: '[-*+](?:\\s|$)|\\d{1,9}[.)](?:\\s|$)', repl: '[-*+]\\s|\\d{1,9}[.)]\\s' },
+  { id: 'W5', web: true, file: 'view', desc: 'closed blocks are rendered through bare marked, bypassing every guard',
+    find: '      h = renderPartial(b);', repl: '      h = marked.parse(b);' },
+  { id: 'W6', web: true, file: 'view', desc: 'a ``` run inside a line is no longer a reason to parse the buffer whole',
+    find: ' || runs(text, /```/g) !== runs(text, /^ {0,3}```/gm)', repl: '' },
+  { id: 'W7', web: true, file: 'view', desc: 'a reference definition is no longer a reason to parse the buffer whole',
+    find: '/^ {0,3}\\[[^\\]\\n]+\\]:|<(?:pre', repl: '/<(?:pre' },
+  { id: 'W8', web: true, file: 'view', desc: 'a raw HTML block is no longer a reason to parse the buffer whole',
+    find: '|<(?:pre|script|style|textarea)\\b|<!--', repl: '' },
+  { id: 'W9', web: true, file: 'view', desc: 'an opener-looking line inside a fence closes it instead of making the split ambiguous',
+    find: '      else return null;', repl: '      else fenced = false;' },
+  { id: 'W10', web: true, file: 'view', desc: 'the open tail is cached like a closed block, so a saved turn and a stream cannot be told apart',
+    find: '  const tail = open ? blocks.pop() : null;', repl: '  const tail = null;' },
+
   // --- the vendored dependency --------------------------------------------------------------
   // The [mechanism] assertion pins the HAZARD the C1 fix neutralises, which lives in marked
   // rather than in our code, so only a mutation of marked itself can redden it. This simulates
@@ -182,6 +208,7 @@ const MUTATIONS = [
 ];
 
 const read = f => readFileSync(FILES[f], 'utf8');
+const MUTATIONS_IN_USE = MUTATIONS.filter(m => !m.web || !LEGACY);
 const write = (f, s) => writeFileSync(FILES[f], s);
 
 function runCheck() {
@@ -250,7 +277,7 @@ function report(r) {
     for (const b of r.broken) console.log('  ' + b);
     console.log('SOME MUTATIONS DID NOT RUN — the numbers above are NOT trustworthy');
   } else {
-    console.log(`all ${MUTATIONS.length} mutations applied`);
+    console.log(`all ${MUTATIONS_IN_USE.length} mutations applied`);
   }
   return (r.broken.length || r.neverRed.length) ? 1 : 0;
 }
@@ -282,18 +309,18 @@ if (process.argv.includes('--self-test')) {
   try {
     write('check', orig.replace('process.exit(failed ? 1 : 0);',
       "check('AN ASSERTION NOTHING CAN BREAK', 1 === 1);\nprocess.exit(failed ? 1 : 0);"));
-    const c = sweep(MUTATIONS);
+    const c = sweep(MUTATIONS_IN_USE);
     expect('an assertion no mutation can break is named',
       c.neverRed.includes('AN ASSERTION NOTHING CAN BREAK'), c.neverRed);
   } finally {
     write('check', orig);
   }
 
-  const d = sweep(MUTATIONS);
+  const d = sweep(MUTATIONS_IN_USE);
   expect('the real sweep is clean: every assertion red at least once, every mutation applied',
     d.neverRed.length === 0 && d.broken.length === 0, { neverRed: d.neverRed, broken: d.broken });
   expect('all files restored byte-identically', read('check') === orig, 'check file differs');
   process.exit(bad);
 }
 
-process.exit(report(sweep(MUTATIONS)));
+process.exit(report(sweep(MUTATIONS_IN_USE)));

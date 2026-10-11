@@ -12,6 +12,7 @@ import { basename, join } from 'node:path';
 const OUT = 'dist';
 const entryPoints = [
   'web/main.mjs', 'web/tokens.css',
+  { in: 'web/md.mjs', out: 'marked' }, // the markdown chunk gets its own budget (--chunk marked); chat.mjs imports it lazily
   ...readdirSync('web/views').filter(f => f.endsWith('.mjs')).sort().map(f => `web/views/${f}`),
 ];
 
