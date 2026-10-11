@@ -6,6 +6,11 @@ const REFRESH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" str
 const hidden = 'position:fixed;visibility:hidden;pointer-events:none;';
 
 // install mode + safe-area readout in the footer ("app · sat59 sab34"), so device rendering can be diagnosed without guessing
+// Android 15 forces the WebAPK shell edge-to-edge and Chrome 154 colours the status bar icons from the SYSTEM theme (fixed in 156); the bar
+// itself is painted from theme-color, which Chrome applies live, and env(safe-area-inset-top) is 0 there, so nothing of ours sits under the
+// icons. On a light-theme phone a light bar is the one place the dark icons read (2026-10-11). Same line in web/pages/term/term.mjs.
+if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
+
 function envout() {
   const o = document.getElementById('envout');
   if (!o) return;
