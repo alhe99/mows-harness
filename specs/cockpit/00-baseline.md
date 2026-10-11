@@ -7,7 +7,7 @@ repos:
 phase: 0
 depends_on: null
 outward: none
-dev_server: node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
+dev_server: MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next
 gates:
   size_limit: warn
   lighthouse: warn

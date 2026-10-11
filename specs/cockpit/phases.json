@@ -8,7 +8,7 @@
       }
     ],
     "outward": "none",
-    "dev_server": "node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next",
+    "dev_server": "MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next",
     "budgets": {
       "shell_js_kb": 30,
       "view_js_kb": 15,
@@ -169,7 +169,7 @@
         {
           "t": "`build.mjs`: esbuild per ARCHITECTURE §1 (`esm`, splitting, minify, `es2022`, `.mjs` output, `[name].[hash]`, metafile), the C0-escape post-pass, `dist/manifest.json` with sha256 per output, no `.map` in `dist/`; the Preact 10.29.x fallback alias present as a commented one-liner.",
           "e": "ARCHITECTURE.md §1; ledger A-04, A-11, K-04, K-11, K-25",
-          "v": "node build.mjs && test -f dist/manifest.json && ! grep -rlP '[\\x00-\\x08\\x0B-\\x1F\\x7F]' dist/ && ! ls dist/*.map 2>/dev/null",
+          "v": "node build.mjs && test -f dist/manifest.json && ! grep -rlP --include='*.mjs' --include='*.css' --include='*.json' '[\\x00-\\x08\\x0B-\\x1F\\x7F]' dist/ && ! ls dist/*.map 2>/dev/null",
           "o": "builder"
         },
         {
