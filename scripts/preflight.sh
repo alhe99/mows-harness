@@ -155,21 +155,24 @@ done
 # Without a gate, "SPA" grows back into the MB-scale bundle lite.mjs was written to replace.
 if [ -d infra/dashboard/app ]; then
   ( cd infra/dashboard/app/vendor && sha256sum -c SHA256SUMS --quiet ) || bad "vendored module hash mismatch"
-  # The extensions measured below MUST be the extensions lite.mjs is willing to serve. A file
+  # The extensions measured below MUST be the extensions the server is willing to serve (static.mjs ASSET_TYPES; see below). A file
   # servable but unmeasured ships to browsers for free, and this check would keep printing a
   # reassuring number while the payload grew — so the agreement is asserted, not commented.
   # Parsed out of UI_ASSET_TYPES rather than restated: a literal copy is exactly what went
   # stale when fonts were added, and a check that can't notice its own subject moving is the
   # hollow check this repo keeps cataloguing.
-  SERVED=$(sed -n '/^const UI_ASSET_TYPES = {/,/^};/p' infra/dashboard/lite.mjs \
+  # The list now lives in static.mjs (ASSET_TYPES, which serves dist/ under /assets/); lite.mjs's UI_ASSET_TYPES is that same
+  # object, and is asserted to be, so app/ and dist/ can never be served under two different lists.
+  SERVED=$(sed -n '/^export const ASSET_TYPES = {/,/^};/p' infra/dashboard/static.mjs \
     | grep -oE "^  [a-z0-9]+:" | tr -d ' :' | sort | tr '\n' ' ')
-  [ -n "$SERVED" ] || bad "could not parse UI_ASSET_TYPES out of lite.mjs — the ceiling's extension list is unverifiable"
-  MEASURED="css mjs woff2 "
-  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: lite.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
+  [ -n "$SERVED" ] || bad "could not parse ASSET_TYPES out of static.mjs — the ceiling's extension list is unverifiable"
+  grep -q '^const UI_ASSET_TYPES = ASSET_TYPES;' infra/dashboard/lite.mjs || bad "lite.mjs's UI_ASSET_TYPES is no longer static.mjs's ASSET_TYPES — two lists would drift"
+  MEASURED="css json mjs woff2 "
+  [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: static.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
   GZ=0
   while IFS= read -r f; do
     GZ=$((GZ + $(gzip -9 -c "$f" | wc -c)))
-  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' \))
+  done < <(find infra/dashboard/app -type f \( -name '*.mjs' -o -name '*.css' -o -name '*.woff2' -o -name '*.json' \))
   # Raised from 76800B (75 KiB) for the 44:5 redesign's two variable webfonts, and derived
   # rather than guessed: 75 KiB of CODE budget — exactly what the original ceiling allowed,
   # unchanged — plus 80 KiB for the fonts, which measured 79709B gzipped and are a fixed

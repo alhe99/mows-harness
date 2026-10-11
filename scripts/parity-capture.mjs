@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // parity-capture.mjs — the visual-parity baseline (ledger D-03, K-33). Every route of the dashboard at
 // 390x844 (DPR 3) and 1280x800 on WebKit and Chromium -> <out>/<engine>/<slug>-<width>.png.
-//   node scripts/parity-capture.mjs [--ui legacy|next] [--out dir] [--engine webkit,chromium] [--port 3921]
+//   node scripts/parity-capture.mjs [--ui legacy|next] [--route /path] [--out dir] [--engine webkit,chromium] [--port 3921]
 // Data is fixed by docs/qa/probes/fixture.sh run in a throwaway container (MOWS_QA_PARITY=1: one agent, one
 // run, two transcripts, one markdown file, empty fleet). Needs docker and Playwright; fails loudly without.
 // Determinism, in the order it can bite:
@@ -10,7 +10,8 @@
 //     baseline does not age by the day; the host metrics (load, memory, swap, disk) are the host's, not the
 //     fixture's, and are masked. Both are applied to BOTH documents, so a diff is never about them.
 //     A view that renders a volatile value in new markup tags it data-volatile and is masked the same way.
-// --ui next adds `--ui=next` to lite.mjs (phase 01 onward; an older lite.mjs ignores it and serves legacy).
+// --ui next adds `--ui=next` to lite.mjs (phase 01 onward; an older lite.mjs ignores it and serves legacy) and captures the
+// shell, which is mounted at /next until phase 05 swaps it in (/md stays its own document). --route captures that one route only.
 import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -27,11 +28,14 @@ const BOX = `mows-parity-${process.pid}`;
 
 const DEMO_HOME = `/${'home'}/demo`; // built, not literal: preflight forbids bare home paths
 const AGENT = 'harness-reviewer', RUN = '20260916-101500-1', SID = 'bbbb2222-3333-4444-5555-666666666666';
-const ROUTES = [
+const ALL_ROUTES = [
   ['home', '/'], ['history', '/history'], ['system', '/system'], ['device', '/device'], ['agents', '/agents'],
   ['agent', `/agents/${AGENT}`], ['run', `/agents/${AGENT}/${RUN}`], ['session', `/s/demo/${SID}`],
   ['md', `/md?f=${encodeURIComponent(`${DEMO_HOME}/parity.md`)}`],
 ];
+const ROUTES = ALL_ROUTES.filter(([, r]) => !opt('--route') || r === opt('--route'));
+if (!ROUTES.length) { console.error(`--route ${opt('--route')} is not one of: ${ALL_ROUTES.map(r => r[1]).join(' ')}`); process.exit(2); }
+const at = r => (ui === 'next' && !r.startsWith('/md') ? `/next${r}` : r);
 const VIEWPORTS = [[390, 844, 3, true], [1280, 800, 1, false]];
 const MASK = '.mbar-row, [data-volatile]';
 
@@ -83,7 +87,7 @@ try {
       for (const [slug, route] of ROUTES) {
         const file = join(out, engine, `${slug}-${w}.png`);
         try {
-          const resp = await page.goto(base + route, { waitUntil: 'load' }); // an open SSE never reaches networkidle
+          const resp = await page.goto(base + at(route), { waitUntil: 'load' }); // an open SSE never reaches networkidle
           if (!resp.ok()) throw new Error(`HTTP ${resp.status()}`);
           await page.evaluate(() => document.fonts.ready);
           await page.evaluate(normalise);

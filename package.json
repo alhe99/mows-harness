@@ -4,10 +4,22 @@
   "description": "Off-server build and QA tooling only. The dashboard server imports node: builtins and nothing from here.",
   "type": "module",
   "engines": { "node": ">=22.15" },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "2.11.3",
+    "esbuild": "0.28.2",
+    "marked": "14.1.3",
+    "preact": "11.0.1",
+    "preact-iso": "2.12.2"
+  },
   "devDependencies": {
+    "@types/node": "26.6.5",
     "lighthouse": "13.5.0",
     "pixelmatch": "7.1.0",
     "playwright": "1.58.0",
-    "pngjs": "7.0.0"
+    "pngjs": "7.0.0",
+    "typescript": "5.9.3"
   }
 }

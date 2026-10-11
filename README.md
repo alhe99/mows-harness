@@ -369,8 +369,9 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    `{{...}}` placeholder survives in anything root will execute.
 5. **Install and enable, in order** — caddy → oauth2-proxy → dashboard → web terminal →
    transcript prune timer (`claude-transcript-prune.timer`). The sudoers file goes in via
-   `visudo -cf` validation, mode `0440`. The dashboard step is **four artifacts** — `lite.mjs`,
-   `chat-stream.mjs`, `capability.mjs` and the whole `app/` tree — plus a unit restart;
+   `visudo -cf` validation, mode `0440`. The dashboard step is **five artifacts** — `lite.mjs`,
+   `chat-stream.mjs`, `capability.mjs`, `static.mjs`, and the whole `app/` and `dist/` trees (`scripts/deploy-dashboard.sh`
+   installs them) — plus a unit restart;
    `./install.sh --infra` prints the exact lines, and "Deploying this change" in
    [`docs/architecture.md`](docs/architecture.md) says what each way of splitting them looks
    like when it goes wrong.
@@ -472,8 +473,8 @@ flowchart TB
   orphaned-MCP reaping, usage-limit auto-continue, OS patch-health monitoring, boot logging.
 - **`infra/`** — templates for the public surface: Caddy (TLS + reverse proxy), oauth2-proxy
   (Google-gated auth), the zero-dependency **mows control** dashboard — PWA-installable,
-  no build step, Node stdlib only: `lite.mjs` (plus `chat-stream.mjs` and `capability.mjs`,
-  which it imports) serves the server-rendered Sessions / History / System / Device / Agents
+  no build step, Node stdlib only: `lite.mjs` (plus `chat-stream.mjs`, `capability.mjs` and `static.mjs`,
+  which it imports; `dist/` is the committed build of the `/next` shell) serves the server-rendered Sessions / History / System / Device / Agents
   views above with live SSE updates and a pane-content session classifier, **and** the
   client-rendered app at `/ui`: `/ui/agents`, `/ui/agents/<name>` (capability panel + streaming
   chat) and `/ui/agents/<name>/<run_id>`, built on `GET /api/*`, one multiplexed `GET /stream`

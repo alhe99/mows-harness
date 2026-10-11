@@ -45,8 +45,8 @@
 // unrelated server-rendered page -- the one direction D3 exists to police, and the one the
 // static gate is blind to. Splitting the CSS is the real fix and is not this branch's; until
 // then the served document is measured rather than assumed.
-// DEPLOY NOTE: this file is no longer self-contained. It imports ./chat-stream.mjs
-// and ./capability.mjs at load, and serves ./app/ at runtime — install all of them
+// DEPLOY NOTE: this file is no longer self-contained. It imports ./chat-stream.mjs, ./capability.mjs
+// and ./static.mjs at load, and serves ./app/ and ./dist/ (the /next shell's build) at runtime — install all of them
 // together or the unit will not start (missing sibling) or /ui will answer 200 with
 // a blank page (missing app/). See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
@@ -59,6 +59,7 @@ import os from 'node:os';
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { wireChatStream } from './chat-stream.mjs';
 import { agentCapability } from './capability.mjs';
+import { ASSET_TYPES, assetUrl, assetView } from './static.mjs';
 
 // ---------- same-origin guard for mutating POST routes (action/delSession/watchAction) ----------
 function sameOrigin(req, host) {           // exact host match; substring checks are bypassable
@@ -2416,22 +2417,22 @@ async function mdView(req, res, url) {
 // The SPA design (§6) shipped both models and deferred this flip until the app was proven; it
 // is — probes in both engines, live turns, memory. /agents/<name> stays reachable by URL and as
 // the <noscript> twin.
-function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/ui/agents') {
+function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/ui/agents', base = '') {
   const pnav = `<nav class="pnav">
-<a class="${tab === 'sessions' ? 'on' : ''}" href="/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
-<a class="${tab === 'history' ? 'on' : ''}" href="/history">History</a>
-<a class="${tab === 'system' ? 'on' : ''}" href="/system">System</a>
-<a class="${tab === 'device' ? 'on' : ''}" href="/device">Device</a>
+<a class="${tab === 'sessions' ? 'on' : ''}" href="${base}/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
+<a class="${tab === 'history' ? 'on' : ''}" href="${base}/history">History</a>
+<a class="${tab === 'system' ? 'on' : ''}" href="${base}/system">System</a>
+<a class="${tab === 'device' ? 'on' : ''}" href="${base}/device">Device</a>
 <a class="${tab === 'agents' ? 'on' : ''}" href="${agentsHref}">Agents</a></nav>`;
   const hdr = `<header class="hdr navdup">
 <div class="hdl"><span class="hlogo" aria-hidden="true">&gt;_</span><div class="hcol"><div class="htitle">mows control</div><div class="hsub">Connected · ${esc(host || os.hostname())}</div></div></div>
 ${pnav}
 <a class="hnew" href="${termHref('menu', '')}">${ICO.plus}<span class="hnew-lbl">New Session</span></a></header>`;
   const tabs = `<nav class="tabs">
-<a class="tb${tab === 'sessions' ? ' on' : ''}" href="/"><span class="ti">${ICO.list}</span>Sessions</a>
-<a class="tb${tab === 'history' ? ' on' : ''}" href="/history"><span class="ti">${ICO.history}</span>History</a>
-<a class="tb${tab === 'system' ? ' on' : ''}" href="/system"><span class="ti">${ICO.activity}</span>System</a>
-<a class="tb${tab === 'device' ? ' on' : ''}" href="/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
+<a class="tb${tab === 'sessions' ? ' on' : ''}" href="${base}/"><span class="ti">${ICO.list}</span>Sessions</a>
+<a class="tb${tab === 'history' ? ' on' : ''}" href="${base}/history"><span class="ti">${ICO.history}</span>History</a>
+<a class="tb${tab === 'system' ? ' on' : ''}" href="${base}/system"><span class="ti">${ICO.activity}</span>System</a>
+<a class="tb${tab === 'device' ? ' on' : ''}" href="${base}/device"><span class="ti">${ICO.monitorSmartphone}</span>Device</a>
 <a class="tb${tab === 'agents' ? ' on' : ''}" href="${agentsHref}"><span class="ti">${ICO.wrench}</span>Agents</a></nav>`;
   // terminal is an ACTION (opens the ttyd session picker), not a content page — kept as a
   // persistent floating utility button (every tab, every width) instead of a nav tab of its
@@ -2441,18 +2442,21 @@ ${pnav}
   return { hdr, tabs, termFab };
 }
 
-function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
-  const { hdr, tabs, termFab } = pageChrome(tab, liveN, host);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+// head metas and footer shared by page() and the /next shell, so the manifest link, icons and PWA metas cannot drift apart (K-20)
+const DOC_META = `<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark"><meta name="theme-color" content="#09090b">
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">${head}
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`;
+const footerHtml = () => `<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>`;
+function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
+  const { hdr, tabs, termFab } = pageChrome(tab, liveN, host);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+${DOC_META}${head}
 <script type="speculationrules">{"prerender":[{"where":{"and":[{"href_matches":["/","/?*","/history","/history?*","/system","/device","/s/*","/agents","/agents?*","/agents/*"]},{"not":{"selector_matches":"a[href*='fresh=1'],a[href*='reclaim=1'],a[data-norun],a[href^='/ui']"}}]},"eagerness":"moderate"}]}</script>
 <title>${esc(title)}</title><style>${cssText()}</style></head><body class="${bodyClass}">${hdr}${termFab}${body}
-${tabs}<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>
+${tabs}${footerHtml()}
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js');
 /* a POST-redirect-GET action shows its work while it runs (docker prune can take 8 s); bfcache restore clears it */
 document.addEventListener('submit',function(e){e.target.classList.add('busy')});
@@ -2735,15 +2739,28 @@ function fleetEventPayload(fleet) {
   return fleet.map(f => ({ sid8: fleetKey(f), name: f.name, label: f.label || '', proj: f.proj,
                             state: f.state, rel: f.mt, snippet: f.snippet }));
 }
-// this box already runs hot (spec §3). PER ENDPOINT, not per box, and the difference matters to
-// anyone tuning it: two independent counters read this constant -- sseClients for /events (the
-// server-rendered pages' feed) and streamClients.size for /stream (the SPA's) -- so the box admits
-// 8 of each, 16 in total, and the 9th client of EITHER kind gets a 503. That split is ruling D4
-// and is deliberate: during the §6 migration both navigation models run at once, and a shared
-// counter would let a few server-rendered tabs lock the SPA out of its own stream. The comment
-// used to say "9th concurrent client gets 503" full stop, which was true when there was one
-// counter and false from Task 3 onward (final review, L2).
+// The additive /stream topics (contract.d.ts UsageEvent, SystemEvent): projections of usage() and hostInfo(), nothing new is
+// computed. usage() is null until the first background collection lands (nothing is sent until then). The claude version is
+// refreshed in the background and read from its cache, so a missing `claude` binary can never delay a tick.
+const usageEvent = () => {
+  const u = usage();
+  return u && { quota: u.quota, thr: u.thr, accts: Object.fromEntries(Object.entries(u.accts).map(([k, a]) =>
+    [k, { id: a.id, label: a.label, today: a.today, week: a.week, month: a.month, block: a.block, tokExp: a.tokExp }])) };
+};
+let verBusy = false;
+function systemEvent() {
+  if (!verBusy && Date.now() - verCache.t > 300e3) { verBusy = true; claudeVersion().finally(() => { verBusy = false; }); }
+  return { ...hostInfo(), version: verCache.v };
+}
+// this box already runs hot (spec §3). PER ENDPOINT, not per box: two independent counters, sseClients for /events (the
+// server-rendered pages' feed, capped by SSE_MAX) and streamClients.size for /stream (the SPA's, capped by STREAM_MAX_CLIENTS),
+// so the 9th /events client or the 17th /stream client gets a 503. That split is ruling D4 and is deliberate: both navigation
+// models run at once, and a shared counter would let a few server-rendered tabs lock the SPA out of its own stream.
+// /stream was 8 until the cockpit shell (K-17, ARCHITECTURE section 3): one connection per tab, and the shell, an agent tab
+// or two and a phone fit in 16; RSS at that count is what e2e-infra's 150 MB ceiling watches. /events stays 8 (K-13).
+// scripts/stream-cap-check.mjs reads both constants by name.
 const SSE_MAX = 8;
+const STREAM_MAX_CLIENTS = 16;
 let sseClients = 0;
 async function eventsView(req, res) {
   if (sseClients >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many /events clients'); }
@@ -2825,7 +2842,7 @@ function chatEnd(agent, turn, summary) {
   streamSend('chatend', { agent, turn, ...summary }, `chat:${agent}`);
 }
 async function streamView(req, res) {
-  if (streamClients.size >= SSE_MAX) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many stream clients'); }
+  if (streamClients.size >= STREAM_MAX_CLIENTS) { res.writeHead(503, { 'retry-after': '30' }); return res.end('too many stream clients'); }
   const url = new URL(req.url, 'http://x');
   const topics = new Set((url.searchParams.get('topics') || 'fleet').split(',').map(s => s.trim()).filter(Boolean));
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
@@ -2844,7 +2861,9 @@ async function streamView(req, res) {
   req.on('aborted', cleanup); req.on('close', cleanup); res.on('close', cleanup);
 
   // Replay: EventSource resends Last-Event-ID on reconnect. Replay only the in-flight turn.
-  const last = req.headers['last-event-id'];
+  // a client that opened a NEW EventSource (reconnect after CLOSED, or after a long hidden spell) cannot set the header, so
+  // web/store.mjs sends the same value as ?lastEventId=; replay is gated on the topic check below either way
+  const last = req.headers['last-event-id'] || url.searchParams.get('lastEventId');
   if (last) {
     const [agent, turnS, seqS] = String(last).split(':');
     // Gate replay on the SAME topic check the live path uses. streamSend() enforces this for
@@ -2861,9 +2880,16 @@ async function streamView(req, res) {
   }
 
   let lastFleet = '', lastAgents = '';
+  const sent = {};
+  const push = (ev, data) => { // usage and system: sent when they change, never as an empty first event
+    const pl = data == null ? null : JSON.stringify(data);
+    if (pl != null && pl !== sent[ev]) { sent[ev] = pl; streamWrite(c, ev, data); }
+  };
   const tick = async () => {
     if (done) return;
     try {
+      if (topics.has('system')) push('system', systemEvent()); // synchronous, so it goes out ahead of the slower fleet scan
+      if (topics.has('usage')) push('usage', usageEvent());
       if (topics.has('fleet')) {
         const pl = JSON.stringify(fleetEventPayload(await fleetState()));
         if (pl !== lastFleet) { lastFleet = pl; streamWrite(c, 'fleet', JSON.parse(pl)); }
@@ -3172,9 +3198,9 @@ function pager(base, params, cur, max, extra = '') {
 <span class="pgnum"><span class="cur">${cur}</span><span class="muted">/ ${max}</span></span>${extra}
 ${link(cur + 1, ICO.chevronRight, 'next page')}${link(max, ICO.chevronsRight, 'last page')}</nav>`;
 }
-async function listView(req, res, url) {
-  freshen();
-  const sub = (req.headers.host || '').split('.')[0];
+// the filter + page of /history, shared by listView and the /next shell's boot snapshot so the two can never disagree
+async function historyQuery(url, host) {
+  const sub = (host || '').split('.')[0];
   const acct = url.searchParams.get('acct') || HOST_ACCT[sub] || '';
   const q = (url.searchParams.get('q') || '').toLowerCase().slice(0, 80);
   const d = url.searchParams.get('d') || '';
@@ -3192,6 +3218,11 @@ async function listView(req, res, url) {
   const cur = Math.min(max, Math.max(1, +(url.searchParams.get('page') || 1) || 1));
   const slice = rows.slice((cur - 1) * PAGE, cur * PAGE);
   const titles = await Promise.all(slice.map(titleOf));
+  return { sub, acct, q, d, s, live, liveBySid, rows, max, cur, slice, titles };
+}
+async function listView(req, res, url) {
+  freshen();
+  const { sub, acct, q, d, s, live, liveBySid, rows, max, cur, slice, titles } = await historyQuery(url, req.headers.host);
   const P = { acct, q, d, s };
   const back = url.pathname + url.search;
 
@@ -3719,11 +3750,7 @@ function uiAssetName(rel, buf) {
 // No svg entry, deliberately: the 44:5 icons are lucide glyphs that ICO already inlines as
 // currentColor SVG, so nothing needs serving as a file. Adding an extension "for later" makes
 // app/ a route surface for anything that lands in it.
-const UI_ASSET_TYPES = {
-  mjs: 'text/javascript; charset=utf-8',
-  css: 'text/css; charset=utf-8',
-  woff2: 'font/woff2',
-};
+const UI_ASSET_TYPES = ASSET_TYPES; // one list for app/ and dist/, owned by static.mjs
 async function loadUiAssets() {
   uiAssets.clear();
   const walk = async d => {
@@ -3795,10 +3822,10 @@ const cssText = () => (cssCache ??= CSS
 // The nonce is minted per RESPONSE, not per process: a constant nonce is worth roughly nothing,
 // since an attacker who can inject markup can also copy it out of the page. send() sets
 // cache-control: no-cache, so a stored copy is revalidated rather than replayed with a stale one.
-const uiCsp = nonce => [
+const uiCsp = (nonce, styleSelf = '') => [
   "default-src 'none'",
   `script-src 'self' 'nonce-${nonce}'`,
-  `style-src 'nonce-${nonce}'`,
+  `style-src ${styleSelf}'nonce-${nonce}'`, // the /next shell adds 'self' for its linked stylesheet; /ui inlines its CSS
   "img-src 'self' data: https:",
   "font-src 'self'",
   "connect-src 'self'",
@@ -3884,6 +3911,49 @@ async function uiAssetView(req, res, name) {
   res.end(a.buf);
 }
 
+// ---------- /next: the cockpit shell (cockpit phase 01) ----------
+// One document for every route of the rebuilt UI, served beside the current one until phase 05 swaps them. The chrome is the
+// SAME pageChrome() markup as every other page (hrefs prefixed with NEXT_BASE); the view, the tab state and the stream are the
+// client's (web/main.mjs, web/store.mjs, built into dist/ and served by static.mjs). The first paint carries data (K-07): the
+// BootSnapshot for the route is inlined, so LCP needs no fetch and no SSE round trip.
+const NEXT_BASE = '/next';
+const agentItem = a => ({ name: a.name, state: a.last?.state ?? null, last_event_at: a.last?.last_event_at ?? null, total: a.total, cost7d: a.cost7d });
+async function nextBoot(req, url, route) {
+  freshen();
+  const fleet = fleetEventPayload(await fleetState());
+  const host = req.headers.host || '';
+  const boot = { route, fleet, live: fleet.length, indexed: index.length, host: host || os.hostname() };
+  if (route.startsWith('/agents')) boot.agents = (await agentsIndex()).map(agentItem);
+  if (route === '/history') {
+    const { rows, cur, max, slice, titles, liveBySid } = await historyQuery(url, host);
+    boot.history = { page: cur, pages: max, total: rows.length,
+      rows: slice.map((e, i) => ({ a: e.a, sid: e.sid, sid8: e.sid.slice(0, 8), proj: e.proj, mt: e.mt, sz: e.sz, title: titles[i].title ?? null,
+        live: liveBySid.has(e.sid.slice(0, 8)), canResume: canResume(e.mt, liveBySid.has(e.sid.slice(0, 8))), acctColor: BY_ID[e.a].color })),
+      accts: ACCTS.map(a => ({ id: a.id, label: a.label, color: a.color, n: counts[a.id] || 0 })) };
+  }
+  if (route === '/system') boot.system = { ...hostInfo(), version: await claudeVersion(), usage: usageEvent() };
+  return boot;
+}
+async function nextView(req, res, url, p) {
+  const route = p.slice(NEXT_BASE.length).replace(/\/+$/, '') || '/';
+  const boot = await nextBoot(req, url, route);
+  const nonce = randomBytes(16).toString('base64url');
+  const tab = route === '/' ? 'sessions' : (/^\/(history|system|device|agents)(\/|$)/.exec(route) || [])[1] || '';
+  const { hdr, tabs, termFab } = pageChrome(tab, boot.live, boot.host, NEXT_BASE + '/agents', NEXT_BASE);
+  const asset = (stem, ext) => assetUrl(stem, ext) || '/assets/missing-build';
+  // '</' and U+2028/9 cannot end the JSON data block early, whatever a session label or snippet holds
+  const json = JSON.stringify(boot).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  send(req, res, 200, `<!doctype html><html lang="en" data-base="${NEXT_BASE}"><head><meta charset="utf-8">
+${DOC_META}
+<link rel="stylesheet" href="${asset('tokens', 'css')}">
+<title>mows control</title></head><body>${hdr}${termFab}
+<div id="app"></div>
+${tabs}${footerHtml()}
+<script type="application/json" id="boot" nonce="${nonce}">${json}</script>
+<script type="module" nonce="${nonce}" src="${asset('main', 'mjs')}"></script>
+</body></html>`, 'text/html; charset=utf-8', { 'content-security-policy': uiCsp(nonce, "'self' ") });
+}
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
@@ -3894,6 +3964,8 @@ const server = http.createServer(async (req, res) => {
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
     if (p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
+    if (p.startsWith('/assets/')) return await assetView(req, res, p.slice(8));
+    if (p === NEXT_BASE || p.startsWith(NEXT_BASE + '/')) return await nextView(req, res, url, p);
     if (p === '/ui' || p.startsWith('/ui/')) return await uiView(req, res, p);
     if (p === '/events') return await eventsView(req, res);
     if (p === '/stream') return await streamView(req, res);

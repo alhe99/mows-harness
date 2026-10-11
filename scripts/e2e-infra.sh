@@ -154,6 +154,9 @@ chk "api: bad name -> 404"              '[ "$(curl -s -o /dev/null -w "%{http_co
 chk "api: content-type is json"         'curl -sI http://127.0.0.1:3005/api/agents | grep -qi "content-type: application/json"'
 chk "stream: emits fleet on connect"   'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 400 | grep -q "event: fleet"'
 chk "stream: heartbeat or data, never silence" 'timeout 30 curl -sN "http://127.0.0.1:3005/stream?topics=fleet" | head -c 200 | grep -qE "event:|: hb"'
+chk "stream: the additive system topic emits on connect (K-13)" 'timeout 6 curl -sN "http://127.0.0.1:3005/stream?topics=system" | head -c 400 | grep -q "event: system"'
+chk "shell: /next serves the boot snapshot and a hashed tokens stylesheet from dist/" \
+  'curl -s http://127.0.0.1:3005/next/ | grep -q "id=\"boot\"" && curl -s http://127.0.0.1:3005/next/ | grep -qE "/assets/tokens\.[A-Za-z0-9_-]+\.css"'
 # --max-time, NOT `timeout`. An SSE response never ends, so the curl has to be cut short either
 # way — but `timeout` cuts it short with SIGTERM from outside, and a SIGTERMed curl dies before
 # it ever emits --write-out. The command substitution therefore expanded to the empty string and
@@ -166,8 +169,8 @@ chk "stream: heartbeat or data, never silence" 'timeout 30 curl -sN "http://127.
 chk "stream: unknown topic is ignored, not fatal" '[ "$(curl -sN --max-time 3 -o /dev/null -w "%{http_code}" "http://127.0.0.1:3005/stream?topics=nonsense")" = 200 ]'
 # This was `true  # exercised by the node harness in Task 3 step 5` — a check whose body is the
 # `true` builtin passes unconditionally and proves nothing, and the delegation it claimed was not
-# real: stream-replay-check.mjs never touched SSE_MAX. Now delegated for real, to a harness that
-# needs a client the shell cannot express (SSE_MAX+1 simultaneous live connections, then a
+# real: stream-replay-check.mjs never touched the cap. Now delegated for real, to a harness that
+# needs a client the shell cannot express (STREAM_MAX_CLIENTS+1 simultaneous live connections, then a
 # deterministic teardown so the slots are free again for everything below).
 chk "stream: over cap -> 503"          'PORT=3005 node /r/scripts/stream-cap-check.mjs'
 # PORT=3005: the harness defaults to 3105 and the dashboard here is on 3005, so unfixed it
@@ -238,7 +241,7 @@ chk "dashboard: /ui document <= 20480B at gzip -9 (spec D3, the half 5b cannot s
 # That allowlist is a list people widen (it already grew /agents, /agents?* and /agents/* once),
 # and the first broader pattern added would silently re-enable prerendering of an app route. A
 # prerender runs the page's scripts, so that means a whole second copy of the SPA and a second
-# EventSource on /stream, against a cap of SSE_MAX=8, for a tap that may never come.
+# EventSource on /stream, against a cap of STREAM_MAX_CLIENTS=16, for a tap that may never come.
 # Asserted against the SERVED html, not the source. Proved able to fail: deleting a[href^='/ui']
 # from the selector and re-serving the page turns this red.
 chk "dashboard: speculation rules exclude /ui" \
