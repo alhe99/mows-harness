@@ -246,6 +246,20 @@ else
   bad "scripts/chat-view-check.mjs is missing — the chat view's XSS gate did NOT run"
 fi
 
+# 5c-bis. The fleet classifier against real pane tails, phone-width ones included (2026-10-11: the truncated
+# status lines left a session on idle forever, so the needs-you push never fired). Pure function, no server needed.
+if [ -f scripts/fleet-classify-check.mjs ]; then
+  FCOUT=$(node scripts/fleet-classify-check.mjs 2>&1) && FCRC=0 || FCRC=$?
+  if [ "$FCRC" -ne 0 ]; then
+    printf '%s\n' "$FCOUT" | grep '^FAIL' || printf '%s\n' "$FCOUT" | tail -5
+    bad "fleet-classify-check: a pane tail classifies wrong (see above)"
+  else
+    note "fleet-classify-check: $(printf '%s\n' "$FCOUT" | grep -c '^PASS' || true) assertions pass"
+  fi
+else
+  bad "scripts/fleet-classify-check.mjs is missing — the fleet classifier gate did NOT run"
+fi
+
 # 5d. The capability panel's honesty gate (Task 8). Wired here for the same reason 5c is: ci.yml
 # runs this script and nothing else, so a gate that is not called from here is a gate that only
 # runs when a human remembers to type the command. It FAILS rather than skips when it cannot run —

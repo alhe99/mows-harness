@@ -328,10 +328,12 @@ const FLEET_RE = {
   // a permission/confirmation dialog waiting on the user, or a numbered-option list
   // (its selected row is prefixed with the "❯" cursor glyph)
   dialog: /Do you want\b|❯\s*\d+[.)]/,
-  // the idle input box's footer hint — only rendered when nothing is running
-  idlePrompt: /\?\s*for shortcuts/,
-  // actively streaming a reply or running a tool
-  working: /esc to interrupt/i,
+  // the idle input box's footer hint, or the always-on status footer (auto mode) — the latter also shows while working,
+  // so classifyFleet pairs it with !working. Narrow (phone) panes truncate both lines with an ellipsis: match the head.
+  idlePrompt: /\?\s*for shortcuts|shift\+tab to cycle|auto mode on/,
+  // actively streaming a reply or running a tool: the hint, or the spinner line "✶ Wandering… (36s · ↓ 1.6k tokens)" —
+  // on a phone-width pane the hint is cut off and only the spinner survives (2026-10-11: ccw-alonso never left idle, no push)
+  working: /esc to interrupt|…\s*\(\d+s\b/i,
   // a background Workflow-tool monitor screen (superpowers workflow-authoring) replaces
   // the normal prompt entirely while agents run — no "esc to interrupt" ever appears here,
   // but its own footer/banner are just as stable a busy-signal. Bug 2026-08-28: a live
