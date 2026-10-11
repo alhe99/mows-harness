@@ -91,7 +91,10 @@
     }
 }
 
-# --- /events (Fleet Redesign §3, SSE fleet stream): must reach the browser unbuffered.
+# --- /events (Fleet Redesign §3, SSE fleet stream) and /stream (the one multiplexed SSE per tab,
+# topics=fleet,agents,chat,...): both must reach the browser unbuffered. /stream used to ride the catch-all
+# handle, which neither flushes nor skips `encode` (ledger B-05, K-16; e2e-infra.sh checks the first
+# event arrives through Caddy within 3 s).
 # flush_interval -1 tells reverse_proxy to flush the upstream's own writes straight through
 # instead of coalescing on Caddy's default timer — lite.mjs already paces writes itself
 # (only on a real diff, or the 25s heartbeat), so nothing here should batch further.
@@ -101,7 +104,8 @@
 # `encode` wraps the whole site ahead of `route`. Import this BEFORE the catch-all dashboard
 # handle in every site block that proxies to the dashboard. ---
 (sse) {
-    handle /events {
+    @sse path /events /stream
+    handle @sse {
         reverse_proxy 127.0.0.1:3005 {
             flush_interval -1
         }
@@ -116,10 +120,10 @@
             roll_keep 3
         }
     }
-    # @nosse: encode wraps the whole site ahead of `route`, so excluding /events here
+    # @nosse: encode wraps the whole site ahead of `route`, so excluding /events and /stream here
     # (rather than inside the sse snippet's own handle) is the only way to keep this
     # stream out of gzip/zstd's buffering — see the (sse) snippet's comment above.
-    @nosse not path /events
+    @nosse not path /events /stream
     encode @nosse zstd gzip
     route {
         import pwa
@@ -160,7 +164,7 @@
 # upstream — only the hostname differs, so Caddy requests one certificate per label. ---
 {{EXAMPLE_SUB}}.{{DOMAIN}} {
     log
-    @nosse not path /events
+    @nosse not path /events /stream
     encode @nosse zstd gzip
     route {
         import pwa

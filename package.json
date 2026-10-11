@@ -1,0 +1,13 @@
+{
+  "name": "mows-harness-tooling",
+  "private": true,
+  "description": "Off-server build and QA tooling only. The dashboard server imports node: builtins and nothing from here.",
+  "type": "module",
+  "engines": { "node": ">=22.15" },
+  "devDependencies": {
+    "lighthouse": "13.5.0",
+    "pixelmatch": "7.1.0",
+    "playwright": "1.58.0",
+    "pngjs": "7.0.0"
+  }
+}

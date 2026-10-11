@@ -7,11 +7,37 @@ fail=0; note(){ echo "preflight: $*"; }; bad(){ echo "preflight FAIL: $*"; fail=
 # 1. manifest completeness (both directions)
 TREE=$(mktemp) MANI=$(mktemp)
 trap 'rm -f "$TREE" "$MANI"' EXIT
-git ls-files | sort > "$TREE"
+# dist/ is committed build output (ARCHITECTURE section 1): it is ONE manifest line, "dist/", whose contents are
+# verified against dist/manifest.json below (check 1b) instead of being listed file by file (K-25, G-13).
+git ls-files | sed -E 's#^dist/.*#dist/#' | sort -u > "$TREE"
 if ! grep -v '^\s*#' scripts/manifest.txt 2>/dev/null | grep -v '^\s*$' | sort > "$MANI"; then
   bad "manifest.txt missing or empty"
 fi
 diff -u "$MANI" "$TREE" || bad "tree and manifest.txt differ (see diff above)"
+
+# 1b. dist/ matches dist/manifest.json: every tracked file listed with its sha256, nothing listed that is not
+# tracked, no source maps. A hand-edited or half-rebuilt dist/ fails here; `node build.mjs` is the fix.
+if [ -n "$(git ls-files dist | head -1)" ]; then
+  if [ ! -f dist/manifest.json ]; then
+    bad "dist/ is tracked but dist/manifest.json is missing"
+  else
+    git ls-files dist | grep -E '\.map$' && bad "dist/ holds a source map (never committed)"
+    node -e '
+      const fs = require("fs"), cp = require("child_process"), crypto = require("crypto");
+      const files = JSON.parse(fs.readFileSync("dist/manifest.json", "utf8")).files || {};
+      const tracked = cp.execFileSync("git", ["ls-files", "dist"], { encoding: "utf8" }).split("\n").filter(Boolean)
+        .map(f => f.slice(5)).filter(f => f !== "manifest.json");
+      let bad = 0; const say = m => { console.log("preflight FAIL: dist/ " + m); bad = 1; };
+      for (const f of tracked) if (!(f in files)) say(f + " is tracked but not in manifest.json");
+      for (const [f, v] of Object.entries(files)) {
+        if (!tracked.includes(f)) { say(f + " is in manifest.json but not tracked"); continue; }
+        const want = typeof v === "string" ? v : v.sha256;
+        const got = crypto.createHash("sha256").update(fs.readFileSync("dist/" + f)).digest("hex");
+        if (got !== want) say(f + " sha256 differs from manifest.json");
+      }
+      process.exit(bad);' || bad "dist/ does not match dist/manifest.json (see above)"
+  fi
+fi
 
 # 2. no nested git repos / junk
 [ -z "$(find . -mindepth 2 -name .git)" ] || bad "nested .git found"
@@ -32,7 +58,9 @@ diff -u "$MANI" "$TREE" || bad "tree and manifest.txt differ (see diff above)"
 # you create it) so the gate keeps full strength on your box too — the public half was
 # only ever meant to catch shapes common to every deployment, not your specifics.
 PAT='ctx7sk-|ntn_|ghp_|github_pat_|sk-ant-|AKIA|mongodb\+srv://|client_secret=|/opt/homebrew|/Users/|/home/[A-Za-z0-9_-]+'
-if [ -f scripts/preflight-local.pat ]; then
+# PREFLIGHT_NO_LOCAL=1 skips the gitignored local pattern file, so the shipped gates can be run as a Verify
+# line (verify-spec.mjs) on a box where that file would also match this deployment's own agent examples.
+if [ -f scripts/preflight-local.pat ] && [ "${PREFLIGHT_NO_LOCAL:-}" != 1 ]; then
   LOCAL=$(grep -v '^\s*#' scripts/preflight-local.pat | grep -v '^\s*$' | paste -sd'|')
   [ -n "$LOCAL" ] && PAT="$PAT|$LOCAL"
 fi
@@ -102,9 +130,12 @@ if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | 
 BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
 # GitHub's synthetic PR merge commit ("Merge <sha> into <sha>", committer GitHub <noreply>) carries
 # the account's PUBLIC email as author — not a commit of ours, and not in the tree we publish. It is
-# skipped by that exact shape; every real commit, merge or not, is still checked.
+# skipped by that exact shape; every real commit, merge or not, is still checked. The same holds for the merge
+# commit GitHub writes when a PR is merged in the web UI ("Merge pull request #N from ...", committer GitHub
+# <noreply>): its author is the merging account's public email, it is already on origin, and no rewrite of ours
+# can remove it. Only that shape, only with GitHub as committer.
 if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
-   | grep -vE $'^noreply@github\\.com\tMerge [0-9a-f]{40} into [0-9a-f]{40}\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
+   | grep -vE $'^noreply@github\\.com\t(Merge [0-9a-f]{40} into [0-9a-f]{40}|Merge pull request #[0-9]+ from [^\t]+)\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
 # commit messages get the same forbidden-string treatment the tree gets
@@ -153,6 +184,10 @@ if [ -d infra/dashboard/app ]; then
 else
   bad "infra/dashboard/app missing — the client-asset ceiling and vendor-hash checks did not run (spec D3)"
 fi
+
+# 5c-e take UI_SRC (the client source under test): infra/dashboard/app now, web/ from phase 01 (K-26). The check and
+# coverage scripts read it from the environment.
+UI_SRC=${UI_SRC:-infra/dashboard/app}; export UI_SRC
 
 # 5c. The chat view's XSS / rendering regression gate (Task 7, findings C1 and R1).
 #
@@ -271,7 +306,7 @@ done
 # enforcement story that had quietly become false — the exact failure this task exists to prevent,
 # one level removed. Each pattern below is the line in agents/bin/mows-agent that makes one panel
 # sentence true; if a pattern goes missing, the sentence it supports has to change with it.
-if [ -f agents/bin/mows-agent ] && [ -f infra/dashboard/app/views/capability.mjs ]; then
+if [ -f agents/bin/mows-agent ] && [ -f "$UI_SRC/views/capability.mjs" ]; then
   # <pattern in mows-agent> | <the panel sentence it holds up>
   while IFS='|' read -r pat claim; do
     [ -z "$pat" ] && continue

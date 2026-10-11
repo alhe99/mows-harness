@@ -24,9 +24,11 @@ import { registerHooks } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const ROOT = new URL('../', pathToFileURL(import.meta.filename));
-const APP = new URL('infra/dashboard/app/', ROOT);
+// UI_SRC (repo-relative or absolute) names the client source under test: infra/dashboard/app now, web from phase 01 (K-26).
+const APP = pathToFileURL(resolve(import.meta.dirname, '..', process.env.UI_SRC || 'infra/dashboard/app') + '/');
 if (typeof registerHooks !== 'function') {
   console.error('FAIL: node:module.registerHooks is unavailable — this check needs Node >= 22.15');
   process.exit(1);

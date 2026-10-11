@@ -168,6 +168,19 @@ matching yet:
 
 Dependencies, log locations, and logrotate detail: [`watchdogs/SETUP.md`](../watchdogs/SETUP.md).
 
+## Specs and verification
+
+Use `templates/spec.md` when a change is big enough to need phases, owners and a verdict that is not an opinion: it
+fixes the front-matter (`gates`, `budgets`, `outward`, `manual_gates`, `dev_server`) and gives every task the same three
+sub-lines, **Evidence**, **Verify** (a shell command whose exit code is the answer) and **Owner**. Then run
+`node scripts/verify-spec.mjs <spec.md>`: it runs every Verify line from the repo root with `DASH` and `RUN` exported, logs
+the raw output and exit code per task under `$RUN/verify/`, and prints `VERDICT: ship` or `VERDICT: fix:[ids]`.
+`--dry-run` lists the commands, `--only 3,7` and `--owner builder|verifier` narrow the run. A requirement with no command
+that can fail is not a task; it goes in `manual_gates` with an owner and a date. The cockpit rebuild (`specs/cockpit/`)
+is the worked example, and its size, Lighthouse and parity gates (`scripts/budget.mjs`, `scripts/lh-gate.mjs`,
+`scripts/parity-diff.mjs`) are the first Verify lines that call tooling installed off the server (`npm install
+--ignore-scripts`; the server itself imports `node:` builtins only).
+
 ## Known operational caveats
 
 ### The tmux server owns the sessions — keep it out of ttyd's cgroup
@@ -464,7 +477,8 @@ more, and every way of getting this wrong is quiet in a different way. The whole
 | `infra/dashboard/app/` (whole tree) | `/opt/claude-dashboard/app/` | the client the shell loads |
 | `agents/bin/mows-agent`, `mows-agent-meta` | `~/.local/bin/` (`install.sh --agents`) | the CLI the dashboard **spawns by absolute path** |
 
-Install them together, in one go, and restart the unit:
+`scripts/deploy-dashboard.sh` does all of this (add `--dry-run` to print the commands): it installs every file that
+exists in the checkout, restarts `claude-dash-lite` and smokes `/healthz`. The manual form, for reference:
 
 ```sh
 sudo install -m644 infra/dashboard/lite.mjs infra/dashboard/chat-stream.mjs \

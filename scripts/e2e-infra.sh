@@ -416,6 +416,23 @@ chk "dashboard NOT reachable unauthenticated" '! curl -s http://127.0.0.1/ | gre
 chk "PWA statics bypass by design" '[ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/manifest.webmanifest)" = "200" ]'
 chk "open-redirect blocked"     '! curl -s -o /dev/null -w "%{redirect_url}" "http://127.0.0.1/oauth2/start?rd=https://evil.test" | grep -q "evil.test"'
 
+echo "### /stream through Caddy: flushed and out of encode (K-16)"
+# Why a second Caddy with the auth gate removed from a COPY: /stream sits behind gauth like every other route, and an
+# unauthenticated curl gets the 302 above, never an event. This measures streaming, not auth (the gate is proven above).
+# Own admin/http/https ports so it can sit beside the first instance.
+{ echo "{"; echo "  auto_https off"; echo "  admin 127.0.0.1:2020"; echo "  http_port 8082"; echo "  https_port 8443"; echo "}"
+  sed -e 's#^example\.test {#:8081 {#' -e '/^alpha\.example\.test {/,/^}/d' -e '/^ *import gauth$/d' rendered/Caddyfile; } > /tmp/Caddyfile.sse
+sed -i 's#/var/log/caddy#/tmp#' /tmp/Caddyfile.sse
+caddy start --config /tmp/Caddyfile.sse --adapter caddyfile >/tmp/caddy-sse.log 2>&1
+sleep 2
+# Observed: Caddy's own defaults already pass this with the pre-K-16 template (encode skips text/event-stream), so it
+# guards the behaviour, not the config line; the next check is the one that fails without the Caddyfile change.
+chk "stream: first /stream event arrives through Caddy within 3 s" \
+  'curl -sN --max-time 3 -H "Accept-Encoding: gzip, zstd" "http://127.0.0.1:8081/stream?topics=fleet" | head -c 300 | grep -q "event: fleet"'
+chk "stream: /stream is excluded from encode and flushed, in the sse snippet and the site blocks" \
+  '[ "$(grep -c "@nosse not path /events /stream" rendered/Caddyfile)" = 2 ] && grep -q "@sse path /events /stream" rendered/Caddyfile'
+caddy stop --address 127.0.0.1:2020 >/dev/null 2>&1
+
 echo "### the two resource facts a browser depends on and nothing else here measures"
 # HTTP/2 matters on the LIVE host, which is the only place a browser negotiates it. An || of two
 # weak local checks would pass vacuously — SKIP loudly instead of inventing a pass.

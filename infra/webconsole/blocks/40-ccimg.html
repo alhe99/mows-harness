@@ -1,4 +1,4 @@
-<script id="ccimg-js">/*ccimg-v1: attach an image to the claude session WITHOUT leaving the
+<script id="ccimg-js">/*ccimg-v2: attach an image to the claude session WITHOUT leaving the
 terminal. three ways in — the 📸 key (iOS photo library / camera picker), pasting a
 copied image, or desktop drag-drop. all POST to /shot (same-origin through caddy -> lite,
 auth cookie rides along); the server answers with the saved path and pst() types it into
@@ -11,11 +11,13 @@ var kb=document.getElementById('cckb'),btn=null,busy=false;
 function mark(s,revert){if(!btn)return;btn.textContent=s;
  if(revert)setTimeout(function(){btn.textContent='\ud83d\udcf8'},1800)}
 function up(f){if(!f||busy)return;busy=true;mark('\u231b');
- fetch('/shot',{method:'POST',body:f,headers:{'content-type':f.type||'image/jpeg'}})
+ /* ccimg-v2: any file, not just images — .md/.txt/.json/.pdf land on disk too and the
+    path is typed into the prompt; x-name lets the server keep the real filename+ext */
+ fetch('/shot',{method:'POST',body:f,headers:{'content-type':f.type||'application/octet-stream','x-name':encodeURIComponent(f.name||'')}})
  .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
  .then(function(j){busy=false;mark('\ud83d\udcf8');pst(j.path+' ')})
  .catch(function(){busy=false;mark('\u2717',1)})}
-if(kb){var inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+if(kb){var inp=document.createElement('input');inp.type='file';/* no accept: iOS then offers Photo Library, Camera AND Files */
  inp.style.cssText='position:fixed;left:-9999px;width:1px;height:1px';
  inp.addEventListener('change',function(){up(inp.files[0]);inp.value=''});
  document.body.appendChild(inp);
@@ -25,10 +27,10 @@ if(kb){var inp=document.createElement('input');inp.type='file';inp.accept='image
  btn.addEventListener('click',function(){inp.click()});
  kb.insertBefore(btn,kb.children[1]||null)}
 document.addEventListener('paste',function(e){var it=e.clipboardData&&e.clipboardData.items;if(!it)return;
- for(var i=0;i<it.length;i++)if(it[i].kind==='file'&&it[i].type.indexOf('image/')===0){
+ for(var i=0;i<it.length;i++)if(it[i].kind==='file'){
   e.preventDefault();e.stopImmediatePropagation();up(it[i].getAsFile());return}},true);
 document.addEventListener('dragover',function(e){e.preventDefault()});
 document.addEventListener('drop',function(e){e.preventDefault();
  var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
- if(f&&f.type.indexOf('image/')===0)up(f)});
+ if(f)up(f)});
 })()</script>

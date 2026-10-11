@@ -3945,7 +3945,11 @@ const server = http.createServer(async (req, res) => {
         } } catch {}
         const ct = req.headers['content-type'] || '';
         const ext = { 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[ct] || (ct.includes('png') ? 'png' : 'jpg');
-        const path = `${dir}/shot-${Date.now()}.${ext}`;
+        // ccimg-v2 sends the real filename (URL-encoded) in x-name so a .md/.pdf keeps its name and extension.
+        // Reduced to [A-Za-z0-9._-], no leading dot: nothing from the client can steer the path out of `dir`.
+        let xn = ''; try { xn = decodeURIComponent(req.headers['x-name'] || ''); } catch {}
+        xn = xn.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(-80);
+        const path = `${dir}/shot-${Date.now()}${xn ? '-' + xn : '.' + ext}`;
         await fsp.writeFile(path, Buffer.concat(chunks));
         // path goes back to the caller: the terminal's 📸 key pastes it into the prompt
         res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, path }));

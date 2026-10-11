@@ -19,9 +19,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const UI = path.resolve(ROOT, process.env.UI_SRC || 'infra/dashboard/app'); // K-26: same switch as the check it drives
 const FILES = {
   model: path.join(ROOT, 'infra/dashboard/capability.mjs'),
-  view: path.join(ROOT, 'infra/dashboard/app/views/capability.mjs'),
+  view: path.join(UI, 'views/capability.mjs'),
   check: path.join(ROOT, 'scripts/capability-check.mjs'),
   meta: path.join(ROOT, 'agents/bin/mows-agent-meta'),
   fixture: path.join(ROOT, 'scripts/fixtures/inherited-tools.json'),

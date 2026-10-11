@@ -26,10 +26,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const UI = path.resolve(ROOT, process.env.UI_SRC || 'infra/dashboard/app'); // K-26: same switch as the check it drives
 const FILES = {
-  view: path.join(ROOT, 'infra/dashboard/app/views/chat.mjs'),
+  view: path.join(UI, 'views/chat.mjs'),
   check: path.join(ROOT, 'scripts/chat-view-check.mjs'),
-  vendor: path.join(ROOT, 'infra/dashboard/app/vendor/marked.mjs'),
+  vendor: path.join(UI, 'vendor/marked.mjs'),
 };
 const CHECK = FILES.check;
 
