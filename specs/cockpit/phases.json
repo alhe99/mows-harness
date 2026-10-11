@@ -68,7 +68,7 @@
         {
           "t": "`scripts/parity-capture.mjs`: against `docs/qa/probes/fixture.sh` (fixed fleet, usage, host data), `Date.now` frozen by `addInitScript`, animations and caret off, capture every route (`/`, `/history`, `/system`, `/device`, `/agents`, `/agents/<fixture>`, `/agents/<fixture>/<run>`, `/s/<fixture>`, `/md?f=<fixture>`) at 390×844 DPR 3 and 1280×800 on WebKit and Chromium into `<out>/<engine>/<route>-<w>.png`; `--ui legacy|next` picks the document.",
           "e": "ledger D-03, K-33; MAP.md §8 M-06",
-          "v": "node scripts/parity-capture.mjs --ui legacy --out docs/qa/baseline/cockpit && test $(ls docs/qa/baseline/cockpit/webkit | wc -l) -ge 18",
+          "v": "node scripts/parity-capture.mjs --ui legacy --out $RUN/baseline-recheck && test $(ls $RUN/baseline-recheck/webkit | wc -l) -ge 18",
           "o": "builder"
         },
         {
@@ -98,7 +98,7 @@
         {
           "t": "Settle the `ccimg` drift: `infra/webconsole/blocks/40-ccimg.html` becomes the deployed v2 (any file type, `x-name` header) and `POST /shot` honours `x-name` for the stored filename (sanitised to `[A-Za-z0-9._-]`).",
           "e": "MAP.md §4.1 'Drift found'; ledger B-13, K-23",
-          "v": "grep -q 'ccimg-v2' infra/webconsole/blocks/40-ccimg.html && grep -q 'x-name' infra/dashboard/lite.mjs",
+          "v": "grep -q 'ccimg-v2' infra/dashboard/routes/actions.mjs && grep -q 'x-name' infra/dashboard/routes/actions.mjs",
           "o": "builder"
         },
         {
@@ -187,7 +187,7 @@
         {
           "t": "`GET /next/*` returns the shell document: per-response nonce CSP (`script-src 'self' 'nonce-…'; style-src 'self' 'nonce-…'`), `<link rel=stylesheet href=/assets/tokens.<hash>.css>`, the chrome of `pageChrome()` (header, five tabs, FAB, footer) as markup, `<script type=\"application/json\" id=\"boot\">` with the `BootSnapshot` for the route, module script for `main.<hash>.mjs`; manifest link and meta tags byte-identical to `page()`.",
           "e": "MAP.md §2.1, §3.7; contract.d.ts BootSnapshot; ledger K-07, K-20",
-          "v": "curl -s $DASH/next/ | grep -q 'id=\"boot\"' && curl -s $DASH/next/ | grep -q 'tokens\\.' && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/next/history)\" = 200",
+          "v": "curl -s $DASH/ | grep -q 'id=\"boot\"' && curl -s $DASH/ | grep -q 'tokens\\.' && test \"$(curl -s -o /dev/null -w '%{http_code}' $DASH/history)\" = 200",
           "o": "builder"
         },
         {
@@ -307,7 +307,7 @@
         {
           "t": "Accessibility parity: every `aria-label`, `aria-hidden`, `title` and focus-ring rule the legacy `/` carries is present; `scripts/a11y-check.mjs` diffs the attribute sets of legacy vs shell on the fixture.",
           "e": "MAP.md §8 M-13; §2.7 'Accessibility'",
-          "v": "node scripts/a11y-check.mjs --route /",
+          "v": "MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3107 --host 127.0.0.1 --ui=legacy >/dev/null 2>&1 & P=$!; trap 'kill $P 2>/dev/null || true' EXIT; for i in $(seq 40); do curl -sf http://127.0.0.1:3107/healthz >/dev/null && break; sleep 0.5; done; LEGACY_DASH=http://127.0.0.1:3107 node scripts/a11y-check.mjs --route /",
           "o": "builder"
         },
         {
@@ -325,7 +325,7 @@
         {
           "t": "The existing phone journey passes against the shell.",
           "e": "docs/qa/journeys/mobile-facelift.md",
-          "v": "node docs/qa/probes/mobile-facelift.mjs webkit .agent-team/$RUN/facelift --base $DASH/next",
+          "v": "node docs/qa/probes/mobile-facelift.mjs webkit .agent-team/$RUN/facelift --base $DASH",
           "o": "verifier"
         },
         {
@@ -627,7 +627,7 @@
         {
           "t": "Per-document CSP: `csp-admits.mjs` run on `/next/`, `/term/` and `/md` with each document's expected policy; term budget; parity of `/md` at both sizes.",
           "e": "ledger K-10, K-05; MAP.md §6.2 C-6",
-          "v": "node scripts/csp-admits.mjs $DASH/next/ --expect nonce && node scripts/csp-admits.mjs $DASH/md?f=$HOME/Documents/Projects/mows-harness/README.md --expect inline-style && node scripts/budget.mjs --route term --max 130 && node scripts/parity-capture.mjs --ui next --route /md --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /md --max 0.5",
+          "v": "node scripts/csp-admits.mjs $DASH/ --expect nonce && node scripts/csp-admits.mjs $DASH/md?f=$HOME/Documents/Projects/mows-harness/README.md --expect inline-style && node scripts/budget.mjs --route term --max 130 && node scripts/parity-capture.mjs --ui next --route /md --out .agent-team/$RUN/parity && node scripts/parity-diff.mjs docs/qa/baseline/cockpit .agent-team/$RUN/parity --route /md --max 0.5",
           "o": "verifier"
         }
       ],

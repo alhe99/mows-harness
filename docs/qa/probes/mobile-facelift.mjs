@@ -1,7 +1,7 @@
 // Journey docs/qa/journeys/mobile-facelift.md as a script. Exit code is the verdict.
 // usage: PLAYWRIGHT=~/.cache/mows-qa/node_modules/playwright/index.mjs node docs/qa/probes/mobile-facelift.mjs [webkit|chromium] <outdir> [--base URL]
-// --base defaults to the legacy dashboard. With --base <origin>/next the journey runs against the shell (phase 02a): the boot snapshot gets one
-// fixture session so step 3 has a card, and steps 4-5 (/system, /md: later phases) are SKIPped rather than silently passed.
+// --base defaults to 127.0.0.1:3005. The journey runs against the shell: the boot snapshot gets one fixture session so step 3 has a card
+// (pass --legacy for a dashboard started with --ui=legacy).
 // Journey steps 1-7 of docs/qa/journeys/mobile-facelift.md; the PNGs it writes are the visual-parity baseline for the cockpit rebuild.
 import { mkdirSync, writeFileSync } from 'node:fs';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright');
@@ -9,7 +9,7 @@ const engine = process.argv[2] || 'webkit', out = process.argv[3] || '.';
 mkdirSync(out, { recursive: true });
 const bi = process.argv.indexOf('--base');
 const base = bi > 0 ? process.argv[bi + 1].replace(/\/$/, '') : 'http://127.0.0.1:3005';
-const shell = /\/next$/.test(base);
+const shell = !process.argv.includes('--legacy'); // the shell is the dashboard's default since phase 05; --legacy: a dashboard started with --ui=legacy
 const browser = await pw[engine].launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true });
 // the real stream would replace the fixture with whatever tmux holds on its first tick
@@ -43,8 +43,7 @@ const card = await page.evaluate(() => { const c = document.querySelector('.flee
   return { radius: getComputedStyle(c).borderRadius, state: c.dataset.state, lbFs: lb ? parseFloat(getComputedStyle(lb).fontSize) : 0 }; });
 check('3 22px card with state + >=16px title', card && card.radius === '22px' && card.state !== undefined && card.lbFs >= 16, JSON.stringify(card));
 
-if (shell) console.log('SKIP 4 system 2x2 tiles (/system joins the shell in phase 03)'), console.log('SKIP 5 /md download control (/md joins in phase 04)');
-else {
+{
 await page.goto(base + '/system', { waitUntil: 'load' });
 const sys = await page.evaluate(() => { const h = document.querySelector('h1')?.innerText.toLowerCase() || ''; const rows = [...document.querySelectorAll('.mbar-row')];
   const tops = rows.map(r => r.offsetTop); const twoCol = rows.length >= 2 && tops[0] === tops[1]; const pct = rows.every(r => r.querySelector('b.mbar-pct'));

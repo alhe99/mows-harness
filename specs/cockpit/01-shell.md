@@ -78,7 +78,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 5. `GET /next/*` returns the shell document: per-response nonce CSP (`script-src 'self' 'nonce-…'; style-src 'self' 'nonce-…'`), `<link rel=stylesheet href=/assets/tokens.<hash>.css>`, the chrome of `pageChrome()` (header, five tabs, FAB, footer) as markup, `<script type="application/json" id="boot">` with the `BootSnapshot` for the route, module script for `main.<hash>.mjs`; manifest link and meta tags byte-identical to `page()`.
    Evidence: MAP.md §2.1, §3.7; contract.d.ts BootSnapshot; ledger K-07, K-20
-   Verify: curl -s $DASH/next/ | grep -q 'id="boot"' && curl -s $DASH/next/ | grep -q 'tokens\.' && test "$(curl -s -o /dev/null -w '%{http_code}' $DASH/next/history)" = 200
+   Verify: curl -s $DASH/ | grep -q 'id="boot"' && curl -s $DASH/ | grep -q 'tokens\.' && test "$(curl -s -o /dev/null -w '%{http_code}' $DASH/history)" = 200
    Owner: builder
 
 6. `web/main.mjs`: preact-iso router for the eight shell routes with lazy `import()` per view (stub views that render the route name), active tab from the path, `document.startViewTransition` around route changes with `.tabs{view-transition-name:tabs}`, `a[href]` interception that skips `/term*`, `/md`, `/oauth2/*`, `data-nw` links and modified clicks.

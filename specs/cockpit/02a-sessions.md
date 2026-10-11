@@ -84,7 +84,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 8. Accessibility parity: every `aria-label`, `aria-hidden`, `title` and focus-ring rule the legacy `/` carries is present; `scripts/a11y-check.mjs` diffs the attribute sets of legacy vs shell on the fixture.
    Evidence: MAP.md §8 M-13; §2.7 'Accessibility'
-   Verify: node scripts/a11y-check.mjs --route /
+   Verify: MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3107 --host 127.0.0.1 --ui=legacy >/dev/null 2>&1 & P=$!; trap 'kill $P 2>/dev/null || true' EXIT; for i in $(seq 40); do curl -sf http://127.0.0.1:3107/healthz >/dev/null && break; sleep 0.5; done; LEGACY_DASH=http://127.0.0.1:3107 node scripts/a11y-check.mjs --route /
    Owner: builder
 
 9. `docs/qa/probes/sessions-check.mjs <engine> <mode>`: modes `render` (fixture fleet, injected `fleet` event patches and reorders without rebuild), `actions` (menus exclusive, forms post and 303, busy class), `keys`, `links`, `standalone` (display-mode stub), `prefetch` (network log), `history`.
@@ -99,7 +99,7 @@ not a task; it is a `manual_gates` entry with an owner and a date.
 
 11. The existing phone journey passes against the shell.
    Evidence: docs/qa/journeys/mobile-facelift.md
-   Verify: node docs/qa/probes/mobile-facelift.mjs webkit .agent-team/$RUN/facelift --base $DASH/next
+   Verify: node docs/qa/probes/mobile-facelift.mjs webkit .agent-team/$RUN/facelift --base $DASH
    Owner: verifier
 
 12. View budget and Lighthouse.

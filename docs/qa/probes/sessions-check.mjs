@@ -72,7 +72,10 @@ async function open(opts = {}) {
   });
   const z = [], api = [];
   await ctx.route('**/z?*', r => { z.push(r.request().url()); return r.fulfill({ status: 204 }); });
-  await ctx.route('**/api/**', r => { api.push(new URL(r.request().url()).pathname + new URL(r.request().url()).search); return r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }); });
+  // minimal valid payloads for the views a probe navigates into (system, history); anything else answers {}
+  const STUB = { '/api/system': { load: 0, cores: 1, memUsed: 0, memTot: 1, swapUsed: 0, swapTot: 0, dskUsed: 0, dskTot: 1, up: 0, version: 'x', usage: null, now: Date.now(), usageAt: 0, busy: false, live: 0, deployed: null, node: 'x', platform: 'x' },
+    '/api/history': { rows: [], page: 1, pages: 1, total: 0, accts: [], resumeDays: 7, live: 0, indexed: 0, acct: '', label: '' } };
+  await ctx.route('**/api/**', r => { const u = new URL(r.request().url()); api.push(u.pathname + u.search); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(STUB[u.pathname] || {}) }); });
   await ctx.route('**/term/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>term</title>term' }));
   const page = await ctx.newPage();
   page.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push(m.text()); });
