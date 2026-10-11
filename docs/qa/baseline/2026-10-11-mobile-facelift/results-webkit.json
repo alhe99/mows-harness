@@ -1,0 +1,42 @@
+{
+  "engine": "webkit",
+  "when": "2026-10-11T02:18:49.036Z",
+  "results": [
+    {
+      "id": "1 h1 starts with mows",
+      "ok": true,
+      "detail": "mows\n"
+    },
+    {
+      "id": "2 floating glass pill tab bar",
+      "ok": true,
+      "detail": "{\"pos\":\"fixed\",\"left\":12,\"right\":378,\"bf\":\"blur(20px) saturate(1.6)\",\"n\":5,\"sw\":390}"
+    },
+    {
+      "id": "3 22px card with state + >=16px title",
+      "ok": true,
+      "detail": "{\"radius\":\"22px\",\"state\":\"idle\",\"lbFs\":17}"
+    },
+    {
+      "id": "4 system 2x2 tiles",
+      "ok": true,
+      "detail": "{\"h\":\"mows\\n· system\\n\",\"rows\":4,\"twoCol\":true,\"pct\":true}"
+    },
+    {
+      "id": "5 /md download control",
+      "ok": true,
+      "detail": "{\"status\":200,\"dl\":true,\"h1\":\"mows\\n\"}"
+    },
+    {
+      "id": "6 desktop unchanged",
+      "ok": true,
+      "detail": "{\"pos\":\"static\",\"left\":0,\"h1fs\":16}"
+    },
+    {
+      "id": "7 zero console errors",
+      "ok": true,
+      "detail": "[]"
+    }
+  ],
+  "errors": []
+}
