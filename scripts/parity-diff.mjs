@@ -3,7 +3,7 @@
 // (pngjs + pixelmatch, devDependencies installed off-server). Exit 1 if any image exceeds --max,
 // --warn prints only. A size mismatch counts as 100 %: a view that grew a row is a parity failure.
 //   node scripts/parity-diff.mjs <baseDir> <newDir> [--route <slug>] --max <pct> [--warn] [--engine e]
-// Layout: <dir>/<engine>/<slug>-<width>.png; --route matches the slug (home, history, system, ...).
+// Layout: <dir>/<engine>/<slug>-<width>.png; --route matches the slug (home, history, system, ...) or the one-segment path parity-capture takes (/ is home, /history is history).
 // A baseline image with no counterpart in <newDir> is a failure; extra images in <newDir> are ignored.
 import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +15,7 @@ const opt = (f, d) => (argv.includes(f) ? argv[argv.indexOf(f) + 1] : d);
 const flagsWithValue = new Set(['--route', '--max', '--engine', '--diff-out']);
 const pos = argv.filter((a, i) => !a.startsWith('--') && !flagsWithValue.has(argv[i - 1]));
 const [baseDir, newDir] = pos;
-const max = +opt('--max', NaN), warn = argv.includes('--warn'), route = opt('--route'), only = opt('--engine'), diffOut = opt('--diff-out');
+const max = +opt('--max', NaN), warn = argv.includes('--warn'), route = opt('--route')?.replace(/^\/$/, 'home').replace(/^\//, ''), only = opt('--engine'), diffOut = opt('--diff-out');
 if (!baseDir || !newDir || !(max >= 0)) { console.error('usage: parity-diff.mjs <baseDir> <newDir> [--route slug] --max <pct> [--warn] [--diff-out dir]'); process.exit(2); }
 if (!existsSync(baseDir)) { console.error(`parity-diff: no such directory ${baseDir}`); process.exit(2); }
 

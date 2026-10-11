@@ -8,7 +8,9 @@ const engine = process.argv[2] || 'webkit';
 const base = (process.env.DASH || 'http://127.0.0.1:3105') + '/next/';
 const browser = await pw[engine].launch();
 const errors = [];
-const watch = p => { p.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push(m.text()); }); p.on('pageerror', e => errors.push(String(e))); };
+// /api/history and /api/system are served from phase 03; until then the tab links' prefetch (phase 02a) gets a 404 the browser logs
+const missing = m => /\/api\/(history|system)\b/.test(m.location().url || '');
+const watch = p => { p.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text()) && !missing(m)) errors.push(m.text()); }); p.on('pageerror', e => errors.push(String(e))); };
 let bad = 0;
 const check = (id, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${id}${detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
 
@@ -84,7 +86,7 @@ for (const [id, href, opts, want] of cases) {
 const desk = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 const dp = await desk.newPage(); watch(dp);
 await dp.goto(base, { waitUntil: 'load' });
-await dp.waitForSelector('#app h1[data-view="sessions"]');
+await dp.waitForSelector('#app h1[data-view="sessions"]', { state: 'attached' });
 const d = await dp.evaluate(() => { const n = document.querySelector('.pnav'), r = n.getBoundingClientRect();
   return { nav: getComputedStyle(n).display !== 'none' && r.width > 0 && r.height > 0, tabs: getComputedStyle(document.querySelector('.tabs')).display, links: n.querySelectorAll('a').length }; });
 check('15 1280x800: header nav shows, tab bar hidden', d.nav && d.tabs === 'none' && d.links === 5, d);

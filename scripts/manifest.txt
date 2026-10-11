@@ -165,6 +165,7 @@ docs/qa/probes/mobile-facelift.mjs
 docs/qa/probes/probes.mjs
 docs/qa/probes/proxy.mjs
 docs/qa/probes/run.sh
+docs/qa/probes/sessions-check.mjs
 docs/qa/probes/shell-check.mjs
 docs/superpowers/plans/2026-08-10-agy-delegation.md
 docs/superpowers/plans/2026-09-15-agents-layer.md
@@ -259,6 +260,7 @@ infra/webconsole/webterm-settle.sh
 install.sh
 package-lock.json
 package.json
+scripts/a11y-check.mjs
 scripts/budget.mjs
 scripts/capability-check.mjs
 scripts/capability-coverage.mjs
@@ -315,6 +317,7 @@ web/contract.d.ts
 web/fonts/inter-var-latin.woff2
 web/fonts/jetbrains-mono-var-latin.woff2
 web/main.mjs
+web/standalone.mjs
 web/store.mjs
 web/tokens.css
 web/tsconfig.json

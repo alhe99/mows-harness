@@ -50,7 +50,7 @@ a{color:inherit;text-decoration:none}
 @layer components{
 @media(min-width:701px){body{max-width:1024px;padding:48px}
 body.watchlive{max-width:1720px}
-body>h1{display:none}}
+body>h1,#app>h1{display:none}}
 :is(a,button,summary,input):focus-visible{outline:2px solid var(--ring);outline-offset:2px;border-radius:6px}
 @media(prefers-reduced-motion:no-preference){a,button,summary{transition:background-color .15s,border-color .15s,color .15s}}
 .tabs{display:none}

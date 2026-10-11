@@ -17,6 +17,19 @@ export function createStore(env = globalThis) {
   /** agent -> turns refetched from /api/agents/<n>/chat after a reconnect. */
   const chatLog = signal(/** @type {Record<string, import('./contract').ApiAgentChat['turns']>} */ ({}));
 
+  /** route (path + search) -> scroll offset, kept across route changes so Back and Forward restore it (K-35). */
+  const scroll = new Map();
+  /** url -> { t, p }: JSON a tab link's hover or touch fetched ahead of the tap (K-35); one GET per url per 30 s, shared with the view that asks. */
+  const jsonCache = new Map();
+  const getJson = url => {
+    const e = jsonCache.get(url);
+    if (e && Date.now() - e.t < 30000) return e.p;
+    const p = env.fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+    jsonCache.set(url, { t: Date.now(), p });
+    p.catch(() => jsonCache.delete(url));
+    return p;
+  };
+
   let es = /** @type {any} */ (null), url = '', attempt = 0, retry = null, hiddenTimer = null, wasOpen = false, lastId = '';
   const setBusy = (agent, turn) => { const b = { ...busy.value }; if (turn == null) delete b[agent]; else b[agent] = turn; busy.value = b; };
 
@@ -88,7 +101,7 @@ export function createStore(env = globalThis) {
     open();
   }
 
-  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
+  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
 }
 
 export const store = createStore();
