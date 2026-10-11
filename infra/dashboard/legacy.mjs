@@ -1417,7 +1417,8 @@ export const errorPage = msg => page('error', `<p>error: ${esc(msg)}</p>`);
 
 // /md's two documents, built from what routes/md.mjs has already checked: the notice for a refused file and the rendered file.
 export const mdNotice = m => page('markdown', `<h1><a href="/">mows</a></h1><p style="margin:18px 0">${esc(m)}</p><p><a href="/">← sessions</a></p>`);
-export function mdDocument(real, st, src, host) {
+// the file's rendered body and title, for both /md documents (the legacy page below and routes/md.mjs's, which links the built stylesheets)
+export function mdParts(real, st, src) {
   let art = /\.txt$/i.test(real) ? `<pre>${esc(src)}</pre>` : mdHtml(src);
   // cross-references between docs stay browsable: relative links resolve through /md too
   art = art.replace(/href="(?!https?:|mailto:|#|\/)([^"]+)"/g,
@@ -1427,8 +1428,11 @@ export function mdDocument(real, st, src, host) {
   const body = `<h1><a href="/">mows</a></h1>
 <div class="mdhead"><b>${esc(path.basename(real))}</b><span>${esc(real)}</span><span>${kb} · updated ${when}</span><a class="mddl" href="/md?f=${encodeURIComponent(real)}&amp;dl=1" download>⬇ Download</a></div>
 <article class="mdv">${art}</article>`;
-  const mmd = art.includes('data-lang="mermaid"') ? MD_MERMAID : '';
-  return page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>${mmd}`, '', '', false, null, host);
+  return { title: `${path.basename(real)} · mows`, body, mermaid: art.includes('data-lang="mermaid"') };
+}
+export function mdDocument(real, st, src, host) {
+  const { title, body, mermaid } = mdParts(real, st, src);
+  return page(title, body, `<style>${MD_CSS}</style>${mermaid ? MD_MERMAID : ''}`, '', '', false, null, host);
 }
 
 // ---------- page chrome, shared by BOTH document shapes ----------

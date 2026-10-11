@@ -244,8 +244,8 @@ export async function tmuxLive() {
 }
 
 async function tmuxLiveCompute() {
-  const out = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-panes', '-a', '-F',
-    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{@sid}\t#{@label}']);
+  const out = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F',
+    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{@sid}\t#{@label}']));
   const list = [];
   for (const l of out.trim().split('\n').filter(Boolean)) {
     const [name, att, created, activity, pid, cwd, paneId, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
@@ -381,7 +381,7 @@ async function fleetStateCompute() {
       catch { mt = row.mt; sz = row.sz; }
     }
     const tail = l.paneId
-      ? await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId])
+      ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
     const state = classifyFleet({ paused: l.paused, tail, mt });
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
@@ -469,18 +469,21 @@ export function hostInfo() {
 const UACCTS = ACCTS.filter(a => a.term).map(a =>
   ({ id: a.id, label: a.label, qkey: a.label === TMUX_USER ? 'personal' : a.label, dir: a.home }));
 
+// TMUX_USER's tmux server: wrap in runuser unless we already are that user (non-root dev box)
+export const userCmd = argv => os.userInfo().username === TMUX_USER ? [argv[0], argv.slice(1)] : ['runuser', ['-u', TMUX_USER, '--', ...argv]];
+
 export const TMUX_HOME = `/home/${TMUX_USER}`;
 
 export const RUN_PATH = `${TMUX_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin`;
 
 export const runAs = (envs, cmd, args, t = 30000) => new Promise(r =>
-  execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
+  execFile(...userCmd(['env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args]),
     { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out)));
 
 // runAs swallows the exit code (needed by callers that only want stdout-or-empty); /a/switch
 // needs the real code to tell "tab not attached" (2) from "unknown session" (3) apart.
 export const runAsCode = (envs, cmd, args, t = 30000) => new Promise(r =>
-  execFile('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args],
+  execFile(...userCmd(['env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args]),
     { timeout: t, maxBuffer: 32e6 }, (e) => r(e ? (typeof e.code === 'number' ? e.code : 1) : 0)));
 
 // terminal-shell page (§1/§2 of the persistent-terminal-shell design): all switching logic
@@ -766,7 +769,7 @@ export const projName = (raw) => { // "-home-demo-Documents-Projects-fun-backend
 //
 // Deliberately absent: frame-src, which WOULD break those iframes, and img-src, which would break
 // the account avatars and the device stage.
-const BASE_CSP = "base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'self'";
+export const BASE_CSP = "base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'self'";
 
 export function send(req, res, status, html, type = 'text/html; charset=utf-8', extra = null) {
   const buf = Buffer.from(html);

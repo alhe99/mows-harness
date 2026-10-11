@@ -1,0 +1,73 @@
+/* term.css — the /term document's own rules: page geometry, the key bar #cckb, the standalone-app geometry, the copy overlay, the session sheet.
+   The terminal colours are NOT here but in the --t-<key> properties: the default below, and one [data-theme] block per theme generated from
+   infra/webconsole/themes.json at build time (theme.mjs reads them into xterm). Chrome colours stay hardcoded and unthemed, as before. */
+:root{--t-black:#000;--t-red:#d81e00;--t-green:#5ea702;--t-yellow:#cfae00;--t-blue:#427ab3;--t-magenta:#89658e;--t-cyan:#00a7aa;--t-white:#dbded8;
+--t-brightBlack:#686a66;--t-brightRed:#f54235;--t-brightGreen:#99e343;--t-brightYellow:#fdeb61;--t-brightBlue:#84b0d8;--t-brightMagenta:#bc94b7;
+--t-brightCyan:#37e6e8;--t-brightWhite:#f1f1f0;--t-background:#2b2b2b;--t-foreground:#d9d9d9;--t-cursor:#adadad;--t-selectionBackground:rgba(255,255,255,.3)}
+
+/* canvas bg = key-bar chrome: iOS 26 paints its reserved bottom gesture zone with the page canvas colour, so #161b22 fuses that zone with the bar */
+html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#161b22}
+body{overscroll-behavior:none}
+#terminal-container{width:100%;height:100%;margin:0 auto;padding:0}
+#terminal-container .terminal{padding:5px;height:calc(100% - 10px)}
+
+#cckb{display:none;position:fixed;left:0;right:0;bottom:0;height:46px;z-index:50;background:#161b22;border-top:1px solid #30363d;
+padding:5px 6px calc(5px + env(safe-area-inset-bottom));gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+#cckb button{flex:0 0 auto;min-width:44px;height:36px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:13px ui-monospace,monospace;padding:0 10px}
+#cckb button:active{background:#238636}
+#cckb span{font:11px ui-monospace,monospace;color:#8b949e;align-self:center;min-width:18px;text-align:center}
+#cckb #ccback{font-size:22px;line-height:1;color:#3fb950;font-weight:700}
+#cckb select#ccthemesel{flex:0 0 auto;height:36px;max-width:132px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:13px ui-monospace,monospace;padding:0 8px;-webkit-appearance:none;appearance:none}
+
+/* standalone geometry: the insets are MARGINS, not padding, because FitAddon measures the parent's clientHeight, which includes padding */
+@media(pointer:coarse){
+#cckb{display:flex;box-sizing:border-box;height:auto;min-height:46px;padding-left:calc(6px + env(safe-area-inset-left,0px));padding-right:calc(6px + env(safe-area-inset-right,0px))}
+#terminal-container{box-sizing:border-box;height:calc(100% - 48px - env(safe-area-inset-bottom,0px));margin:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);
+/* iOS never draws xterm's scrollbar, so the fit addon reserves 15 px for it: oversize the container by exactly that */
+width:calc(100% + 15px)}
+/* iOS 26 reserved bottom zone (viewport pinned short of the screen): the home indicator sits in the zone, so env() padding would double-reserve */
+body.nozone #cckb{padding-bottom:5px}
+body.nozone #terminal-container{height:calc(100% - 48px)}
+}
+
+/* status overlay and toast */
+#ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:6px;background:rgba(0,0,0,.75);color:#e6edf3;font:13px ui-monospace,monospace;opacity:0;pointer-events:none;transition:opacity .15s}
+#ccovl{top:12px}
+#cctoast{bottom:60px;color:#9ece6a}
+#ccovl.on,#cctoast.on{opacity:1}
+
+/* copy overlay */
+#ccclip{display:none;position:fixed;inset:0;z-index:60;background:#0d1117;flex-direction:column}
+#ccclip.on{display:flex}
+#ccclip-bar{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:calc(8px + env(safe-area-inset-top,0px)) 10px 8px;background:#161b22;border-bottom:1px solid #30363d}
+#ccclip-bar button{height:40px;padding:0 16px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:14px ui-monospace,monospace}
+#ccclip-bar button:active{background:#238636}
+#ccclip-hint{color:#8b949e;font:11px/1.3 ui-monospace,monospace;margin-left:auto;text-align:right}
+#ccclip-txt{flex:1;overflow:auto;margin:0;padding:10px;color:#e6edf3;font:12px/1.45 ui-monospace,monospace;white-space:pre;-webkit-user-select:text;user-select:text;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+
+/* session pill and bottom sheet */
+#ccsess-pill{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3fb950!important;font-weight:600}
+#ccsess-pill::after{content:' \25BE';color:#8b949e;font-weight:400}
+#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.55);opacity:0}
+#ccsheet.open{display:block;opacity:1}
+#ccsheet .pan{position:absolute;left:0;right:0;bottom:0;background:#161b22;border-top:1px solid #30363d;border-radius:16px 16px 0 0;
+padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateY(100%)}
+#ccsheet.open .pan{transform:translateY(0)}
+/* motion: the backdrop fades, the sheet slides, transform and opacity only. display sits in the transition with allow-discrete so the slide-out plays
+   before display flips to none, and @starting-style gives the slide-in a from-state. A browser without either drops these and toggles instantly. */
+@media(prefers-reduced-motion:no-preference){
+#ccsheet{transition:opacity .2s ease,display .25s allow-discrete}
+#ccsheet .pan{transition:transform .25s cubic-bezier(.32,.72,0,1)}
+@starting-style{#ccsheet.open{opacity:0}#ccsheet.open .pan{transform:translateY(100%)}}
+#cckb button{transition:transform .1s ease,opacity .1s ease}
+#cckb button:active{transform:scale(.9);opacity:.6}
+}
+#ccsheet .hd{color:#8b949e;font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:8px 18px 6px}
+#ccsheet .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 18px;color:#e6edf3;font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#ccsheet .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .row .nm small{display:block;color:#8b949e;font-size:12px;font-family:ui-monospace,monospace}
+#ccsheet .row.on{color:#3fb950}
+#ccsheet .row.on::after{content:'\2713';font-weight:700}
+#ccsheet .row:active{background:#21262d}
+#ccsheet .sep{border-top:1px solid #30363d;margin:6px 0}
+#ccsheet .row.act{color:#c9d1d9}

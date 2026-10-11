@@ -4,5 +4,5 @@
     "allowJs": true, "checkJs": true, "noEmit": true, "strict": true, "noImplicitAny": false, "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["./**/*.mjs", "./contract.d.ts", "../scripts/contract-check.mjs"]
+  "include": ["./**/*.mjs", "./contract.d.ts", "./pages/term/themes.d.ts", "../scripts/contract-check.mjs"]
 }

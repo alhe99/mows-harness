@@ -2,7 +2,8 @@
 # deploy-dashboard.sh — install the dashboard onto this box and restart it (K-24: the deploy is a script, not an echo).
 #   scripts/deploy-dashboard.sh [--dry-run]
 # Installs, whichever exist in the checkout: lite.mjs core.mjs chat-stream.mjs capability.mjs sse.mjs static.mjs legacy.mjs,
-# routes/, dist/ (and app/ while the legacy /ui client still ships), themes.json, webterm-settle.sh and the /term page
+# routes/, dist/ (and app/ while the legacy /ui client still ships), themes.json, webterm-settle.sh and the /term page (dist/term.html,
+# installed by make-term-index.sh, which keeps the page it replaces as term-index.legacy.html: the rollback is a file swap)
 # into $DEST (default /opt/claude-dashboard); restarts claude-dash-lite; smokes /healthz. The restart is not optional:
 # the client assets are walked once per process. --dry-run prints every command and changes nothing.
 # Env: DEST, UNIT, PORT. Run from anywhere; needs sudo unless already root. Never run against a box you are not on.
@@ -42,7 +43,7 @@ for d in infra/dashboard/routes dist infra/dashboard/app; do
 done
 run $SUDO install -m644 infra/webconsole/themes.json "$DEST/themes.json"
 run $SUDO install -m755 infra/webconsole/webterm-settle.sh "$DEST/webterm-settle.sh"
-# the term page is generated (a spliced copy of ttyd's own page), not copied: it prints its own sudo line if DEST is not writable
+# the term page: dist/term.html copied to $DEST/term-index.html, the previous one kept as term-index.legacy.html (it prints its own sudo line if DEST is not writable)
 run infra/webconsole/make-term-index.sh "$DEST/term-index.html"
 
 run $SUDO systemctl restart "$UNIT"

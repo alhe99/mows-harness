@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { assetUrl } from '../static.mjs';
-import { BY_ID, HOST_ACCT, SESSION_PATH_RE, TMUX_HOME, TMUX_USER, crc32, fleetState, freshen, index, send, sh, termHref, tmuxLive, uiCsp } from '../core.mjs';
+import { BY_ID, HOST_ACCT, SESSION_PATH_RE, TMUX_HOME, crc32, fleetState, freshen, index, send, sh, termHref, tmuxLive, uiCsp, userCmd } from '../core.mjs';
 import { fleetEventPayload } from '../sse.mjs';
 import { agentsIndex } from './agents.mjs';
 import { devicePage, historyPage, sessionPage, systemPage } from './api.mjs';
@@ -81,7 +81,7 @@ export async function liveJson(req, res, url) {
   try { tty = (await fsp.readFile(path.join(TMUX_HOME, '.cache', 'webterm-clients', tab), 'utf8')).trim(); } catch {}
   let cur = '';
   if (tty) {
-    const out = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-clients', '-F', '#{client_tty}\t#{session_name}']);
+    const out = await sh(...userCmd(['tmux', 'list-clients', '-F', '#{client_tty}\t#{session_name}']));
     for (const l of out.trim().split('\n')) { const [t, n] = l.split('\t'); if (t === tty) { cur = n; break; } }
   }
   const buf = Buffer.from(JSON.stringify(live.map(l => ({ name: l.name, label: l.label || '', current: l.name === cur }))));

@@ -180,7 +180,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/app') return await appView(req, res, url);
     if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
-    if (p === '/md') return await mdView(req, res, url);
+    if (p === '/md') return await mdView(req, res, url, UI === 'next');
     // ↻ button: force usage re-collect, then bounce back to the same page (PRG) with
     // sys=1 so the panel re-opens already showing the refresh in progress. Only /system
     // renders the system+usage panel now (moved off '/' — gap #1/#2).

@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- The /term document (ARCHITECTURE section 6, phase 04). make-term-index.sh copies the built dist/term.html to where Caddy's @termhtml serves it; the
+     previous page is kept as term-index.legacy.html (rollback is the file swap, K-32). The assets are /assets/ names, never /term/ (Caddy sends every
+     /term* path to ttyd). The head set below is the mobile one: the tuned viewport and the manifest / apple metas that make /term installable full screen.
+     No inline script, so the policy is script-src 'self'; xterm injects <style>, hence style-src 'unsafe-inline' (K-10). The old repaint block's private
+     _writeBuffer unjam watchdog is NOT ported: it reached into xterm internals, and nothing private is touched now (web/pages/term/paint.mjs). -->
+<html lang="en" data-term="cockpit"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+<!--cc-pwa--><link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials"><meta name="theme-color" content="#161b22"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><!--/cc-pwa-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; base-uri 'none'; object-src 'none'; form-action 'self'">
+<title>mows terminal</title>
+<link rel="stylesheet" href="/assets/term.IVMKYB4Y.css">
+</head><body><div id="terminal-container"></div><script type="module" src="/assets/term.MAXBEII3.mjs"></script></body></html>

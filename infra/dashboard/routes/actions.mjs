@@ -1,5 +1,5 @@
 import { promises as fsp, statfsSync } from 'node:fs';
-import { ACCTS, BY_ID, NAME_RE, RT, THEME_MAP, TMUX_USER, WEBTERM_SH, descendants, forgetSession, index, liveSid8, readBody, resetDiskCaches, runAs, runAsCode, sameOrigin, saveSettings, sh, tmuxCache, tmuxLive } from '../core.mjs';
+import { ACCTS, BY_ID, NAME_RE, RT, THEME_MAP, WEBTERM_SH, descendants, forgetSession, index, liveSid8, readBody, resetDiskCaches, runAs, runAsCode, sameOrigin, saveSettings, sh, tmuxCache, tmuxLive, userCmd } from '../core.mjs';
 
 
 // The shell sends its two result-bearing forms (restart all, reclaim) with Accept: application/json and gets the result as JSON; a browser
@@ -20,7 +20,7 @@ export async function action(req, res, url) {
   if (!t) { res.writeHead(404); return res.end('not live'); }
   const act = url.pathname.slice(3);
   if (act === 'kill') {
-    await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'kill-session', '-t', '=' + name]);
+    await sh(...userCmd(['tmux', 'kill-session', '-t', '=' + name]));
   } else if (act === 'pause' || act === 'resume') {
     const sig = act === 'pause' ? '-STOP' : '-CONT';
     const kids = await descendants(t.pid);
@@ -61,7 +61,7 @@ export async function restartAll(req, res) {
   // #{pane_start_command} arrives wrapped in double quotes with inner ones backslash-escaped.
   // ponytail: string append, not an argv rebuild — the wrapper paths have no spaces in them.
   const panes = new Map();
-  const raw = await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'list-panes', '-a', '-F', '#{session_name}\t#{pane_id}\t#{pane_start_command}']);
+  const raw = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F', '#{session_name}\t#{pane_id}\t#{pane_start_command}']));
   for (const line of raw.trim().split('\n').filter(Boolean)) {
     const [name, id, ...rest] = line.split('\t');
     if (name && id && !panes.has(name)) panes.set(name, { id, cmd: rest.join('\t').replace(/^"|"$/g, '').replace(/\\(.)/g, '$1').trim() });
@@ -83,7 +83,7 @@ export async function restartAll(req, res) {
         .reduce((a, x) => (!a || x.mt > a.mt ? x : a), null);
       if (e) { claimed.add(e.sid); arg = [cmd + ' --resume ' + e.sid]; }
     }
-    await sh('runuser', ['-u', TMUX_USER, '--', 'tmux', 'respawn-pane', '-k', '-t', pane.id, ...arg]);
+    await sh(...userCmd(['tmux', 'respawn-pane', '-k', '-t', pane.id, ...arg]));
     n++;
   }
   tmuxCache.t = 0;

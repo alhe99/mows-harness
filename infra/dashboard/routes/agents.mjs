@@ -2,7 +2,7 @@ import { promises as fsp, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { wireChatStream } from '../chat-stream.mjs';
-import { RUN_PATH, TMUX_HOME, TMUX_USER, readBody, runAs, sameOrigin, sh, shOk } from '../core.mjs';
+import { RUN_PATH, TMUX_HOME, readBody, runAs, sameOrigin, sh, shOk, userCmd } from '../core.mjs';
 import { chatBroadcast, chatEnd } from '../sse.mjs';
 
 
@@ -170,8 +170,8 @@ export async function agentAction(req, res, act) {
     // answer appears on the next load. That trailing user turn is what renders "Thinking…".
     const msg = (b.msg || '').slice(0, 4000).trim();
     if (!msg) { res.writeHead(400); return res.end('empty message'); }
-    const child = spawn('runuser', ['-u', TMUX_USER, '--', 'env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
-      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, '--stream', msg],
+    const child = spawn(...userCmd(['env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH,
+      `${TMUX_HOME}/.local/bin/mows-agent`, 'chat', name, '--stream', msg]),
       { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const turn = Date.now();
     // The `end` line, when it arrives, is authoritative (it carries the real is_error); the

@@ -123,6 +123,33 @@ and the phone-UA "Open Screen" link.
 docker with `--ui=legacy`, fetches ten pages and compares them with `docs/qa/baseline/cockpit/legacy-html/` (captured from the pre-split server with
 `--capture --ref <commit>`); stylesheets and scripts byte for byte, the volatile text of the markup (digits, tab ids, home paths) masked on both sides.
 
+## The terminal and the markdown document: `term-check`, `md-check` (cockpit phase 04)
+
+```sh
+node scripts/term-proto-check.mjs                    # the ttyd 1.7.4 client against a fake socket: no browser, no server
+node docs/qa/probes/term-check.mjs webkit all        # proto keybar ime clipboard sheet paint theme
+node docs/qa/probes/term-check.mjs chromium sheet    # one mode, one engine
+node docs/qa/probes/md-check.mjs chromium            # /md: download, CSP, lazy pinned mermaid, tap to toggle
+```
+
+`term-check` serves `dist/term.html` in place of `/term/` on the dev instance's origin (only `/assets/` comes from the server) and plays ttyd
+itself in the browser context: `/term/token`, the `/term/ws` socket (every frame the page sends is recorded, the probe answers with `0` output
+frames), `/app/live.json`, `/a/switch`, `/shot`, `/z` and `/settings/term-theme.json` are answered by the probe, so nothing reaches ttyd, tmux or the
+disk. Run `node build.mjs` first: it tests the built page. `proto` is the bytes on the wire per key; `keybar` the key order, geometry, touch scroll and
+the keyboard-aware fit (a stand-in `visualViewport`, since no engine raises an on-screen keyboard); `ime` the shadow line (value diff replayed as
+`\x7f` x N + tail, a Chromium-only trusted paste through CDP, the reconnect kick); `clipboard` OSC 52, the pending-until-gesture retry, copy on select,
+the overlay and the paste key (the system clipboard itself is read back on Chromium only); `sheet` the session pill and bottom sheet, attach by key,
+paste and drop, the back key and the geometry beacon; `paint` repaint on foreground, resize coalescing and the 4/8/15 s boot ladder on Playwright's
+fake clock; `theme` every theme of `themes.json` applied from the built `[data-theme]` CSS, the precedence and the 30 s poll.
+
+`md-check` runs against the real `/md` of the dev instance for the repo's `README.md`: the download link, the CSP (BASE_CSP + the CDN origin + the hash
+of the one inline loader), no request to the CDN until the first ` ```mermaid ` fence scrolls into view, then one request for the pinned
+`mermaid@12.1.0` file whose `<script>` carries `integrity=` (a rendered diagram proves the hash matches what the CDN serves, so the run needs the
+network), and tap-to-toggle full size. A file with no diagram never contacts the CDN.
+
+What none of it can tell you (the `real-device terminal` manual gate): the iOS keyboard and its shadow-line word suggestions, resume after a screen
+lock, the key bar geometry against a real home indicator, and one Android. Try `?ime=off` and `?paint=off` on the device.
+
 ## What they cannot tell you
 
 - **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb`

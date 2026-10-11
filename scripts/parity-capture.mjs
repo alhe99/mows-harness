@@ -33,7 +33,7 @@ const ALL_ROUTES = [
   ['agent', `/agents/${AGENT}`], ['run', `/agents/${AGENT}/${RUN}`], ['session', `/s/demo/${SID}`],
   ['md', `/md?f=${encodeURIComponent(`${DEMO_HOME}/parity.md`)}`],
 ];
-const ROUTES = ALL_ROUTES.filter(([, r]) => !opt('--route') || r === opt('--route'));
+const ROUTES = ALL_ROUTES.filter(([, r]) => !opt('--route') || r === opt('--route') || r.split('?')[0] === opt('--route')); // /md carries its ?f=
 if (!ROUTES.length) { console.error(`--route ${opt('--route')} is not one of: ${ALL_ROUTES.map(r => r[1]).join(' ')}`); process.exit(2); }
 // --as <path> captures the single --route from another URL (the agents list's legacy twin is the server page; the SPA being ported is /ui/agents).
 const as = opt('--as');

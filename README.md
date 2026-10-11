@@ -378,11 +378,11 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
 6. **`sudo loginctl enable-linger <user>`** — `claude-rc`'s ad-hoc listeners use user-scope
    systemd and will fail fast without it.
 7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
-   returns 404: ttyd's ~700KB generated index is deliberately not vendored here, so the
-   script fetches it locally and splices in the clipboard shim plus the
-   `infra/webconsole/blocks/` mobile UX (key bar, PWA geometry, home key, photo attach,
-   font size, color themes, keyboard suggestions + reconnect, copy/paste overlay,
-   restart-pane key). Re-run it after a repo update to pick up new or changed blocks.
+   returns 404: the page is `dist/term.html`, built from `web/pages/term/` (xterm.js 6 on
+   ttyd's socket, key bar, PWA geometry, home key, photo/file attach, font size, color themes,
+   keyboard suggestions + reconnect, copy/paste overlay, restart-pane key) and committed, and
+   the script installs it where Caddy serves it, keeping any page already there as
+   `term-index.legacy.html` (rollback is a file swap). Re-run it after a repo update.
    If you want the dashboard to serve the global terminal theme (terminal tabs poll
    `/settings/term-theme.json`), also
    `sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json`.

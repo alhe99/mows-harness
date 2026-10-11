@@ -251,7 +251,7 @@ pruned on write; a ttyd reconnect overwrites it, self-healing). The `75-ccsess.h
 draws a pill with the current session's name in the key bar; it opens a bottom sheet, and
 choosing a session posts `/a/switch`, which reads the tty back out and runs `tmux
 switch-client -c "$tty" -t "=<to>"`. tmux repaints the *same* client onto another session:
-no reload, no second WebSocket, no xterm re-boot, none of the `blocks/` viewport machinery
+no reload, no second WebSocket, no xterm re-boot, none of the terminal page's viewport machinery
 disturbed. `web-term.sh switch` first runs `tmux detach-client -s "=<to>"` — the take-over
 semantics `attach -d` already has — **unless the client is already on that session**, where
 detaching would kill the client we are about to switch (a 409 and a pointless reload). A
@@ -299,7 +299,7 @@ platform does the work:
 - **motion is CSS-only and compositor-only** (2026-08-26): the new screen rises 6 px under the
   pinned tab bar (`vt-in`), every control shrinks to `scale(.96)` on `:active`, `<details>`
   content fades in, and the terminal's session sheet slides up/down via `transition-behavior:
-  allow-discrete` + `@starting-style` (`blocks/75-ccsess.html`). Only `transform` and `opacity`
+  allow-discrete` + `@starting-style` (`web/pages/term/term.css`). Only `transform` and `opacity`
   are ever animated — nothing triggers layout, no JS timers — and every rule sits behind
   `prefers-reduced-motion: no-preference`. Browsers without `allow-discrete` drop those
   declarations and toggle instantly, which is exactly the pre-motion behavior.
