@@ -16,9 +16,15 @@ async function jsonBody(req) {
   try { return JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { return null; }
 }
 
-// an https endpoint on a named host: the push services are public hostnames, and the server will POST to whatever is stored here
+// an https endpoint on one of the browsers' push services: the server will POST to whatever is stored here, so the host is an
+// allowlist (exact, or a subdomain of a dotted entry), not just "some public hostname" — no loopback, LAN or metadata targets
+const PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com', '.notify.windows.com', '.push.apple.com', '.push.services.mozilla.com'];
 function endpointOk(e) {
-  try { const u = new URL(e); return u.protocol === 'https:' && e.length <= 2048 && /[a-z]/i.test(u.hostname) && u.hostname.includes('.') && !u.username && !u.password; } catch { return false; }
+  try {
+    const u = new URL(e), h = u.hostname.toLowerCase().replace(/\.$/, '');
+    return u.protocol === 'https:' && e.length <= 2048 && !u.username && !u.password && !u.port
+      && PUSH_HOSTS.some(a => a.startsWith('.') ? h.endsWith(a) : h === a);
+  } catch { return false; }
 }
 
 export async function pushView(req, res, what) {

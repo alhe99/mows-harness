@@ -65,7 +65,7 @@ export async function pushAll(payload, send = fetch) {
   let ok = 0;
   await Promise.all([...m].map(async ([id, s]) => {
     try {
-      const r = await send(s.endpoint, { method: 'POST', body: body(s.keys), signal: AbortSignal.timeout(10000), headers: {
+      const r = await send(s.endpoint, { method: 'POST', redirect: 'manual', body: body(s.keys), signal: AbortSignal.timeout(10000), headers: {
         authorization: vapidAuth(s.endpoint, v, process.env.VAPID_SUBJECT || `https://${s.host || 'localhost'}`), 'content-encoding': 'aes128gcm',
         'content-type': 'application/octet-stream', ttl: '3600', urgency: 'high' } });
       if (r.status === 404 || r.status === 410) await dropSub(id); else if (r.ok) ok++;

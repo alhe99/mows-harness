@@ -45,6 +45,7 @@ check('3 22px card with state + >=16px title', card && card.radius === '22px' &&
 
 {
 await page.goto(base + '/system', { waitUntil: 'load' });
+await page.waitForSelector('.mbar-row', { timeout: 10000 }); // the shell renders the tiles after load
 const sys = await page.evaluate(() => { const h = document.querySelector('h1')?.innerText.toLowerCase() || ''; const rows = [...document.querySelectorAll('.mbar-row')];
   const tops = rows.map(r => r.offsetTop); const twoCol = rows.length >= 2 && tops[0] === tops[1]; const pct = rows.every(r => r.querySelector('b.mbar-pct'));
   return { h, rows: rows.length, twoCol, pct }; });
