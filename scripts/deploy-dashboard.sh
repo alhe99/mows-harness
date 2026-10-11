@@ -48,7 +48,7 @@ done
 run $SUDO install -m644 infra/webconsole/themes.json "$DEST/themes.json"
 run $SUDO install -m755 infra/webconsole/webterm-settle.sh "$DEST/webterm-settle.sh"
 # the term page: dist/term.html copied to $DEST/term-index.html, the previous one kept as term-index.legacy.html (it prints its own sudo line if DEST is not writable)
-run infra/webconsole/make-term-index.sh "$DEST/term-index.html"
+run $SUDO infra/webconsole/make-term-index.sh "$DEST/term-index.html"
 
 # the flag flip: replace the unit's --ui=... on its ExecStart line (or add it), then reload systemd so the restart below runs the new command line
 if [ "$DRY" = 1 ] || grep -q '^ExecStart=.*lite\.mjs' "$UNITFILE" 2>/dev/null; then
