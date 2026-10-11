@@ -1,0 +1,52 @@
+// Journey docs/qa/journeys/mobile-facelift.md as a script. Exit code is the verdict.
+// usage: PLAYWRIGHT=~/.cache/mows-qa/node_modules/playwright/index.mjs node docs/qa/probes/mobile-facelift.mjs [webkit|chromium] <outdir>
+// Journey steps 1-7 of docs/qa/journeys/mobile-facelift.md; the PNGs it writes are the visual-parity baseline for the cockpit rebuild.
+import { mkdirSync, writeFileSync } from 'node:fs';
+const pw = await import(process.env.PLAYWRIGHT);
+const engine = process.argv[2] || 'webkit', out = process.argv[3] || '.';
+mkdirSync(out, { recursive: true });
+const base = 'http://127.0.0.1:3005';
+const browser = await pw[engine].launch();
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true });
+const page = await ctx.newPage();
+const errors = [];
+const known = /interactive-widget/; page.on('console', m => { if (m.type() === 'error' && !known.test(m.text())) errors.push(m.text()); });
+page.on('pageerror', e => errors.push(String(e)));
+const results = [];
+const check = (id, ok, detail) => { results.push({ id, ok: !!ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'} ${id} ${detail ?? ''}`); };
+
+await page.goto(base + '/', { waitUntil: 'load' });
+check('1 h1 starts with mows', (await page.locator('h1').first().innerText()).trim().toLowerCase().startsWith('mows'), await page.locator('h1').first().innerText());
+await page.screenshot({ path: `${out}/home-390.png` });
+const tabs = await page.evaluate(() => { const t = document.querySelector('.tabs'); if (!t) return null; const r = t.getBoundingClientRect(); const cs = getComputedStyle(t);
+  return { pos: cs.position, left: r.left, right: r.right, bf: cs.backdropFilter || cs.webkitBackdropFilter, n: document.querySelectorAll('.tb').length, sw: document.scrollingElement.scrollWidth }; });
+check('2 floating glass pill tab bar', tabs && tabs.pos === 'fixed' && tabs.left >= 10 && tabs.right <= 380 && tabs.bf && tabs.bf !== 'none' && tabs.n === 5 && tabs.sw <= 390, JSON.stringify(tabs));
+const card = await page.evaluate(() => { const c = document.querySelector('.fleet-cards .lp'); if (!c) return null; const lb = c.querySelector('.lb');
+  return { radius: getComputedStyle(c).borderRadius, state: c.dataset.state, lbFs: lb ? parseFloat(getComputedStyle(lb).fontSize) : 0 }; });
+check('3 22px card with state + >=16px title', card && card.radius === '22px' && card.state !== undefined && card.lbFs >= 16, JSON.stringify(card));
+
+await page.goto(base + '/system', { waitUntil: 'load' });
+const sys = await page.evaluate(() => { const h = document.querySelector('h1')?.innerText.toLowerCase() || ''; const rows = [...document.querySelectorAll('.mbar-row')];
+  const tops = rows.map(r => r.offsetTop); const twoCol = rows.length >= 2 && tops[0] === tops[1]; const pct = rows.every(r => r.querySelector('b.mbar-pct'));
+  return { h, rows: rows.length, twoCol, pct }; });
+check('4 system 2x2 tiles', sys.h.includes('mows') && sys.h.includes('system') && sys.twoCol && sys.pct, JSON.stringify(sys));
+await page.screenshot({ path: `${out}/system-390.png` });
+
+const md = await page.goto(base + '/md?f=' + process.env.HOME + '/Documents/Projects/mows-harness/README.md', { waitUntil: 'load' });
+const mdv = await page.evaluate(() => ({ dl: !!document.querySelector('a[download], a[href*="raw=1"]'), h1: document.querySelector('h1')?.innerText || '' }));
+check('5 /md download control', md.status() === 200 && mdv.dl && mdv.h1.length > 0, JSON.stringify({ status: md.status(), ...mdv }));
+await page.screenshot({ path: `${out}/md-390.png` });
+
+const desk = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+const dp = await desk.newPage(); dp.on('console', m => { if (m.type() === 'error' && !known.test(m.text())) errors.push('desktop: ' + m.text()); });
+await dp.goto(base + '/', { waitUntil: 'load' });
+const d = await dp.evaluate(() => { const t = document.querySelector('.tabs'); const r = t?.getBoundingClientRect(); return { pos: t && getComputedStyle(t).position, left: r?.left, h1fs: parseFloat(getComputedStyle(document.querySelector('h1')).fontSize) }; });
+check('6 desktop unchanged', d.h1fs < 26 && (d.pos !== 'fixed' || d.left <= 1), JSON.stringify(d));
+await dp.screenshot({ path: `${out}/home-1280.png` });
+check('7 zero console errors', errors.length === 0, JSON.stringify(errors));
+
+writeFileSync(`${out}/results.json`, JSON.stringify({ engine, when: new Date().toISOString(), results, errors }, null, 2));
+await browser.close();
+const fails = results.filter(r => !r.ok).map(r => r.id);
+console.log(fails.length ? `VERDICT: fix:[${fails.join('; ')}]` : 'VERDICT: ship');
+process.exit(fails.length ? 1 : 0);

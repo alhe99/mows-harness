@@ -894,7 +894,7 @@ ${ctlCards}
   const stage = `<div class="devstage${stageObj.fill ? ' live' : ''}">${fsBtn}${stageObj.html}</div>`;
   const bodyClass = (droidSt.state === 'live' || watchUp) ? 'watchlive' : '';
   const head = droidSt.state === 'booting' ? '<meta http-equiv="refresh" content="4">' : '';
-  const body = `<h1><a href="/">← sessions</a> <span class="muted">· device</span></h1>
+  const body = `<h1><a href="/">mows</a> <span class="muted">· device</span></h1>
 <div class="devlayout">${rail}${stage}</div>
 ${script}`;
   send(req, res, 200, page('device · mows sessions', body, head, bodyClass, 'device', false, null, req.headers.host));
@@ -1207,7 +1207,7 @@ ${a.sess.length ? a.sess.map(t => `<div class="qrow"><a class="sid8" href="/s/${
     const swapPct = h.swapTot ? pct(h.swapUsed, h.swapTot) : 0, swapWarn = swapPct > 85;
     const diskPct = pct(h.dskUsed, h.dskTot), diskWarn = diskPct > 85;
     const bar = (label, val, p, warn) => `<div class="mbar">
-<div class="mbar-row"><span class="mbar-label">${esc(label)}</span><span class="mbar-val">${esc(val)}</span></div>
+<div class="mbar-row"><span class="mbar-label">${esc(label)}</span><b class="mbar-pct">${Math.round(Math.min(100, Math.max(0, p)))}%</b><span class="mbar-val">${esc(val)}</span></div>
 <div class="mbar-track"><div class="mbar-fill${warn ? ' warn' : ''}" style="width:${Math.min(100, Math.max(0, p))}%"></div></div>
 </div>`;
     const metricsHtml = `<section class="sysleft">
@@ -2129,6 +2129,91 @@ html.agent-view .agchat{height:calc(100dvh - max(8px,env(safe-area-inset-top,0px
    the reserve is scoped to it. The layout mode of docs/qa/probes/probes.mjs asserts each regime's own
    geometry rather than the sticky state that no longer exists. */
 @media(min-width:701px) and (max-width:860px){.uiapp .chat .chatf{padding-right:60px}}
+/* mobile facelift (2026-10-10): same dark zinc+emerald tokens, "modern app" language on
+   phones only — floating glass pill tab bar, bigger display title, mono status-pill section
+   label, softer 22px cards with a state-tinted edge, round controls. Pure overrides appended
+   last so order wins; desktop (>700px) is untouched. Geometry: bar = 60px tall floating
+   --tbo above the bottom; FAB sits 14px above the bar. */
+@media(max-width:700px){
+:root{--tbo:max(10px,calc(env(safe-area-inset-bottom,0px) - 8px))}
+body{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px));
+background:radial-gradient(120% 50% at 50% -12%,rgba(0,212,146,.10),transparent 60%) no-repeat,var(--bg)}
+h1{font:700 26px/1.15 var(--sans);letter-spacing:-.03em;padding:10px 2px 18px;gap:12px}
+h1::before{border-radius:12px;padding:9px 9px;font-size:13px;box-shadow:0 0 24px rgba(0,212,146,.18)}
+h1 .muted{font-size:15px;font-weight:500;letter-spacing:-.01em}
+.sect{display:flex;align-items:center;gap:8px;font:600 10.5px/1 var(--mono);letter-spacing:.18em;color:var(--mut);margin:4px 2px 14px}
+.sect b{color:var(--ok);font-weight:600}
+.sect input[type=search]{margin-left:auto!important;width:auto!important;flex:1;max-width:190px;min-height:36px!important;padding:6px 14px!important;border-radius:999px;background:rgba(255,255,255,.04);font:15px var(--sans);letter-spacing:0;text-transform:none}
+.fleet-cards{gap:12px}
+.fleet-cards .lp{margin:0}
+.fleet-cards .lp{border-radius:22px;padding:18px 18px 16px;gap:8px;border:1px solid rgba(255,255,255,.06);
+background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 24px rgba(0,0,0,.25)}
+.fleet-cards .lp[data-state=working]{border-color:var(--ok-bd);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 0 0 1px rgba(0,212,146,.06),0 8px 28px rgba(0,212,146,.08)}
+.fleet-cards .lp[data-state=needs-you],.fleet-cards .lp[data-state=paused]{border-color:rgba(255,185,0,.28)}
+.fleet-cards .lp > .lb,.fleet-cards .fchd .lb{font:650 17px/1.25 var(--sans);letter-spacing:-.02em;display:flex;align-items:center;gap:8px;min-width:0}
+.fleet-cards .fli{font-size:11px}
+.fleet-cards .fli-working{text-shadow:0 0 10px var(--ok)}
+.fleet-cards .fchd + .muted{font:500 13px var(--sans)!important;color:var(--mut)}
+.fleet-cards .fsnip{font:12px/1.5 var(--mono)!important;color:var(--dim);background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.04);border-radius:12px;padding:8px 10px;margin-top:4px}
+.fleet-cards .fcact{gap:8px}
+.fleet-cards .fcact .ab{width:42px;height:42px;min-height:42px;padding:0;justify-content:center;border-radius:50%}
+.fleet-cards .ab.ok,.fleet-cards .ab.ok:hover{background:var(--ok-bg);border-color:var(--ok-bd)}
+.fleet-cards .fcact summary.ab{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.07)}
+.kc{border-radius:20px;background:rgba(39,39,42,.92);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.newcard{border-radius:22px;padding:20px;margin-top:8px}
+.tabs{left:12px;right:12px;bottom:var(--tbo);padding:5px 6px;border:1px solid rgba(255,255,255,.08);border-radius:30px;
+background:rgba(24,24,27,.72);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);box-shadow:0 12px 32px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.05)}
+.tb{border-radius:24px;gap:3px;font:500 10.5px/1 var(--sans);letter-spacing:.01em}
+.tb .ti{display:flex;align-items:center;justify-content:center;width:46px;height:28px;border-radius:999px;transition:background-color .2s}
+.tb.on .ti{background:var(--ok-bg);box-shadow:inset 0 0 0 1px var(--ok-bd)}
+.tb.on{font-weight:600}
+.termfab{right:18px;bottom:calc(var(--tbo) + 74px);width:54px;height:54px;box-shadow:0 0 0 6px rgba(0,212,146,.10),0 10px 28px rgba(0,212,146,.30),0 6px 18px rgba(0,0,0,.5)}
+}
+/* mobile System facelift (2026-10-10): metrics become a 2x2 tile grid (mono label, big %,
+   value, glowing accent bar — .mbar-pct is phone-only), env/terminal/usage cards share the
+   fleet card surface, section heads become the same tracked mono label as "FLEET". */
+.mbar-pct{display:none}
+@media(max-width:700px){
+.sechead{margin:0 2px 12px}
+.sechead h2{font:600 10.5px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--mut)}
+.sechead p{display:none}
+.sysleft{margin-bottom:26px}.sysright{gap:26px}.sysextra{margin-top:26px}
+.mbars{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mbar,.envcard,.termcard,.stat{border-radius:22px;border:1px solid rgba(255,255,255,.06);
+background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 24px rgba(0,0,0,.25)}
+.mbar{padding:16px;gap:12px;min-width:0}
+.mbar-row{flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.mbar-label{font:600 10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.mbar-pct{display:block;font:650 30px/1 var(--sans);letter-spacing:-.04em;color:var(--fg);font-variant-numeric:tabular-nums}
+.mbar-val{font:11.5px var(--mono);color:var(--mut);white-space:normal}
+.mbar-track{height:6px;background:rgba(255,255,255,.06)}
+.mbar-fill{background:linear-gradient(90deg,var(--ok-dk),var(--ok-lt));box-shadow:0 0 12px rgba(0,212,146,.45)}
+.mbar-fill.warn{background:linear-gradient(90deg,#f59e0b,var(--warn));box-shadow:0 0 12px rgba(255,185,0,.45)}
+.mbar:has(.mbar-fill.warn){border-color:rgba(255,185,0,.25)}
+.mbar:has(.mbar-fill.warn) .mbar-pct{color:var(--warn)}
+.envcard,.termcard{padding:6px 18px}
+.termcard{padding:18px}
+.envrows{gap:0}
+.envrow{padding:13px 0;border-bottom:1px solid rgba(255,255,255,.05);align-items:center}
+.envrow:last-child{border-bottom:none}
+.envdiv{display:none}
+.envkey{font:600 10.5px var(--mono);letter-spacing:.1em;color:var(--dim)}
+.envval{font:13px var(--mono);color:var(--fg)}
+.envval.ok{color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-bd);border-radius:999px;padding:3px 10px;font-size:11px;letter-spacing:.08em}
+.edot{box-shadow:0 0 8px var(--ok)}
+.seclabel{font:600 10px var(--mono);letter-spacing:.12em}
+.dangerbtn{border-radius:999px;height:48px}
+.statgrid{gap:12px}
+.stat{padding:16px}
+.sl{font:600 10px var(--mono);letter-spacing:.12em;padding-bottom:10px}
+.qrow{padding:4px 0}
+.meter{height:6px;border-radius:999px;background:rgba(255,255,255,.06)}
+.meter i{border-radius:999px;background:linear-gradient(90deg,var(--ok-dk),var(--ok-lt))}
+}
+@media(display-mode:standalone) and (max-width:700px){@supports(height:100lvh){
+.tabs{top:calc(min(100lvh,100%) - 60px - var(--tbo))}
+.termfab{top:calc(min(100lvh,100%) - 128px - var(--tbo))}
+}}
 `;
 // fleetJs: '/' (fleet-first home) and '/history' load the tag — /history needs it too,
 // phase 3 on, so its keydown handler can focus the search input (fleet.js's hasFleet
@@ -2147,6 +2232,7 @@ const MD_ROOT = '/home';
 const MD_CSS = `.mdhead{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin:6px 0 14px;padding-bottom:10px;border-bottom:1px solid var(--bd2)}
 .mdhead b{color:var(--title);font-size:16px}
 .mdhead span{color:var(--dim);font:12px var(--mono);word-break:break-all}
+.mdhead .mddl{margin-left:auto;color:var(--ok);font-size:13px;text-decoration:none;border:1px solid var(--bd2);border-radius:var(--r);padding:4px 10px;white-space:nowrap}
 .mdv{line-height:1.65;color:var(--fg2);padding-bottom:24px}
 .mdv h1,.mdv h2,.mdv h3,.mdv h4,.mdv h5,.mdv h6{color:var(--title);margin:1.3em 0 .5em;line-height:1.25}
 .mdv h1{font-size:23px;border-bottom:1px solid var(--bd2);padding-bottom:8px}
@@ -2273,7 +2359,7 @@ function mdHtml(src) {
 }
 async function mdView(req, res, url) {
   const f = url.searchParams.get('f') || '';
-  const oops = (code, m) => send(req, res, code, page('markdown', `<h1><a href="/">mows sessions</a></h1><p style="margin:18px 0">${esc(m)}</p><p><a href="/">← sessions</a></p>`));
+  const oops = (code, m) => send(req, res, code, page('markdown', `<h1><a href="/">mows</a></h1><p style="margin:18px 0">${esc(m)}</p><p><a href="/">← sessions</a></p>`));
   if (!f.startsWith('/')) return oops(400, 'usage: /md?f=/home/<user>/path/to/file.md');
   if (!/\.(md|markdown|txt)$/i.test(f)) return oops(400, 'only .md, .markdown and .txt files can be previewed.');
   let real, st;
@@ -2281,14 +2367,20 @@ async function mdView(req, res, url) {
   if (!real.startsWith(MD_ROOT + '/')) return oops(403, 'only files under /home are viewable.');
   if (!st.isFile() || st.size > 2 * 1024 * 1024) return oops(403, 'not a regular file under 2 MB.');
   const src = await fsp.readFile(real, 'utf8');
+  // ?dl=1 → the raw file as a download (phones can't reach the VPS disk any other way)
+  if (url.searchParams.get('dl')) {
+    res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(real))}` });
+    return res.end(src);
+  }
   let art = /\.txt$/i.test(real) ? `<pre>${esc(src)}</pre>` : mdHtml(src);
   // cross-references between docs stay browsable: relative links resolve through /md too
   art = art.replace(/href="(?!https?:|mailto:|#|\/)([^"]+)"/g,
     (_, rl) => `href="/md?f=${encodeURIComponent(path.resolve(path.dirname(real), rl))}"`);
   const kb = st.size < 1024 ? `${st.size} B` : `${(st.size / 1024).toFixed(1)} KB`;
   const when = rel(st.mtimeMs) === 'now' ? 'just now' : `${rel(st.mtimeMs)} ago`;
-  const body = `<h1><a href="/">mows sessions</a></h1>
-<div class="mdhead"><b>${esc(path.basename(real))}</b><span>${esc(real)}</span><span>${kb} · updated ${when}</span></div>
+  const body = `<h1><a href="/">mows</a></h1>
+<div class="mdhead"><b>${esc(path.basename(real))}</b><span>${esc(real)}</span><span>${kb} · updated ${when}</span><a class="mddl" href="/md?f=${encodeURIComponent(real)}&amp;dl=1" download>⬇ Download</a></div>
 <article class="mdv">${art}</article>`;
   const mmd = art.includes('data-lang="mermaid"') ? MD_MERMAID : '';
   send(req, res, 200, page(`${path.basename(real)} · mows`, body, `<style>${MD_CSS}</style>${mmd}`, '', '', false, null, req.headers.host));
@@ -3044,7 +3136,7 @@ ${fleetTemplates(back)}`;
 async function homeView(req, res, url) {
   freshen();
   const fleet = await fleetState();
-  const body = `<h1><a href="/">mows sessions</a></h1>
+  const body = `<h1><a href="/">mows</a></h1>
 <div class="sect">fleet <b id="fleet-count"${fleet.length ? '' : ' hidden'}>${fleet.length}</b><input type="search" data-f="filter" placeholder="filter…" aria-label="filter fleet sessions" autocomplete="off" style="margin-left:8px;width:120px;min-height:0;padding:3px 8px;vertical-align:middle"></div>
 ${renderFleet(fleet, '/')}
 <a class="newcard" href="${termHref('menu', '')}">+ New Session · open terminal picker</a>`;
@@ -3065,7 +3157,7 @@ async function systemView(req, res, url) {
   ]);
   const extra = { live, ver, deployMt: deployStat ? deployStat.mtimeMs : null,
     rsN: +url.searchParams.get('rs') || 0 };
-  const body = `<h1><a href="/">← sessions</a> <span class="muted">· system</span></h1>
+  const body = `<h1><a href="/">mows</a> <span class="muted">· system</span></h1>
 ${sysPanel('/system?fresh=1', true, rec, true, extra)}`;
   send(req, res, 200, page('system · mows sessions', body,
     usageCache.busy ? '<meta http-equiv="refresh" content="4">' : '', '', 'system', false, null, req.headers.host));
@@ -3130,7 +3222,7 @@ async function listView(req, res, url) {
   const fState = [acct && BY_ID[acct] ? BY_ID[acct].label : 'all',
     ({ today: 'today', '7d': '7 days', '30d': '30 days' })[d] || 'all time']
     .concat(s === 'live' ? ['live'] : [], q ? ['“' + esc(q) + '”'] : []).join(' · ');
-  const body = `<h1><a href="/">mows sessions</a> <span class="muted">· history</span>${label ? ` <span class="muted">· ${esc(label)}</span>` : ''}</h1>
+  const body = `<h1><a href="/">mows</a> <span class="muted">· history</span>${label ? ` <span class="muted">· ${esc(label)}</span>` : ''}</h1>
 <details class="sys flt"${fOn ? ' open' : ''}><summary><span class="syst">${ICO.search}filter</span><span class="syss">${fState} · <b>${rows.length}</b>${fOn ? ` of ${index.length}` : ''} sessions</span></summary>
 <div class="sysbody"><div class="bar">${chips}</div>
 <div class="bar">${dchips}
@@ -3311,7 +3403,7 @@ async function agentsView(req, res) {
   const fold = residentsFailed
     ? `<details><summary>Native background sessions — poll failed</summary><ul><li class="muted">mows-agent residents timed out or errored; not necessarily empty, try reloading</li></ul></details>`
     : `<details><summary>Native background sessions (${resRows.length})</summary><ul>${resRows.join('') || '<li class="muted">none</li>'}</ul></details>`;
-  const body = `<h1><a href="/">← sessions</a> <span class="muted">· agents</span></h1>
+  const body = `<h1><a href="/">mows</a> <span class="muted">· agents</span></h1>
 ${rows || '<p class="muted">No agents yet. <code>install.sh --agents</code> seeds <code>harness-reviewer</code>; <code>mows-agent run harness-reviewer</code> makes the first record.</p>'}
 ${fold}`;
   send(req, res, 200, page('agents · mows control', body, '', '', 'agents', false, null, req.headers.host));
