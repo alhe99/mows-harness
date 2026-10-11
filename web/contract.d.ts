@@ -31,11 +31,12 @@ export interface ChatDelta { agent: string; turn: number; seq: number; delta: st
 export interface ChatEnd   { agent: string; turn: number; cost_usd?: number; is_error?: boolean; closed?: true }
 
 // additive topics (K-13) — shapes copied from the /system panel's server helpers (MAP.md §1.3)
+export interface UsageAcct { id: string; label: string; today: number; week: number; month: number;
+                             block: { cost: number; rate: number } | null; tokExp: number | null }
 export interface UsageEvent {
-  quota: Record<string, { h5: number; wk: number }>;
+  quota: Record<string, { h5: number | null; wk: number | null }>;   // null = claude-quota printed "?" (token expired, tool absent)
   thr: number;
-  accts: Record<string, { id: string; label: string; today: number; week: number; month: number;
-                          block: { cost: number; rate: number } | null; tokExp: number | null }>;
+  accts: Record<string, UsageAcct>;
 }
 export interface SystemEvent {
   load: number; cores: number; memUsed: number; memTot: number; swapUsed: number; swapTot: number;
@@ -79,7 +80,9 @@ export interface BootSnapshot {
   host: string;
   agents?: AgentItem[];             // when route starts with /agents
   history?: HistoryPage;            // when route is /history
-  system?: SystemEvent & { usage: UsageEvent | null };   // when route is /system
+  system?: ApiSystem;               // when route is /system
+  device?: ApiDevice;               // when route is /device
+  session?: ApiSession | null;      // when route is /s/<acct>/<sid>; null when the session is unknown
 }
 
 export interface HistoryRow {
@@ -87,7 +90,48 @@ export interface HistoryRow {
   title: string | null; live: boolean; canResume: boolean; acctColor: string;
 }
 export interface HistoryPage { rows: HistoryRow[]; page: number; pages: number; total: number;
-                               accts: Array<{ id: string; label: string; color: string; n: number }> }
+                               accts: Array<{ id: string; label: string; color: string; n: number; term: boolean }>;   // term: the account has the terminal (attach/resume)
+                               resumeDays: number; // a transcript idle longer than this is not offered for resume (a live one always is)
+                               live: number;       // live sessions, the `live` chip's count
+                               indexed: number;    // sessions on disk before any filter, the `all` chip's count
+                               acct: string;       // the account filter in force: ?acct=, else the host subdomain's account, else ''
+                               label: string }     // the subdomain when it names an account (the h1's last word), else ''
+
+// GET /api/history?acct&q&d&s&page -> HistoryPage; GET /api/system[?reclaim=1] -> ApiSystem; GET /api/device[?dv=mobile|web] -> ApiDevice;
+// GET /api/session/<acct>/<sid>[?page=] -> ApiSession (404 when unknown); POST /api/usage/refresh -> 202 { ok: true }
+export interface UsageAcctFull extends UsageAcct {
+  qkey: string; cc: boolean;                                   // claude-quota's name for the account; whether ccusage answered at all
+  models: Array<{ name: string; cost: number }>;               // today's spend by model, dearest first
+  days: Array<{ d: string; cost: number; models: string[] }>;  // last 7 days, newest first
+  sess: Array<{ sid: string; cost: number; models: string[] }>; // dearest sessions of the week, <=6
+}
+export interface ReclaimTarget { id: string; label: string; note: string; g: string; b: number; extra: string }  // g '' = safe, pre-checked
+export interface ApiSystem extends SystemEvent {
+  usage: (Omit<UsageEvent, 'accts'> & { accts: Record<string, UsageAcctFull> }) | null;   // null until the first collection lands
+  now: number;                      // the server's clock, ms epoch: ages are read against it, not the viewer's
+  usageAt: number;                  // ms epoch of the last collection, 0 before the first
+  busy: boolean;                    // a collection is running: re-poll until it lands
+  live: number;                     // live terminal sessions (the Restart All count)
+  deployed: number | null;          // mtime of lite.mjs, ms epoch
+  node: string; platform: string;
+  reclaim?: ReclaimTarget[];        // only with ?reclaim=1
+}
+export interface ApiDevice {
+  dv: 'mobile' | 'web';             // the segment to show: ?dv=, else whichever device is doing something
+  droid: { state: 'stopped' | 'booting' | 'live'; res: string; udid: string };
+  web: { live: boolean; port: number };
+}
+export interface ApiSessionMsg { role: 'user' | 'claude' | 'tool' | 'res' | 'sum'; ts: string; text: string; name?: string }
+export interface ApiSession {
+  a: string; sid: string; sid8: string;
+  acct: { label: string; color: string; term: boolean };
+  proj: string; started: string; mt: number; sz: number;
+  items: number; tools: number; model: string; truncated: boolean;   // truncated: only the newest 8 MB window was read
+  live: { name: string; paused: boolean; label: string } | null;
+  canResume: boolean; resumeDays: number;
+  page: number; pages: number;      // page 1 is the newest 25 items
+  msgs: ApiSessionMsg[];            // chronological within the page
+}
 
 // actions stay POST + 303 (PRG); the shell submits them with fetch and falls back to a plain form
 export type ActionRoute =

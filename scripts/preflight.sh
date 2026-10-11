@@ -161,12 +161,12 @@ if [ -d infra/dashboard/app ]; then
   # Parsed out of UI_ASSET_TYPES rather than restated: a literal copy is exactly what went
   # stale when fonts were added, and a check that can't notice its own subject moving is the
   # hollow check this repo keeps cataloguing.
-  # The list now lives in static.mjs (ASSET_TYPES, which serves dist/ under /assets/); lite.mjs's UI_ASSET_TYPES is that same
+  # The list now lives in static.mjs (ASSET_TYPES, which serves dist/ under /assets/); legacy.mjs's UI_ASSET_TYPES is that same
   # object, and is asserted to be, so app/ and dist/ can never be served under two different lists.
   SERVED=$(sed -n '/^export const ASSET_TYPES = {/,/^};/p' infra/dashboard/static.mjs \
     | grep -oE "^  [a-z0-9]+:" | tr -d ' :' | sort | tr '\n' ' ')
   [ -n "$SERVED" ] || bad "could not parse ASSET_TYPES out of static.mjs — the ceiling's extension list is unverifiable"
-  grep -q '^const UI_ASSET_TYPES = ASSET_TYPES;' infra/dashboard/lite.mjs || bad "lite.mjs's UI_ASSET_TYPES is no longer static.mjs's ASSET_TYPES — two lists would drift"
+  grep -qE '^(export )?const UI_ASSET_TYPES = ASSET_TYPES;' infra/dashboard/legacy.mjs || bad "legacy.mjs's UI_ASSET_TYPES is no longer static.mjs's ASSET_TYPES — two lists would drift"
   MEASURED="css json mjs woff2 "
   [ "$SERVED" = "$MEASURED" ] || bad "asset extensions disagree: static.mjs serves [$SERVED], the ceiling measures [$MEASURED] — update both"
   GZ=0

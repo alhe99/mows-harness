@@ -19,16 +19,22 @@ export function createStore(env = globalThis) {
 
   /** route (path + search) -> scroll offset, kept across route changes so Back and Forward restore it (K-35). */
   const scroll = new Map();
-  /** url -> { t, p }: JSON a tab link's hover or touch fetched ahead of the tap (K-35); one GET per url per 30 s, shared with the view that asks. */
+  /** url -> { t, p, v }: JSON a tab link's hover or touch fetched ahead of the tap (K-35), or the boot snapshot carried; one GET per url
+   *  per 30 s, shared with the view that asks. `v` is the resolved value, so a view can render its first frame without waiting. */
   const jsonCache = new Map();
-  const getJson = url => {
+  const getJson = (url, force = false) => {
     const e = jsonCache.get(url);
-    if (e && Date.now() - e.t < 30000) return e.p;
+    if (!force && e && Date.now() - e.t < 30000) return e.p;
     const p = env.fetch(url).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
-    jsonCache.set(url, { t: Date.now(), p });
-    p.catch(() => jsonCache.delete(url));
+    const ent = { t: Date.now(), p, v: undefined };
+    jsonCache.set(url, ent);
+    p.then(v => { ent.v = v; }, () => { if (jsonCache.get(url) === ent) jsonCache.delete(url); });
     return p;
   };
+  const peek = url => { const e = jsonCache.get(url); return e && Date.now() - e.t < 30000 ? e.v : undefined; };
+  /** Route to a shell URL without a document load: main.mjs registers its router here; until then (and in Node) it is a plain navigation. */
+  let go = /** @type {(url: string) => void} */ (u => env.location.assign(u));
+  const seed = (url, v) => { if (v) jsonCache.set(url, { t: Date.now(), p: Promise.resolve(v), v }); };
 
   let es = /** @type {any} */ (null), url = '', attempt = 0, retry = null, hiddenTimer = null, wasOpen = false, lastId = '', pending = false;
   /** topic -> watchers: the per-view topics (chat:<agent>) added to the one stream's base topics while a view needs them. */
@@ -112,12 +118,16 @@ export function createStore(env = globalThis) {
       if (boot.agents) agents.value = boot.agents;
       if (boot.system) { const { usage: u, ...s } = boot.system; system.value = s; if (u) usage.value = u; }
     });
+    // the route's own JSON is in the boot snapshot (K-07): its first fetch is answered from here, under the key the view asks with
+    const q = env.location?.search || '';
+    seed('/api/history' + q, boot.history); seed('/api/system' + q, boot.system); seed('/api/device' + q, boot.device);
+    if (boot.session) seed(`/api/session/${boot.session.a}/${boot.session.sid}` + q, boot.session);
     url = `/stream?topics=${topics}`;
     env.document.addEventListener('visibilitychange', onVisibility);
     open();
   }
 
-  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, watch, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
+  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, peek, go: u => go(u), setGo: f => { go = f; }, watch, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
 }
 
 export const store = createStore();

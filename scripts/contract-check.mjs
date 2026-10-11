@@ -36,6 +36,22 @@ const api = {
   '/api/agents/harness-reviewer/chat': /** @type {import('../web/contract').ApiAgentChat} */ ({
     turns: [{ at: '2026-10-11T00:00:00Z', role: 'user', text: 'hi' }, { at: '2026-10-11T00:00:05Z', role: 'assistant', text: 'hello', cost_usd: 0.01 }] }),
   '/api/agents/harness-reviewer/runs/20260916-101500-1': /** @type {import('../web/contract').ApiAgentRun} */ ({ status: { state: 'done' }, text: 'done' }),
+  '/api/history': /** @type {import('../web/contract').HistoryPage} */ ({
+    rows: [{ a: 'demo', sid: 'bbbb2222-3333-4444-5555-666666666666', sid8: 'bbbb2222', proj: '-demo-api', mt: 1_760_000_000_000, sz: 2048, title: 'What changed?',
+      live: false, canResume: true, acctColor: '#58a6ff' }],
+    page: 1, pages: 1, total: 1, live: 0, indexed: 2, acct: '', label: '', accts: [{ id: 'demo', label: 'demo', color: '#58a6ff', n: 2, term: true }], resumeDays: 7 }),
+  '/api/system': /** @type {import('../web/contract').ApiSystem} */ ({
+    load: 0.4, cores: 4, memUsed: 1e9, memTot: 8e9, swapUsed: 0, swapTot: 2e9, dskUsed: 5e10, dskTot: 1e11, up: 86400, version: '2.0.0',
+    usage: { quota: { personal: { h5: 8, wk: 18 } }, thr: 70, accts: { personal: { id: 'personal', label: 'personal', today: 1.2, week: 9.9, month: 40,
+      block: { cost: 0.3, rate: 1.1 }, tokExp: null, qkey: 'personal', cc: true, models: [{ name: 'claude-sonnet-4', cost: 1.2 }],
+      days: [{ d: '2026-10-11', cost: 1.2, models: ['sonnet-4'] }], sess: [{ sid: 'bbbb2222-3333-4444-5555-666666666666', cost: 0.5, models: ['sonnet-4'] }] } } },
+    now: 1_760_000_100_000, usageAt: 1_760_000_000_000, busy: false, live: 1, deployed: 1_760_000_000_000, node: 'v22.0.0', platform: 'linux/arm64' }),
+  '/api/device': /** @type {import('../web/contract').ApiDevice} */ ({ dv: 'mobile', droid: { state: 'stopped', res: '', udid: '127.0.0.1:6555' }, web: { live: false, port: 6080 } }),
+  '/api/session/demo/bbbb2222-3333-4444-5555-666666666666': /** @type {import('../web/contract').ApiSession} */ ({
+    a: 'demo', sid: 'bbbb2222-3333-4444-5555-666666666666', sid8: 'bbbb2222', acct: { label: 'demo', color: '#58a6ff', term: true }, proj: '/demo/api',
+    started: '2026-09-16T10:20:00Z', mt: 1_760_000_000_000, sz: 2048, items: 2, tools: 0, model: 'claude-sonnet-4', truncated: false, live: null,
+    canResume: true, resumeDays: 7, page: 1, pages: 1,
+    msgs: [{ role: 'user', ts: '2026-09-16T10:20:00Z', text: 'What changed?' }, { role: 'claude', ts: '2026-09-16T10:20:03Z', text: 'Nothing yet.' }] }),
   '/api/push/key': /** @type {import('../web/contract').ApiPushKey} */ ({ key: 'BAAA' }),
 };
 
@@ -54,6 +70,7 @@ export function startStub(port = 0) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(reply));
     }
+    if (p === '/api/usage/refresh' && req.method === 'POST') { res.writeHead(202, { 'content-type': 'application/json' }); return res.end('{"ok":true}'); }
     if (p in api) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(api[p])); }
     res.writeHead(404); res.end();
   });

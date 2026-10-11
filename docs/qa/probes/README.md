@@ -103,6 +103,26 @@ same assertions hold, and the probe header lists them. Three things are differen
   usable. `/ui` has no such recovery. `scripts/stream-replay-check.mjs --chatend-gap` runs the same case against the server with
   `web/store.mjs`.
 
+## The History, System, Device and Session views: `views-check`
+
+```sh
+node docs/qa/probes/views-check.mjs webkit all        # history, system, device, session
+node docs/qa/probes/views-check.mjs chromium device   # one view, one engine
+```
+
+Needs the dev instance (`MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next`, or `DASH=...`); no docker.
+Like `sessions-check`, it runs against `/next` with **fixture data**: the boot snapshot is rewritten in flight, `EventSource` is a fake that
+`window.__emit(name, data)` drives, and every `/api/*`, `/a/*`, `/droid/*`, `/watch/*` and `/sys/*` request is answered by the probe, so nothing it does
+reaches a real session, container or disk. The fixture filters, pages and mutates its rows the way `routes/api.mjs` does, so a chip, a pager link or a
+form has an observable effect. What each view is held to: the fixture renders; chips, the search form and the pager navigate in the same document
+(`window.__doc` survives); a form posts the right fields and the view updates; a `fleet`, `system` or `usage` event patches the DOM in place.
+Device adds the iframe lifecycle (mounted on route enter, removed on leave and on `visibilitychange: hidden`), the remote keys against a stub `window.rfb`
+and the phone-UA "Open Screen" link.
+
+`scripts/legacy-parity-check.mjs` is the server half of the same phase: `--ui=legacy` must still serve today's documents. It starts the fixture in
+docker with `--ui=legacy`, fetches ten pages and compares them with `docs/qa/baseline/cockpit/legacy-html/` (captured from the pre-split server with
+`--capture --ref <commit>`); stylesheets and scripts byte for byte, the volatile text of the markup (digits, tab ids, home paths) masked on both sides.
+
 ## What they cannot tell you
 
 - **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb`

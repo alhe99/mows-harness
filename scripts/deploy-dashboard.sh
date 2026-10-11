@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # deploy-dashboard.sh — install the dashboard onto this box and restart it (K-24: the deploy is a script, not an echo).
 #   scripts/deploy-dashboard.sh [--dry-run]
-# Installs, whichever exist in the checkout: lite.mjs chat-stream.mjs capability.mjs sse.mjs static.mjs legacy.mjs,
+# Installs, whichever exist in the checkout: lite.mjs core.mjs chat-stream.mjs capability.mjs sse.mjs static.mjs legacy.mjs,
 # routes/, dist/ (and app/ while the legacy /ui client still ships), themes.json, webterm-settle.sh and the /term page
 # into $DEST (default /opt/claude-dashboard); restarts claude-dash-lite; smokes /healthz. The restart is not optional:
 # the client assets are walked once per process. --dry-run prints every command and changes nothing.
@@ -24,7 +24,7 @@ run() { if [ "$DRY" = 1 ]; then echo "+ $*"; else "$@"; fi; }
 
 # the server and the modules it imports at load, plus the split server of phase 03 (only those that exist)
 FILES=()
-for f in lite.mjs chat-stream.mjs capability.mjs sse.mjs static.mjs legacy.mjs; do
+for f in lite.mjs core.mjs chat-stream.mjs capability.mjs sse.mjs static.mjs legacy.mjs; do
   [ -f "infra/dashboard/$f" ] && FILES+=("infra/dashboard/$f")
 done
 [ "${#FILES[@]}" -gt 0 ] || { echo "deploy: infra/dashboard/lite.mjs not found" >&2; exit 1; }

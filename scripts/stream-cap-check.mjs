@@ -15,12 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = process.env.PORT || 3105;
 
-// Read STREAM_MAX_CLIENTS out of lite.mjs instead of hardcoding 16. A copy here would silently stop testing
+// Read STREAM_MAX_CLIENTS out of sse.mjs instead of hardcoding 16. A copy here would silently stop testing
 // the cap the day someone retunes it — the harness would keep opening 8 connections against a
 // limit of 16 and report a green "cap works" having never reached the cap. (It read SSE_MAX, which is /events's cap and
 // stays 8, until /stream got its own constant in cockpit phase 01.)
-const LITE = fileURLToPath(new URL('../infra/dashboard/lite.mjs', import.meta.url));
-const m = /^const STREAM_MAX_CLIENTS = (\d+);/m.exec(readFileSync(LITE, 'utf8'));
+const LITE = fileURLToPath(new URL('../infra/dashboard/sse.mjs', import.meta.url));
+const m = /^(?:export )?const STREAM_MAX_CLIENTS = (\d+);/m.exec(readFileSync(LITE, 'utf8'));
 if (!m) {
   console.log(`FAIL: could not read STREAM_MAX_CLIENTS from ${LITE} — the cap check has lost its subject`);
   process.exit(1);

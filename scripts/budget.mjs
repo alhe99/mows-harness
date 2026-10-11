@@ -5,7 +5,7 @@
 //   node scripts/budget.mjs --chunk <name>          dist file(s) named <name>.<hash>.<ext>
 //   node scripts/budget.mjs --file <name>           dist file <name> or <stem>.<hash>.<ext>
 //   node scripts/budget.mjs --fonts                 identity bytes of the woff2 files
-//   node scripts/budget.mjs --server                infra/dashboard/{lite.mjs,routes/*,sse.mjs,static.mjs}
+//   node scripts/budget.mjs --server                infra/dashboard/{lite.mjs,core.mjs,routes/*,sse.mjs,static.mjs} (core.mjs holds what the split took out of lite.mjs; legacy.mjs is the old UI and is not server code)
 //   node scripts/budget.mjs --legacy-app            infra/dashboard/app (today's UI)
 //   node scripts/budget.mjs --self-test
 // Options: --max <kb>  --warn  --dist <dir> (default dist)  --metafile <path> (default <dist>/metafile.json)
@@ -65,7 +65,7 @@ function measure() {
   if (has('--legacy-app')) return { label: 'legacy-app', files: walk('infra/dashboard/app', n => /\.(mjs|css|woff2)$/.test(n)), size: gz };
   if (has('--server')) {
     const d = 'infra/dashboard';
-    const files = ['lite.mjs', 'sse.mjs', 'static.mjs'].map(f => join(d, f)).filter(existsSync)
+    const files = ['lite.mjs', 'core.mjs', 'sse.mjs', 'static.mjs'].map(f => join(d, f)).filter(existsSync)
       .concat(existsSync(join(d, 'routes')) ? walk(join(d, 'routes'), n => n.endsWith('.mjs')) : []);
     return { label: 'server', files, size: gz };
   }

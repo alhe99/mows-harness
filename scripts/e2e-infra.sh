@@ -251,7 +251,7 @@ chk "dashboard: speculation rules exclude /ui" \
 # Defence BEHIND the escaping in views/chat.mjs, never instead of it. This branch shipped a stored
 # XSS in that renderer whose exploitability rested partly on nothing standing behind it, and the
 # policy is scoped to /ui because that is the surface that renders agent replies (see uiCsp's own
-# comment in lite.mjs for why the server-rendered pages at / are NOT in scope).
+# comment in legacy.mjs for why the server-rendered pages at / are NOT in scope).
 #
 # Measured in two real engines before these lines were written, against a build with the header
 # removed as the control: without it an injected `onerror=` handler AND a dynamically inserted

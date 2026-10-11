@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tokens-check.mjs — web/tokens.css keeps every custom property of the legacy dashboard :root, same value (ledger B-01, K-12).
-// Reads the legacy stylesheet out of infra/dashboard/lite.mjs (the `const CSS` template) so the comparison target is the
+// Reads the legacy stylesheet out of infra/dashboard/legacy.mjs (the `const CSS` template) so the comparison target is the
 // running server's own source, not a copy. Also pins the layer order and the single dark scheme.
 //   node scripts/tokens-check.mjs
 import { readFileSync } from 'node:fs';
@@ -15,9 +15,9 @@ const rootVars = css => {
   return out;
 };
 
-const lite = readFileSync(new URL('../infra/dashboard/lite.mjs', import.meta.url), 'utf8');
-const m = /^const CSS = `\n([\s\S]*?)\n`;$/m.exec(lite);
-if (!m) { console.error('FAIL: could not find `const CSS` in lite.mjs'); process.exit(1); }
+const lite = readFileSync(new URL('../infra/dashboard/legacy.mjs', import.meta.url), 'utf8');
+const m = /^(?:export )?const CSS = `\n([\s\S]*?)\n`;$/m.exec(lite);
+if (!m) { console.error('FAIL: could not find `const CSS` in legacy.mjs'); process.exit(1); }
 const legacy = rootVars(m[1]);
 const css = readFileSync(new URL('../web/tokens.css', import.meta.url), 'utf8');
 const next = rootVars(css);

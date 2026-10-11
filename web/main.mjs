@@ -37,7 +37,7 @@ syncTabs();
 // Prefetch replaces prerender (K-35): hovering or touching a tab link fetches that route's JSON into the store, so the tap that
 // follows renders without a request. Same exclusions as the old speculation rules: never /term*, fresh=1, reclaim=1 or data-norun.
 // Only these routes have JSON; the others are not prefetched.
-const API = { '/history': '/api/history', '/system': '/api/system', '/agents': '/api/agents' };
+const API = { '/history': '/api/history', '/system': '/api/system', '/device': '/api/device', '/agents': '/api/agents' };
 function prefetch(e) {
   const a = /** @type {HTMLAnchorElement} */ (e.currentTarget), api = API[inShell(a.pathname) ?? ''];
   if (api && !/[?&](fresh|reclaim)=1\b/.test(a.search) && !a.hasAttribute('data-norun')) store.getJson(api + a.search).catch(() => {});
@@ -50,10 +50,16 @@ for (const a of document.querySelectorAll('.tb, .pnav a')) for (const ev of ['po
 history.scrollRestoration = 'manual';
 const routeKey = () => location.pathname + location.search;
 let here = routeKey(), pushed = false;
-addEventListener('popstate', () => { store.scroll.set(here, scrollY); pushed = false; here = routeKey(); });
-function restore(y) { // the document may still be growing, so retry for a few frames
+// preact-iso only scrolls and calls onRouteChange when the pathname changes, so a query-only pop restores here
+addEventListener('popstate', () => {
+  store.scroll.set(here, scrollY); pushed = false;
+  const samePath = here.split('?')[0] === location.pathname;
+  here = routeKey();
+  if (samePath) restore(store.scroll.get(here) ?? 0);
+});
+function restore(y) { // the view swaps a few frames after popstate and the document collapses (scrollY clamps to 0), so re-apply for ~10 frames
   let n = 0;
-  const step = () => { scrollTo(0, y); if (Math.abs(scrollY - y) > 1 && n++ < 10) requestAnimationFrame(step); };
+  const step = () => { if (Math.abs(scrollY - y) > 1) scrollTo(0, y); if (n++ < 10) requestAnimationFrame(step); };
   requestAnimationFrame(step);
 }
 
@@ -64,7 +70,10 @@ let settle = /** @type {null | (() => void)} */ (null);
 function go(url) {
   store.scroll.set(here, scrollY);
   pushed = true;
-  if (!document.startViewTransition || new URL(url, location.href).pathname === location.pathname) return navigate(url);
+  if (new URL(url, location.href).pathname === location.pathname) { // query-only: no route change event, land at the top (K-35)
+    navigate(url); const u = new URL(url, location.href); here = u.pathname + u.search; pushed = false; scrollTo(0, 0); return;
+  }
+  if (!document.startViewTransition) return navigate(url);
   document.startViewTransition(() => new Promise(done => {
     const t = setTimeout(done, 1000); // never hold the page behind a transition that cannot settle
     settle = () => { clearTimeout(t); settle = null; done(undefined); };
@@ -74,7 +83,7 @@ function go(url) {
 
 // Our listener is registered before preact-iso's own window click router and stops the event, so only links we accept are routed.
 // Skipped, left to the browser: modified or non-primary clicks, targets, downloads, data-nw named windows, fragments, other
-// origins, anything outside the shell, and the separate documents /term*, /md and /oauth2/*.
+// origins, anything outside the shell, and the separate documents /term*, /md, /oauth2/* and the device streams /droidview/* and /vnc/*.
 addEventListener('click', e => {
   e.stopImmediatePropagation();
   if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -82,13 +91,14 @@ addEventListener('click', e => {
   if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download') || a.hasAttribute('data-nw')
     || a.origin !== location.origin || a.getAttribute('href')?.startsWith('#')) return;
   const rel = inShell(a.pathname);
-  if (rel == null || /^\/(term|md|oauth2)(\/|$)/.test(rel)) return;
+  if (rel == null || /^\/(term|md|oauth2|droidview|vnc)(\/|$)/.test(rel)) return;
   e.preventDefault();
   go(a.pathname + a.search);
 });
 
 function App() {
   navigate = useLocation().route;
+  store.setGo(go); // views route with the same view-transition and scroll handling a link click gets
   return h(/** @type {any} */ (Router), { onRouteChange: () => {
       syncTabs(); settle?.();
       here = routeKey();
