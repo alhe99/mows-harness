@@ -59,11 +59,15 @@ async function initialSession(url, live, liveNames) {
   return (live[0] || {}).name || '';
 }
 
-export async function appView(req, res, url) {
+// `home` (lite.mjs passes --ui=next): a bare /app, which is what the installed app launches, opens the cockpit home — owner decision
+// 2026-10-11 (ledger O-5): the fleet first, the terminal one tap away. `?s=` / `?open=` and --ui=legacy keep landing in the terminal,
+// so every existing link and the rollback flag behave as before; the manifest stays byte-identical (K-20).
+export async function appView(req, res, url, home = false) {
   const live = await tmuxLive();
   const openSid = url.searchParams.get('open') || '';
   let to;
   if (/^[0-9a-f]{8}$/.test(openSid)) to = termHref('open', openSid);
+  else if (home && !url.searchParams.has('s')) to = '/';
   else { const s = await initialSession(url, live, new Set(live.map(l => l.name))); to = s ? termHref('attach', s) : '/term/?v=3'; }
   res.writeHead(302, { location: to, 'cache-control': 'no-store' }); res.end();
 }

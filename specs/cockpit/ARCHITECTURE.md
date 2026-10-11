@@ -134,7 +134,8 @@ link port as-is. The iframe mounts on route enter and unmounts on leave or `visi
 
 ## 8. PWA
 
-Manifest `id: '/'`, `start_url: '/app'`, `scope: '/'` stay byte-identical — installed apps cache them (K-20). The
+Manifest `id: '/'`, `start_url: '/app'`, `scope: '/'` stay byte-identical — installed apps cache them (K-20). A bare `/app`
+answers 302 `/` when the shell owns `/` (O-5, 2026-10-11); `/app?s=`, `/app?open=` and `--ui=legacy` still 302 into the terminal. The
 service worker caches the shell document, `dist/` files and `tokens.css` for an explicit navigation allowlist
 (`/`, `/history`, `/system`, `/device`, `/agents*`, `/s/*`); everything else — `/term*`, `/oauth2/*`, `/vnc/*`,
 `/droidview/*`, `/api/*`, `/stream`, `/events`, `/a/*`, any 302 — is network-only. Offline falls back to the inline
