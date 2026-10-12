@@ -158,6 +158,7 @@ from `dist/manifest.json` + the esbuild metafile (route closure = entry + every 
 |---|---|---|
 | `shell_js_kb` | 30 | `node scripts/budget.mjs --route shell --max 30` |
 | `view_js_kb` (each lazy route closure, excluding shared vendor chunks) | 15 | `node scripts/budget.mjs --route <view> --max 15` |
+| `grid_js_kb` (the `/grid` route closure: desktop only, link hidden on phones, brings its own stylesheet through CSSOM; the shared chunks `budget.mjs` counts are about 10 kB of it) | 20 | `node scripts/budget.mjs --route grid --max 20` |
 | `md_vendor_kb` (marked chunk) | 25 | `node scripts/budget.mjs --chunk marked --max 25` |
 | `css_kb` (`tokens.css`) | 12 | `node scripts/budget.mjs --file tokens.css --max 12` |
 | `fonts_kb` (identity bytes, two woff2) | 80 | `node scripts/budget.mjs --fonts --max 80` |
