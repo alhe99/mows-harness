@@ -46,7 +46,7 @@ answers 301 into the shell routes (K-28).
 
 ## 2. Views (full SPA — O-1)
 
-One shell document for every route under `/`: `/` Sessions, `/history`, `/system`, `/device`, `/agents`,
+One shell document for every route under `/`: `/` Sessions, `/grid` (desktop only: sidebar + tabbed, resizable terminal panes, each an iframe of `/term`; spec `docs/superpowers/specs/2026-10-11-grid-view-design.md`), `/history`, `/system`, `/device`, `/agents`,
 `/agents/<name>`, `/agents/<name>/<run>`, `/s/<acct>/<sid>`. Each view is a lazy `import()` and a route closure
 with its own budget (K-02). `/term` and `/md` are separate documents and never enter the shell graph.
 

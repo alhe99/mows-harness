@@ -290,7 +290,37 @@ async function parkMode() {
   check('6 the tab on screen kept its iframe through it (its socket was never closed)', k6.length === 1 && k6[0].name === 'cc-alpha-api' && k6[0].mark, k6);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode };
+async function leakMode() {
+  if (engine !== 'chromium') { console.log('SKIP leak (Chromium DevTools counters only)'); return; }
+  const { ctx, page } = await open();
+  const cdp = await ctx.newCDPSession(page);
+  const counters = async () => { await cdp.send('HeapProfiler.collectGarbage'); const c = await cdp.send('Memory.getDOMCounters'); return { nodes: c.nodes, listeners: c.jsEventListeners, frames: await page.evaluate(() => document.querySelectorAll('iframe.gfr').length) }; };
+  for (const n of ['cc-alpha-api', 'cc-beta-data']) await row(page, n).click();
+  for (const n of ['cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z', 'cc-alpha-web']) await row(page, n).locator('.gsplit').click();
+  await page.waitForTimeout(500);
+  const base = await counters();
+  check('1 six panes mounted', base.frames === 6, base);
+  for (let i = 0; i < 20; i++) {
+    await page.keyboard.press('Control+Shift+ArrowRight'); await page.keyboard.press('Control+Shift+KeyZ'); await page.keyboard.press('Control+Shift+KeyZ');
+    await page.keyboard.press('Control+Shift+Digit1'); await page.keyboard.press('Control+Shift+Digit2');
+    await page.evaluate(() => { window.__now += 11 * 60 * 1000; window.__grid.sweep(); });                      // parks tab 1
+    await page.locator('#gtabs .gt').nth(0).click(); await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 6);
+    await page.locator('#gtabs .gt').nth(1).click();
+    const a = await page.locator('#gtabs .gt').nth(1).boundingBox(), b = await page.locator('#gtabs .gt').nth(0).boundingBox();
+    await page.mouse.move(a.x + a.width / 2, a.y + 10); await page.mouse.down(); await page.mouse.move(b.x + 4, b.y + 10, { steps: 4 }); await page.mouse.up();
+    await page.mouse.move(b.x + 10, b.y + 10); await page.mouse.down(); await page.mouse.move(a.x + a.width - 4, a.y + 10, { steps: 4 }); await page.mouse.up();
+  }
+  await page.waitForTimeout(500);
+  const after = await counters();
+  check('2 after 20 cycles: same iframes, listeners within +20, DOM nodes within +200', after.frames === 6 && after.listeners - base.listeners <= 20 && after.nodes - base.nodes <= 200, { base, after });
+  while ((await tabs(page)).length) { await page.locator('#gtabs .gt').first().locator('.gx').click(); await page.waitForTimeout(50); } // close every tab through the UI
+  await page.waitForTimeout(300);
+  const empty = await counters();
+  check('3 everything closed: no iframes, listeners back within +20 of the empty grid', empty.frames === 0 && empty.listeners <= base.listeners, { base, empty });
+  check('4 no errors', errors.length === 0, errors);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

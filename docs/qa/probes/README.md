@@ -172,6 +172,21 @@ is served from its cache while `/term/` and `/oauth2/*` are not intercepted (the
 What none of it can tell you (the `push + badge on iOS` manual gate): that APNs or FCM deliver to a Home Screen install with the app closed, that the badge on
 the icon equals the sessions waiting, and that the Wake Lock keeps an iPhone awake.
 
+## `grid-check.mjs`: the desktop grid view
+
+```sh
+MOWS_TEST_HOOKS=1 node infra/dashboard/lite.mjs --port 3105 --host 127.0.0.1 --ui=next   # the dev instance, in another shell
+node docs/qa/probes/grid-check.mjs chromium all     # open groups persist ended phone drag keys tabs park leak
+node docs/qa/probes/grid-check.mjs webkit all       # leak SKIPs there, loudly
+```
+
+It drives `/grid` on the dev instance with a fixture fleet (the boot snapshot is rewritten in flight and `EventSource` is a fake) and stubs `/term/**` with a
+page that speaks the `grid-mod` / `grid-key` messages, so no pane ever reaches ttyd or a real tmux session. The modes: `open` (panes, tabs, caps), `groups`
+(sidebar grouping and filter), `persist` (a stored layout naming a gone session is dropped, and says so), `ended` (a pane whose session ends), `phone` (a touch or narrow device gets a note and a link to `/`, not the grid), `drag` (column and sidebar handles stay normalised), `keys` (chords, including from the framed terminal page), `tabs` (drag-reorder), `park`
+(hidden tabs close their sockets after 10 minutes and come back on click), `leak` (20 cycles of chords, parking and reordering with six panes: the same six
+iframes, listeners within +20 and DOM nodes within +200 of the start, and nothing left after every tab is closed). `leak` reads Chromium's DevTools counters
+(`Memory.getDOMCounters`), so it is Chromium-only. The pure layout state has its own browser-less check, `node scripts/grid-logic-check.mjs`, run by preflight.
+
 ## What they cannot tell you
 
 - **A real on-screen keyboard.** Playwright raises none, in any engine. The composer's `--kb`
