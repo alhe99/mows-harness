@@ -1,8 +1,12 @@
 // css.mjs — the grid view's rules, adopted through document.adoptedStyleSheets (the shell CSP allows no inline <style>; CSSOM is not
 // governed by it). Colours are the tokens.css custom properties. Panes are a CSS grid whose columns come from the state's fractions.
 export const CSS = `
-body.gridv{padding-bottom:8px}body.gridv .hdr{margin-bottom:12px}body.gridv .termfab,body.gridv .tabs{display:none}
-#grid{display:grid;grid-template-columns:var(--gsb,260px) 6px minmax(0,1fr);height:calc(100dvh - 86px);min-height:420px;gap:0}
+/* full bleed: the shell's body is a 1024 px column with 48 px padding (tokens.css), which boxed the grid into a third of a desktop screen;
+   here the body is a column the height of the viewport, the header keeps its own height, the grid takes the rest, the footer goes */
+body.gridv{max-width:none;padding:10px 14px 8px;height:100dvh;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}
+body.gridv .hdr{margin-bottom:8px;flex-shrink:0}body.gridv #app{flex:1;min-height:0;display:flex;flex-direction:column}
+body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:none}
+#grid{display:grid;grid-template-columns:var(--gsb,260px) 6px minmax(0,1fr);flex:1;min-height:0;gap:0}
 #gsb{display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--card);border:1px solid var(--bd);border-radius:12px}
 #gsb .ghd{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--hair);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
 #gsb .ghd input{flex:1;min-width:0;min-height:0;padding:3px 8px;font:13px var(--sans)}

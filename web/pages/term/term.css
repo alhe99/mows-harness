@@ -6,7 +6,7 @@
 --t-brightCyan:#37e6e8;--t-brightWhite:#f1f1f0;--t-background:#2b2b2b;--t-foreground:#d9d9d9;--t-cursor:#adadad;--t-selectionBackground:rgba(255,255,255,.3)}
 
 /* canvas bg = key-bar chrome: iOS 26 paints its reserved bottom gesture zone with the page canvas colour, so #161b22 fuses that zone with the bar */
-html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#161b22}
+html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#161b22;color-scheme:dark} /* a desktop with a mouse draws xterm's viewport scrollbar; dark, not a white bar */
 body{overscroll-behavior:none}
 #terminal-container{width:100%;height:100%;margin:0 auto;padding:0}
 #terminal-container .terminal{padding:5px;height:calc(100% - 10px)}
