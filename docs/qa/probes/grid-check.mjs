@@ -23,8 +23,10 @@ const FLEET = [
   fx('ffff6666', 'cc-gamma-y', 'y', 'gamma', 'idle', 90001),
   fx('0000aaaa', 'cc-gamma-z', 'z', 'gamma', 'idle', 90002),
 ];
-// the stub /term/ page: records the mod it was told, can send a chord up, and counts its own loads in sessionStorage so a remount is visible
+// the stub /term/ page: records the mod it was told, can send a chord up, and counts its own loads in the parent's window.__loads (keyed by
+// its query, which names the session and the tab id) so a remount or reload of a pane is visible
 const TERM = `<!doctype html><title>term</title><body data-stub=1><script>
+const L = parent.__loads || (parent.__loads = {}); L[location.search] = (L[location.search] || 0) + 1;
 addEventListener('message', e => { if (e.data && e.data.t === 'grid-mod') { window.__mod = e.data.mod; document.body.dataset.mod = e.data.mod; } });
 window.__send = key => parent.postMessage({ t: 'grid-key', key }, location.origin);
 </script>term</body>`;
@@ -59,6 +61,14 @@ const st = page => page.evaluate(() => window.__grid.state());
 const panes = page => page.$$eval('.gw:not([hidden]) .gp', ps => ps.map(p => ({ name: p.dataset.name, on: p.classList.contains('on'), needs: p.classList.contains('needs'), ended: p.classList.contains('ended'), src: p.querySelector('iframe')?.getAttribute('src') || '', shown: p.getClientRects().length > 0 })));
 const tabs = page => page.$$eval('#gtabs .gt', ts => ts.map(t => ({ id: t.dataset.id, on: t.classList.contains('on'), text: t.textContent.trim(), state: t.querySelector('.gdot')?.dataset.state })));
 const row = (page, name) => page.locator(`#gsb .gr[data-name="${name}"]`);
+// never-reload guard: wait until every pane iframe has loaded its stub, then tag each contentWindow; kept() is true while every iframe
+// still holds its tag (a re-inserted or reloaded iframe gets a fresh window at once) and every stub has loaded exactly once
+const mark = async page => {
+  await page.waitForFunction(() => [...document.querySelectorAll('iframe.gfr')].every(f => f.contentDocument?.body?.dataset.stub === '1' && window.__loads?.[new URL(f.src).search] >= 1));
+  await page.evaluate(() => document.querySelectorAll('iframe.gfr').forEach(f => { f.contentWindow.__mark = 1; }));
+};
+const kept = async page => { await page.waitForTimeout(300); return page.evaluate(() => [...document.querySelectorAll('iframe.gfr')].map(f => ({ name: f.closest('.gp')?.dataset.name, mark: f.contentWindow?.__mark === 1, loads: window.__loads?.[new URL(f.src).search] || 0 }))); };
+const allKept = k => k.length > 0 && k.every(x => x.mark && x.loads === 1);
 
 async function openMode() {
   const { ctx, page } = await open();
@@ -73,9 +83,11 @@ async function openMode() {
   const src0 = p[0].src;
   await row(page, 'cc-beta-data').click();
   check('5 click another row: a second tab, the first tab hidden but mounted', (await tabs(page)).length === 2 && await page.evaluate(() => document.querySelectorAll('.gw').length === 2 && document.querySelectorAll('.gw[hidden] iframe').length === 2));
+  await mark(page);
   await row(page, 'cc-alpha-api').click();
   p = await panes(page);
-  check('6 click an open row: back to its tab, same iframe (src unchanged -> no second socket)', (await tabs(page))[0].on && p[0].src === src0 && await page.evaluate(() => document.querySelectorAll('iframe[src*="cc-alpha-api"]').length === 1));
+  let k = await kept(page);
+  check('6 click an open row: back to its tab, same iframe (src unchanged -> no second socket), no iframe reloaded', (await tabs(page))[0].on && p[0].src === src0 && await page.evaluate(() => document.querySelectorAll('iframe[src*="cc-alpha-api"]').length === 1) && k.length === 3 && allKept(k), k);
   await row(page, 'cc-beta-data').locator('.gsplit').click();
   check('7 split of a session open in another tab goes to that tab instead', (await tabs(page))[1].on && (await panes(page)).length === 1);
   await row(page, 'cc-alpha-api').click();
@@ -85,8 +97,18 @@ async function openMode() {
   await page.evaluate(() => window.__emit('fleet', [...window.__grid.fleet(), { sid8: '9999zzzz', name: 'cc-seven', label: '7', proj: 'zeta', state: 'idle', rel: Date.now(), snippet: '' }]));
   await row(page, 'cc-seven').locator('.gsplit').click();
   check('9 the 7th split is refused with a notice; still 6 panes', (await panes(page)).length === 6 && /6 panes/.test(await page.locator('#gnotice').textContent()));
+  await mark(page);
   await page.locator('.gw:not([hidden]) .gp[data-name="cc-gamma-z"] .gclose').click();
-  check('10 close a pane: 5 left, the others keep their iframes (not reloaded)', (await panes(page)).length === 5 && await page.evaluate(() => [...document.querySelectorAll('.gw:not([hidden]) iframe')].every(f => f.contentDocument?.body?.dataset.stub === '1')));
+  k = await kept(page);
+  check('10 close a pane: 5 left, the others keep their iframes (not reloaded)', (await panes(page)).length === 5 && k.length === 6 && allKept(k), k);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => ({ ...f, rel: f.rel + 1 }))));
+  k = await kept(page);
+  const narrow = await page.evaluate(() => !!document.querySelector('#grid') && !document.querySelector('[data-view=grid-phone]'));
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => ({ ...f, rel: f.rel + 1 }))));
+  const k2 = await kept(page);
+  check('10b a desktop window narrowed below 1024 px and widened again keeps the grid and every iframe across fleet ticks', narrow && k.length === 6 && allKept(k) && k2.length === 6 && allKept(k2), { narrow, k, k2 });
   await page.locator('#gtabs .gt.on .gx').click();
   check('11 close the active tab: the other becomes active', (await tabs(page)).length === 1 && (await tabs(page))[0].on);
   check('12 no console or page errors', errors.length === 0, errors);
@@ -135,6 +157,12 @@ async function phoneMode() {
   const { ctx, page } = await open({ w: 390, h: 844, touch: true });
   check('1 a touch / narrow device gets the note and a link to /', await page.evaluate(() => !!document.querySelector('[data-view=grid-phone] a[href="/"]') && !document.querySelector('#grid')));
   await ctx.close();
+  const n = await open({ w: 900, h: 900 });
+  const note = await n.page.evaluate(() => !!document.querySelector('[data-view=grid-phone]') && !document.querySelector('#grid'));
+  await n.page.setViewportSize({ width: 1600, height: 900 });
+  const grid = await n.page.waitForSelector('#grid #gsb', { timeout: 5000 }).then(() => n.page.evaluate(() => document.body.classList.contains('gridv') && document.querySelectorAll('#gsb .gr').length === 7), () => false);
+  check('2 a desktop window opened narrow shows the note, then mounts the grid once widened', note && grid, { note, grid });
+  await n.ctx.close();
 }
 const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }

@@ -2,7 +2,7 @@
 // each pane ONE iframe of the terminal document mounted once and never re-inserted (moving an iframe in the DOM reloads it: pane wrappers
 // keep creation order, only the strip reorders). Pure state in ../grid/state.mjs, chords in ../grid/keys.mjs. Desktop only.
 import { h } from 'preact';
-import { useEffect, useLayoutEffect } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
 import * as S from '../grid/state.mjs';
@@ -94,7 +94,15 @@ function Strip({ fm }) {
 }
 
 export default function Grid() {
-  const ok = desktop();
+  // desktop-ness is decided at mount and only ever turns on: a desktop window narrowed for a moment (snapped to half a screen) keeps its
+  // panes, since unmounting them would drop every socket and reload every terminal; a window opened narrow mounts the grid once widened
+  const [ok, setOk] = useState(desktop);
+  useEffect(() => {
+    if (ok) return;
+    const on = () => { if (desktop()) setOk(true); }, mq = matchMedia('(pointer:fine)');
+    addEventListener('resize', on); mq.addEventListener('change', on);
+    return () => { removeEventListener('resize', on); mq.removeEventListener('change', on); };
+  }, [ok]);
   useLayoutEffect(() => {
     if (!ok) return;
     const sheet = new CSSStyleSheet(); sheet.replaceSync(CSS);
@@ -105,13 +113,13 @@ export default function Grid() {
     st.value = dropped.length ? { ...state, notice: `dropped ${dropped.length} ended session${dropped.length === 1 ? '' : 's'}` } : state;
     /** @type {any} */ (window).__grid = { state: () => st.value, dispatch, fleet: () => store.fleet.value };
     return () => { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(x => x !== sheet); document.body.classList.remove('gridv'); st.value = null; tabids.clear(); parked.value = new Set(); delete (/** @type {any} */ (window)).__grid; };
-  }, []);
+  }, [ok]);
   useEffect(() => {
     if (!ok) return;
     const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); });
     const t = setInterval(() => { tick.value++; }, 30000);
     return () => { un(); clearInterval(t); clearTimeout(saveT); };
-  }, []);
+  }, [ok]);
   if (!ok) return h('div', { 'data-view': 'grid-phone' }, 'The grid is a desktop view (a mouse and a window at least 1024 px wide). ', h('a', { href: '/' }, 'Back to sessions'));
   const s = st.value;
   if (!s) return null;
