@@ -444,7 +444,9 @@ export async function readBody(req) {
 // One-step visibility of the box the harness runs on. Host numbers are sync reads
 // (/proc, statfs) cached 5s; usage numbers shell out (claude-quota, ccusage per
 // account) so they're collected in the background and cached
-// 5 min — a page load NEVER waits on them (first load shows "collecting…").
+// 10 min — a page load NEVER waits on them (first load shows "collecting…"). ccusage parses every transcript on the box (~1 GB of
+// JSONL, a 1 GB node process each): the eight calls run ONE at a time under nice/ionice idle, since eight at once every 5 min
+// put a 4-core box into 80 % I/O wait and 3 GB of swap, which the terminals felt as lag (2026-10-12).
 // Optional dependencies, each degrading gracefully when absent: claude-quota
 // (agy layer) -> limits render "?", ccusage (`sudo npm i -g ccusage`) -> spend
 // cards say so.
@@ -512,15 +514,14 @@ async function collectUsage(force) {
     quota[m[1]] = { h5: isNaN(parseFloat(m[2])) ? null : parseFloat(m[2]), wk: isNaN(parseFloat(m[3])) ? null : parseFloat(m[3]) };
   const thr = +(qline.match(/threshold (\d+)/) || [])[1] || 70;
   const accts = {};
-  await Promise.all(UACCTS.map(async a => {
+  const cc = (env, args, t) => runAs(env, 'nice', ['-n', '19', 'ionice', '-c', '3', 'ccusage', ...args], t).then(jp);
+  for (const a of UACCTS) {
     const env = ['CLAUDE_CONFIG_DIR=' + a.dir];
     // one daily call covers today AND the week: per-day rows since 7 days ago + totals
-    const [dj, mj, sj, bj] = await Promise.all([
-      runAs(env, 'ccusage', ['daily', '--json', '--since', ymd, '--breakdown']),
-      runAs(env, 'ccusage', ['monthly', '--json', '--since', ym1]),
-      runAs(env, 'ccusage', ['session', '--json'], 60000),
-      runAs(env, 'ccusage', ['blocks', '--json', '--active']),
-    ].map(p => p.then(jp)));
+    const dj = await cc(env, ['daily', '--json', '--since', ymd, '--breakdown']);
+    const mj = await cc(env, ['monthly', '--json', '--since', ym1]);
+    const sj = await cc(env, ['session', '--json'], 60000);
+    const bj = await cc(env, ['blocks', '--json', '--active']);
     const rows = (dj && dj.daily) || [];
     const d0 = rows.find(r => r.period === today) || null;
     const models = (d0 && d0.modelBreakdowns || []).map(m => ({ name: m.modelName, cost: m.cost || 0 }))
@@ -541,18 +542,18 @@ async function collectUsage(force) {
       days: rows.map(r => ({ d: r.period || '', cost: r.totalCost || 0, models: (r.modelsUsed || []).map(mshort) })).reverse(),
       sess,
       block: blk ? { cost: blk.costUSD || 0, rate: (blk.burnRate && blk.burnRate.costPerHour) || 0 } : null };
-  }));
+  }
   return { quota, thr, accts };
 }
 
 export let usageCache = { t: 0, d: null, busy: false, p: null };
 
 export function usage(force) {
-  if (!usageCache.busy && (force || Date.now() - usageCache.t > 300e3)) {
+  if (!usageCache.busy && (force || Date.now() - usageCache.t > 600e3)) {
     usageCache.busy = true;
     usageCache.p = collectUsage(force)
       .then(d => { usageCache = { t: Date.now(), d, busy: false, p: null }; })
-      .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 240e3; }); // retry in 1 min
+      .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 540e3; }); // retry in 1 min
   }
   return usageCache.d;
 }

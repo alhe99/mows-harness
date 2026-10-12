@@ -30,6 +30,9 @@ term.loadAddon(new Unicode11Addon());
 term.unicode.activeVersion = '11'; // emoji width 2, to match tmux 3.4
 term.loadAddon(new WebLinksAddon());
 term.open(/** @type {HTMLElement} */ (document.getElementById('terminal-container')));
+// a pane of /grid: the shell focuses the iframe element (a row click, a tab click, a chord); that alone leaves this document's focus on
+// its body and typing goes nowhere, so the window's focus event hands it to xterm. Standalone, a click on the terminal does it, as before.
+if (window.parent !== window) { addEventListener('focus', () => term.focus()); if (document.hasFocus()) term.focus(); }
 
 // every fit goes through here: bursts (keyboard, safe areas settling) are coalesced 150 ms so the pty sees one resize; fit(true) is immediate
 /** @type {any} */ let ft = 0;

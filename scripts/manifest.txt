@@ -175,6 +175,7 @@ docs/qa/probes/README.md
 docs/qa/probes/agents-check.mjs
 docs/qa/probes/fixture.sh
 docs/qa/probes/grid-check.mjs
+docs/qa/probes/grid-focus-check.mjs
 docs/qa/probes/md-check.mjs
 docs/qa/probes/mobile-facelift.mjs
 docs/qa/probes/probes.mjs

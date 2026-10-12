@@ -7,7 +7,7 @@ import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
 import { hid } from '../shared.mjs';
 import * as S from '../grid/state.mjs';
-import { chordOf, detectMod } from '../grid/keys.mjs';
+import { chordOf, detectMod, MODS } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
 import { base } from '../shared.mjs';
 // the shell's header is hidden on /grid (its row goes to the panes); these links at the strip's right end are the pill nav's, minus Grid
@@ -22,6 +22,7 @@ const I = {
   expand: () => svg(14, '#858585', ['M8.75 1.75H12.25V5.25', 'M12.25 1.75L8.16667 5.83333', 'M1.75 12.25L5.83333 8.16667', 'M5.25 12.25H1.75V8.75']),
   shrink: () => svg(14, '#858585', ['M2.33333 8.16667H5.83333V11.6667', 'M11.6667 5.83333H8.16667V2.33333', 'M8.16667 5.83333L12.25 1.75', 'M1.75 12.25L5.83333 8.16667']),
   x14: () => svg(14, '#858585', ['M10.5 3.5L3.5 10.5', 'M3.5 3.5L10.5 10.5']),
+  panel: () => svg(14, '#858585', ['M2.917 2.333h8.166a1.167 1.167 0 0 1 1.167 1.167v7a1.167 1.167 0 0 1-1.167 1.167H2.917A1.167 1.167 0 0 1 1.75 10.5v-7a1.167 1.167 0 0 1 1.167-1.167z', 'M5.25 2.333v9.334']),
 };
 const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
 const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
@@ -52,6 +53,9 @@ function drag(e, onMove) {
 }
 const postMod = () => { for (const f of document.querySelectorAll('iframe.gfr')) /** @type {HTMLIFrameElement} */ (f).contentWindow?.postMessage({ t: 'grid-mod', mod: st.value.mod }, location.origin); };
 const focusPaneFrame = () => setTimeout(() => /** @type {HTMLElement|null} */ (document.querySelector('.gw:not([hidden]) .gp.on iframe'))?.focus(), 0);
+// a click that picks a pane (a row, split, a pane header or its buttons, a tab) hands it the keyboard: the button or row that was clicked
+// would keep the focus otherwise and typing would go nowhere (2026-10-12). The frame's own document moves it on to xterm (term.mjs).
+const go = f => { dispatch(f); focusPaneFrame(); };
 // a decoded chord (keys.mjs), from this document or from a pane. A chord that moves the focus (tab, pane, close) hands the keyboard to the
 // newly focused terminal: typing resumes there, and its forwarder sends the next chord from the right pane
 const act = key => {
@@ -61,6 +65,7 @@ const act = key => {
     if (key === 'pane:-1' || key === 'pane:1') return S.stepPane(s, +key.slice(5));
     if (key === 'tabrel:-1' || key === 'tabrel:1') return S.stepTab(s, +key.slice(7));
     if (key === 'zoom') return S.toggleZoom(s);
+    if (key === 'sidebar') return S.toggleSidebar(s);
     if (key === 'close') { const t = s.tabs.find(t => t.id === s.active); return t ? S.closePane(s, t.id, t.focus) : s; }
     return s;
   });
@@ -84,7 +89,9 @@ function onMsg(e) {
   act(e.data.key);
 }
 // an iframe taking focus is the one event the parent sees of a click inside a terminal
-function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const at = name && S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); } }, 0); }
+// (and the one that follows our own focusPaneFrame: that pane is the focused one already, so nothing is dispatched, which also keeps a notice
+// such as a refused split on the strip instead of clearing it with the no-op update)
+function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const s = st.value, at = name && s && S.find(s, name); if (at && (at.tab !== s.active || s.tabs.find(t => t.id === at.tab)?.focus !== at.i)) dispatch(x => S.focusPane(x, at.tab, at.i)); } }, 0); }
 // parking (spec: 10 min hidden): a tab off screen for S.CAPS.park ms unmounts its panes (their sockets close) and shows the .gpark
 // placeholder until clicked. The page hidden that long parks every tab, the one on screen included (a background browser tab holds no
 // sockets); back on screen, that one remounts at once and the others stay parked until clicked. Swept every minute and on every state
@@ -117,15 +124,15 @@ function Row({ f, open }) {
   const s = st.value, tab = s.tabs.find(t => t.id === s.active), full = !!tab && tab.panes.length >= S.CAPS.panes && !tab.panes.includes(f.name);
   const [ren, setRen] = useState(false); // rename: the pencil (shown on hover, like split) turns the label into an input; Enter posts /a/label, the fleet stream brings the new label; Escape or blur cancels
   return h('div', { class: 'gr', 'data-name': f.name, 'data-state': f.state, 'data-open': open ? '1' : undefined, tabIndex: 0,
-      onClick: e => dispatch(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
-      onKeyDown: e => { if (e.key === 'Enter') dispatch(s => S.openTab(s, f.name)); } },
+      onClick: e => go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
+      onKeyDown: e => { if (e.key === 'Enter') go(s => S.openTab(s, f.name)); } },
     h('span', { class: `fli fli-${f.state}`, 'data-f': 'glyph', 'aria-hidden': 'true' }, GLYPH[f.state]),
     ren ? h('form', { class: 'grn', method: 'post', action: '/a/label', onSubmit: e => { e.preventDefault(); const f = e.currentTarget; fetch(f.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(f))), redirect: 'manual' }).catch(() => {}); setRen(false); } /* not shared.mjs act(): that closes the nearest <details>, here the project group */, onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setRen(false); } },
         hid('name', f.name), h('input', { name: 'label', value: f.label || '', maxlength: 60, placeholder: 'session name', 'aria-label': 'session name', autocomplete: 'off', ref: el => el && requestAnimationFrame(() => { el.focus(); el.select(); }), onBlur: () => setRen(false) }))
       : h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
     ren ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
     ren ? null : h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
-      onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split'),
+      onClick: e => { e.stopPropagation(); go(s => S.split(s, f.name)); } }, '⫿ split'),
     h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
     f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
@@ -153,11 +160,11 @@ function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
   if (!tabids.has(name)) tabids.set(name, mint());
   const on = tab.focus === i, state = f ? f.state : 'ended';
   return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
-      onPointerDown: () => dispatch(s => S.focusPane(s, tab.id, i)) },
+      onPointerDown: () => go(s => S.focusPane(s, tab.id, i)) },
     h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
-      tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => dispatch(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
-      h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => dispatch(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? I.shrink() : I.expand()),
-      h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => dispatch(s => S.closePane(s, tab.id, i)) }, I.x14())),
+      tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => go(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
+      h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => go(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? I.shrink() : I.expand()),
+      h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => go(s => S.closePane(s, tab.id, i)) }, I.x14())),
     h('iframe', { class: 'gfr', src: `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: name, onLoad: postMod }));
 }
 
@@ -184,6 +191,7 @@ function Strip({ fm }) {
   useEffect(() => { document.querySelector('#gtabs .gt.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); }, [s.active]); // the tabs box scrolls: keep the active tab in it
   const worst = t => t.panes.reduce((w, n) => { const k = fm.get(n)?.state || 'idle'; return ORDER[k] < ORDER[w] ? k : w; }, 'idle');
   return h('nav', { id: 'gtabs' },
+    h('button', { class: 'gsbt', type: 'button', title: `${s.sb ? 'hide' : 'show'} the sidebar (${MODS[s.mod]}B)`, 'aria-label': 'toggle sidebar', 'aria-pressed': s.sb ? 'true' : 'false', onClick: () => go(S.toggleSidebar) }, I.panel()), // sharing a screen: the session list off
     h('div', { class: 'gts' }, // the tabs scroll in their own box (no scrollbar), so + and the nav never leave the strip
     s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); focusPaneFrame(); },
       // a press that travels more than 6 px is a drag: released over another tab, this one lands before or after it (by the half it is
@@ -247,7 +255,7 @@ export default function Grid() {
   const s = st.value;
   if (!s) return null;
   const fm = fleetMap();
-  return h('div', { id: 'grid', style: `--gsb:${s.sidebar}px` },
+  return h('div', { id: 'grid', class: s.sb ? undefined : 'nosb', style: `--gsb:${s.sidebar}px` },
     h(Sidebar, null),
     h('div', { id: 'gh-sb', title: 'drag to resize · double-click to reset',
       onPointerDown: e => { const left = document.getElementById('gsb').getBoundingClientRect().left; drag(e, x => dispatch(s => S.setSidebar(s, x - left))); }, // the card's own left edge: the grid pads 8 px before it

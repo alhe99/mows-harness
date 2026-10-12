@@ -26,6 +26,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr:hover .gsplit,#gsb .gr:focus-within .gsplit{opacity:1}#gsb .gr .gsplit[data-full]{opacity:.3}
 .gdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}.gh:hover,#grid.drag .gh{background:var(--pop)}
+#grid.nosb{grid-template-columns:minmax(0,1fr);padding-left:0}#grid.nosb #gsb,#grid.nosb #gh-sb{display:none} /* one column: the main is the only grid item then (a hidden item does not hold its column) */
 #gmain{display:flex;flex-direction:column;min-width:0;min-height:0}
 /* tab strip: 38 px, each tab a 16 px cell with a right hairline, the active one lifted to the card; then +, the notice, the cockpit nav */
 #gtabs{display:flex;align-items:center;height:38px;flex-shrink:0;border-bottom:1px solid var(--hair)}
@@ -35,6 +36,8 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gtabs .gt .gdot{border:0;background:var(--bd3);box-shadow:none}#gtabs .gt .gdot[data-state=working]{background:var(--ok)}#gtabs .gt .gdot[data-state=needs-you],#gtabs .gt .gdot[data-state=paused]{background:var(--warn)}
 #gtabs .gx{min-height:0;height:12px;width:20px;padding:0 0 0 8px;box-sizing:border-box;background:transparent;border:0;display:inline-flex;align-items:center;cursor:pointer}
 #gtabs .gnew{display:inline-flex;align-items:center;height:38px;padding:0 16px;border-right:1px solid var(--hair);flex-shrink:0}
+#gtabs .gsbt{min-height:0;height:38px;width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-right:1px solid var(--hair);cursor:pointer;flex-shrink:0}
+#gtabs .gsbt path{stroke:var(--mut)}#gtabs .gsbt:hover path{stroke:var(--fg)}
 #gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}.gph button path{stroke:var(--mut)}#gtabs .gx:hover path,#gtabs .gnew:hover path,.gph button:hover path{stroke:var(--fg)}
 #gnotice{font:11px/16.5px var(--mono);color:var(--warn);padding:0 16px;white-space:nowrap}
 .gnav{margin-left:auto;display:flex;gap:16px;flex-shrink:0;padding:0 16px}.gnav a{color:var(--mut);font:400 11px/16.5px var(--mono);white-space:nowrap;text-decoration:none}.gnav a:hover{color:var(--fg)}

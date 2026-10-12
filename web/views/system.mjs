@@ -63,7 +63,7 @@ function Shortcuts() {
   const read = () => { try { const m = JSON.parse(localStorage.getItem(GRID) || '{}').mod; return m in MODS ? m : detectMod(); } catch { return detectMod(); } };
   const [mod, set] = useState(read);
   const save = v => { try { const s = JSON.parse(localStorage.getItem(GRID) || '{}'); s.mod = v; localStorage.setItem(GRID, JSON.stringify(s)); } catch { /* no storage: the grid detects it */ } set(v); };
-  return h('section', { class: 'sysright-item', 'data-card': 'shortcuts' }, section('Shortcuts', 'The modifier the grid view\u2019s chords use: Mod+1\u20139 tabs, Mod+arrows, Mod+Z zoom, Mod+X close.'),
+  return h('section', { class: 'sysright-item', 'data-card': 'shortcuts' }, section('Shortcuts', 'The modifier the grid view\u2019s chords use: Mod+1\u20139 tabs, Mod+arrows, Mod+Z zoom, Mod+X close, Mod+B sidebar.'),
     h('div', { class: 'termcard set' }, h('label', { class: 'seclabel', for: 'gmod' }, 'Modifier'),
       h('select', { id: 'gmod', class: 'chip', value: mod, onChange: e => save(e.currentTarget.value) }, Object.entries(MODS).map(([k, v]) => h('option', { value: k }, v)))));
 }

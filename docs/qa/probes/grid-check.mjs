@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
@@ -373,7 +373,29 @@ async function leakMode() {
   check('4 no errors', errors.length === 0, errors);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode };
+// the sidebar toggle (a screen share): the strip's first button, Mod+B from the shell or from inside a pane, persisted
+async function sidebarMode() {
+  const { ctx, page } = await open();
+  await page.evaluate(() => localStorage.setItem('grid.v1', JSON.stringify({ mod: 'win' })));
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
+  await row(page, 'cc-alpha-api').click(); await mark(page);
+  const shown = () => page.evaluate(() => ({ sb: document.getElementById('gsb').getClientRects().length > 0, state: window.__grid.state().sb, cols: getComputedStyle(document.getElementById('grid')).gridTemplateColumns.split(' ').length, main: document.getElementById('gmain').getBoundingClientRect().left | 0, mainW: document.getElementById('gmain').getBoundingClientRect().width | 0, paneW: document.querySelector('.gw:not([hidden]) .gp')?.getBoundingClientRect().width | 0 }));
+  const s0 = await shown();
+  check('1 shown by default: the card, three columns', s0.sb && s0.state === true && s0.cols === 3, s0);
+  await page.click('#gtabs .gsbt'); await page.waitForTimeout(100);
+  const s1 = await shown();
+  check('2 the strip button hides it: no card, the panes take the whole width from the left edge, the keyboard goes to the pane', !s1.sb && s1.state === false && s1.cols === 1 && s1.main === 0 && s1.mainW === 1600 && s1.paneW === 1600 && await page.evaluate(() => document.activeElement === document.querySelector('.gw:not([hidden]) .gp.on iframe')), s1);
+  check('3 the pane was not reloaded', allKept(await kept(page)));
+  await page.waitForTimeout(400); await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid'); await page.waitForTimeout(200);
+  const s2 = await shown();
+  check('4 hidden survives a reload', !s2.sb && s2.state === false && s2.mainW === 1600, s2);
+  await page.mouse.click(700, 19); await page.keyboard.press('Control+Shift+KeyB'); await page.waitForTimeout(100); // the strip, outside any terminal
+  check('5 Mod+B in the shell shows it again', (await shown()).sb);
+  await page.evaluate(() => document.querySelector('.gw:not([hidden]) .gp.on iframe').contentWindow.__send('sidebar')); await page.waitForTimeout(100);
+  check('6 Mod+B from inside a pane hides it', !(await shown()).sb);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

@@ -5,7 +5,7 @@ export const detectMod = (platform = navigator.platform) => (/^Mac|^iPad/.test(p
 const held = (e, mod) => (mod === 'mac' ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey
   : mod === 'win' ? e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey
   : e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
-const CODES = { ArrowLeft: 'pane:-1', ArrowRight: 'pane:1', ArrowUp: 'tabrel:-1', ArrowDown: 'tabrel:1', KeyZ: 'zoom', KeyX: 'close' };
+const CODES = { ArrowLeft: 'pane:-1', ArrowRight: 'pane:1', ArrowUp: 'tabrel:-1', ArrowDown: 'tabrel:1', KeyZ: 'zoom', KeyX: 'close', KeyB: 'sidebar' };
 export function chordOf(e, mod) {
   if (!held(e, mod)) return null;
   const d = /^Digit([1-9])$/.exec(e.code);

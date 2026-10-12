@@ -27,6 +27,7 @@ let t = S.setActive(s, s.tabs[1].id); t = S.closePane(t, t.tabs[1].id, 0);
 check('10 closing the last pane closes the tab and activates a neighbour', t.tabs.length === 1 && t.active === t.tabs[0].id);
 s = S.setCols(s, s.tabs[0].id, [0.7, 0.2, 0.1]);
 check('11 setCols stores normalised fractions', s.tabs[0].cols.map(c => c.toFixed(2)).join() === '0.70,0.20,0.10');
+check('12b toggleSidebar flips sb, load keeps a hidden one and defaults to shown', !S.toggleSidebar(s).sb && S.toggleSidebar(S.toggleSidebar(s)).sb && S.load({ getItem: () => JSON.stringify({ sb: false, tabs: [] }) }, live, 'win').state.sb === false && S.load({ getItem: () => JSON.stringify({ tabs: [] }) }, live, 'win').state.sb === true);
 check('12 setSidebar clamps to 180..480', S.setSidebar(s, 50).sidebar === 180 && S.setSidebar(s, 900).sidebar === 480 && S.setSidebar(s, 300).sidebar === 300);
 s = S.focusPane(s, s.tabs[0].id, 2);
 check('13 stepPane wraps', S.stepPane(s, 1).tabs[0].focus === 3 && S.stepPane(S.focusPane(s, s.tabs[0].id, 4), 1).tabs[0].focus === 0 && S.stepPane(S.focusPane(s, s.tabs[0].id, 0), -1).tabs[0].focus === 4);
@@ -58,7 +59,7 @@ check('K2 win: Ctrl+Shift+Digit3 -> tab:3, Ctrl+Digit3 alone -> null, ⌘+Shift 
 check('K3 mac: ⌘+Shift+Digit1 -> tab:1, Ctrl+Shift -> null', chordOf(ev('Digit1', 'ms'), 'mac') === 'tab:1' && chordOf(ev('Digit1', 'cs'), 'mac') === null);
 check('K4 alt: Alt+Digit9 -> tab:9, Alt+Shift -> null, Ctrl+Alt -> null', chordOf(ev('Digit9', 'a'), 'alt') === 'tab:9' && chordOf(ev('Digit9', 'as'), 'alt') === null && chordOf(ev('Digit9', 'ac'), 'alt') === null);
 check('K5 arrows: left/right -> pane, up/down -> tabrel', ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'pane:-1,pane:1,tabrel:-1,tabrel:1');
-check('K6 letters: Z zoom, X close; S and W are NOT chords', ['KeyZ', 'KeyX', 'KeyS', 'KeyW'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'zoom,close,,');
+check('K6 letters: Z zoom, X close, B sidebar; S and W are NOT chords', ['KeyZ', 'KeyX', 'KeyB', 'KeyS', 'KeyW'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'zoom,close,sidebar,,');
 check('K7b a mod stored from /system before any tab existed is kept by load', S.load({ getItem: () => JSON.stringify({ mod: 'alt' }) }, live, 'mac').state.mod === 'alt');
 check('K7 Digit0 and a bare key are not chords', chordOf(ev('Digit0', 'cs'), 'win') === null && chordOf(ev('KeyZ', ''), 'win') === null);
 check('K8 labels for the select', MODS.mac === '⌘⇧' && MODS.win === 'Ctrl⇧' && MODS.alt === 'Alt');
