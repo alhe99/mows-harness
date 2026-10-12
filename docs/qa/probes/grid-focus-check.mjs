@@ -58,7 +58,7 @@ await page.evaluate(F => window.__emit('fleet', F.map(f => ({ ...f, rel: f.rel +
 await sleep(300);
 await typeAndSee('4 after a fleet event', 'cc-a-one');
 // 5. split a second pane: typing should go to the new one
-await page.click('#gsb .gr[data-name="cc-a-two"] .gsplit');
+await page.click('#gsb .gr[data-name="cc-a-two"]', { modifiers: ['Shift'] });
 await page.waitForFunction(() => [...document.querySelectorAll('iframe.gfr')].every(f => f.contentWindow?.term));
 await sleep(600);
 console.log('after split', await where());

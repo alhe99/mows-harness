@@ -133,21 +133,51 @@ function onVis() {
   pageHiddenAt = 0;
 }
 
+// kill a session from its sidebar row: closes its pane here too (an ended pane is no use); the fleet stream drops the row
+const closeName = name => s => { const at = S.find(s, name); return at ? S.closePane(s, at.tab, at.i) : s; };
+// drag a row (a press that travels > 6 px, as a tab's): released over the panes it splits beside them, over the strip it opens as a tab.
+// The click that follows a drag is swallowed (rowDragged)
+let rowDragged = false;
+function rowDrag(e, name) {
+  if (e.button || /** @type {HTMLElement} */ (e.target).closest('button, form')) return;
+  const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX, y0 = e.clientY, grid = document.getElementById('grid'); let moved = false;
+  rowDragged = false;
+  el.setPointerCapture(e.pointerId);
+  const move = ev => { if (!moved && (Math.abs(ev.clientX - x0) > 6 || Math.abs(ev.clientY - y0) > 6)) { moved = true; el.classList.add('dragging'); grid?.classList.add('drag', 'tabdrag'); } };
+  const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); grid?.classList.remove('drag', 'tabdrag'); };
+  const up = ev => {
+    end(); if (!moved) return;
+    rowDragged = true; setTimeout(() => { rowDragged = false; }, 0);
+    const at = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY));
+    if (at?.closest('.gw, .gempty')) go(s => S.split(s, name));
+    else if (at?.closest('#gtabs')) go(s => S.openTab(s, name));
+  };
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', end);
+}
 function Row({ f, open }) {
-  const s = st.value, tab = s.tabs.find(t => t.id === s.active), full = !!tab && tab.panes.length >= S.CAPS.panes && !tab.panes.includes(f.name);
-  const [ren, setRen] = useState(false); // rename: the pencil (shown on hover, like split) turns the label into an input; Enter posts /a/label, the fleet stream brings the new label; Escape or blur cancels
+  const [ren, setRen] = useState(false); // rename: the pencil (shown on hover, like kill) turns the label into an input; Enter posts /a/label, the fleet stream brings the new label; Escape or blur cancels
+  // kill: the × asks first, in the row, as the list view's Kill -> Kill It does; focus starts on cancel so a stray Enter keeps the session.
+  // Split stays on shift+click and on dragging a row (2026-10-12: the split button gave its place to kill)
+  const [kill, setKill] = useState(false);
   return h('div', { class: 'gr', 'data-name': f.name, 'data-state': f.state, 'data-open': open ? '1' : undefined, tabIndex: 0,
-      onClick: e => go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
+      onPointerDown: e => rowDrag(e, f.name),
+      onClick: e => { if (!rowDragged) go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))); },
       onKeyDown: e => { if (e.key === 'Enter') go(s => S.openTab(s, f.name)); } },
     h('span', { class: `fli fli-${f.state}`, 'data-f': 'glyph', 'aria-hidden': 'true' }, GLYPH[f.state]),
     ren ? h('form', { class: 'grn', method: 'post', action: '/a/label', onSubmit: e => { e.preventDefault(); const f = e.currentTarget; fetch(f.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(f))), redirect: 'manual' }).catch(() => {}); setRen(false); } /* not shared.mjs act(): that closes the nearest <details>, here the project group */, onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setRen(false); } },
         hid('name', f.name), h('input', { name: 'label', value: f.label || '', maxlength: 60, placeholder: 'session name', 'aria-label': 'session name', autocomplete: 'off', ref: el => el && requestAnimationFrame(() => { el.focus(); el.select(); }), onBlur: () => setRen(false) }))
       : h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
-    ren ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
-    ren ? null : h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
-      onClick: e => { e.stopPropagation(); go(s => S.split(s, f.name)); } }, '⫿ split'),
-    h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
-    f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
+    ren || kill ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
+    ren || kill ? null : h('button', { class: 'gkill', type: 'button', title: 'kill session', 'aria-label': 'kill session', onClick: e => { e.stopPropagation(); setKill(true); } }, I.x12()),
+    kill ? h('form', { class: 'gkc', method: 'post', action: '/a/kill', role: 'group', 'aria-label': 'confirm kill',
+        onSubmit: e => { e.preventDefault(); const fm = e.currentTarget; fetch(fm.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(fm))), redirect: 'manual' }).catch(() => {}); setKill(false); go(closeName(f.name)); },
+        onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setKill(false); } },
+        hid('name', f.name), hid('back', base() + '/grid'),
+        h('span', { class: 'gkq' }, 'Kill it? The process ends now; the transcript stays, resume anytime.'),
+        h('button', { class: 'gkno', type: 'button', onClick: () => setKill(false), ref: el => el?.focus() }, 'Cancel'),
+        h('button', { class: 'gkyes', type: 'submit' }, 'Kill It'))
+      : h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
+    !kill && f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
 
 function Sidebar() {
@@ -279,5 +309,5 @@ export default function Grid() {
       onDblClick: () => dispatch(s => S.setSidebar(s, 256)) }),
     h('main', { id: 'gmain' },
       h(Strip, { fm }),
-      s.tabs.length ? [...s.tabs].sort((a, b) => +a.id.slice(1) - +b.id.slice(1)).map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; "split" puts it beside the current panes.')));
+      s.tabs.length ? [...s.tabs].sort((a, b) => +a.id.slice(1) - +b.id.slice(1)).map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; shift+click or drag one puts it beside the current panes.')));
 }

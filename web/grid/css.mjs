@@ -22,8 +22,11 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr .grn{grid-column:2/5;display:flex;min-width:0}#gsb .gr .grn input{flex:1;min-width:0;min-height:0;height:20px;box-sizing:border-box;padding:0 6px;font:500 13px var(--sans);line-height:18px;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:5px;outline-offset:-2px}
 #gsb .gr .fst,#gsb .gr .fsnip{grid-column:2/5;font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #gsb .gr .gren{min-height:0;padding:1px 5px;font:12px var(--mono);background:transparent;color:var(--mut);border:1px solid transparent;border-radius:5px;opacity:0}#gsb .gr:hover .gren,#gsb .gr:focus-within .gren{opacity:1}#gsb .gr .gren:hover{border-color:var(--bd);color:var(--fg)}
-#gsb .gr .gsplit{min-height:0;padding:1px 6px;font:11px var(--mono);background:transparent;color:var(--mut);border:1px solid var(--bd);border-radius:5px;opacity:0}
-#gsb .gr:hover .gsplit,#gsb .gr:focus-within .gsplit{opacity:1}#gsb .gr .gsplit[data-full]{opacity:.3}
+#gsb .gr .gkill{display:inline-flex;align-items:center;min-height:0;padding:3px 5px;background:transparent;border:1px solid transparent;border-radius:5px;opacity:0;cursor:pointer}
+#gsb .gr:hover .gkill,#gsb .gr:focus-within .gkill{opacity:1}#gsb .gr .gkill:hover{border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.1)}#gsb .gr .gkill path{stroke:var(--mut)}#gsb .gr .gkill:hover path{stroke:var(--bad)}
+#gsb .gr .gkc{grid-column:2/5;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:6px;cursor:default}#gsb .gr .gkq{flex-basis:100%;font:11px/1.4 var(--sans);color:var(--mut)}
+#gsb .gr .gkc button{min-height:0;height:24px;padding:0 10px;border-radius:6px;font:500 11px var(--sans);cursor:pointer;border:1px solid var(--bd2);background:var(--card2);color:var(--fg2)}
+#gsb .gr .gkc .gkyes{color:var(--bad)}#gsb .gr .gkc .gkyes:hover{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.35)}
 .gdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}.gh:hover,#grid.drag .gh{background:var(--pop)}
 #grid.nosb{grid-template-columns:minmax(0,1fr);padding-left:0}#grid.nosb #gsb,#grid.nosb #gh-sb{display:none} /* one column: the main is the only grid item then (a hidden item does not hold its column) */
@@ -53,7 +56,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 @keyframes gpulse{0%,100%{background:var(--card2)}50%{background:rgba(255,185,0,.14)}}
 .gfr{flex:1;width:100%;border:0;background:var(--bg);min-height:0}
 #grid.drag iframe{pointer-events:none}
-#grid.tabdrag .gw:not([hidden]){outline:2px dashed var(--mut);outline-offset:-3px;cursor:copy}
+#grid.tabdrag .gw:not([hidden]),#grid.tabdrag .gempty{outline:2px dashed var(--mut);outline-offset:-3px;cursor:copy}#gsb .gr.dragging{opacity:.5}
 .gpark,.gempty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font:13px var(--mono)}
 [data-view=grid-phone]{padding:24px 8px;color:var(--mut);font:15px var(--sans)}
 @media(prefers-reduced-motion:reduce){.gp.needs .gph{animation:none;background:rgba(255,185,0,.14)}}

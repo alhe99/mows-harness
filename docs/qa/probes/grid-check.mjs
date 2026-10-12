@@ -1,5 +1,5 @@
 // Grid view probe (docs/superpowers/specs/2026-10-11-grid-view-design.md). Exit code is the verdict.
-// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|all>
+// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|sidebar|deeplink|picker|kill|all>
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
 // Runs against the shell on the dev instance with a FIXTURE fleet (boot snapshot rewritten in flight, EventSource faked, every /term/*
 // answered with a stub page that speaks the grid-mod / grid-key messages), so nothing here reaches ttyd or a real session.
@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker', 'kill'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
@@ -84,7 +84,7 @@ async function openMode() {
   let p = await panes(page), t = await tabs(page);
   check('2 click a row: one tab, one pane, iframe src attaches that name with a tab id', t.length === 1 && t[0].on && p.length === 1 && /^\/term\/\?arg=attach&arg=cc-alpha-api&arg=[0-9a-f]{8}&v=3$/.test(p[0].src) && p[0].on, p);
   check('3 the row is marked open', await row(page, 'cc-alpha-api').getAttribute('data-open') === '1');
-  await row(page, 'cc-alpha-web').locator('.gsplit').click();
+  await row(page, 'cc-alpha-web').click({ modifiers: ['Shift'] });
   p = await panes(page);
   check('4 split: two panes in the same tab, focus on the new one, needs-you class', (await tabs(page)).length === 1 && p.map(x => x.name).join() === 'cc-alpha-api,cc-alpha-web' && p[1].on && p[1].needs, p);
   const src0 = p[0].src;
@@ -95,14 +95,14 @@ async function openMode() {
   p = await panes(page);
   let k = await kept(page);
   check('6 click an open row: back to its tab, same iframe (src unchanged -> no second socket), no iframe reloaded', (await tabs(page))[0].on && p[0].src === src0 && await page.evaluate(() => document.querySelectorAll('iframe[src*="cc-alpha-api"]').length === 1) && k.length === 3 && allKept(k), k);
-  await row(page, 'cc-beta-data').locator('.gsplit').click();
+  await row(page, 'cc-beta-data').click({ modifiers: ['Shift'] });
   check('7 split of a session open in another tab goes to that tab instead', (await tabs(page))[1].on && (await panes(page)).length === 1);
   await row(page, 'cc-alpha-api').click();
-  for (const n of ['cc-beta-infra', 'cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z']) await row(page, n).locator('.gsplit').click();
+  for (const n of ['cc-beta-infra', 'cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z']) await row(page, n).click({ modifiers: ['Shift'] });
   p = await panes(page);
   check('8 six panes in 3 columns and 2 rows, each ≥ 160 px wide', p.length === 6 && (await st(page)).tabs[0].cols.length === 3 && await page.evaluate(() => { const r = [...document.querySelectorAll('.gw:not([hidden]) .gp')].map(x => x.getBoundingClientRect()); return r.every(x => x.width >= 160) && new Set(r.map(x => Math.round(x.top))).size === 2; }));
   await page.evaluate(() => window.__emit('fleet', [...window.__grid.fleet(), { sid8: '9999zzzz', name: 'cc-seven', label: '7', proj: 'zeta', state: 'idle', rel: Date.now(), snippet: '' }]));
-  await row(page, 'cc-seven').locator('.gsplit').click();
+  await row(page, 'cc-seven').click({ modifiers: ['Shift'] });
   check('9 the 7th split is refused with a notice; still 6 panes', (await panes(page)).length === 6 && /6 panes/.test(await page.locator('#gnotice').textContent()));
   await mark(page);
   await page.locator('.gw:not([hidden]) .gp[data-name="cc-gamma-z"] .gclose').click();
@@ -145,7 +145,7 @@ async function groupsMode() {
 }
 async function persistMode() {
   const { ctx, page } = await open();
-  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').locator('.gsplit').click(); await row(page, 'cc-beta-data').click();
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').click({ modifiers: ['Shift'] }); await row(page, 'cc-beta-data').click();
   await page.evaluate(() => window.__grid.dispatch(s => ({ ...s, mod: 'alt' }))); await page.click('#ggroup');
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('grid.v1')));
@@ -159,7 +159,7 @@ async function persistMode() {
 }
 async function endedMode() {
   const { ctx, page } = await open();
-  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').locator('.gsplit').click();
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').click({ modifiers: ['Shift'] });
   await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().filter(f => f.name !== 'cc-alpha-web')));
   await page.waitForFunction(() => document.querySelector('.gp[data-name="cc-alpha-web"]')?.classList.contains('ended'));
   const p = await panes(page);
@@ -182,7 +182,7 @@ async function phoneMode() {
 }
 async function dragMode() {
   const { ctx, page } = await open();
-  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').locator('.gsplit').click();
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').click({ modifiers: ['Shift'] });
   const widths = () => page.$$eval('.gw:not([hidden]) .gp', ps => ps.map(p => Math.round(p.getBoundingClientRect().width)));
   const w0 = await widths();
   check('1 two equal columns to start', Math.abs(w0[0] - w0[1]) <= 2, w0);
@@ -218,7 +218,7 @@ async function keysMode() {
   await page.evaluate(() => localStorage.setItem('grid.v1', JSON.stringify({ mod: 'win' })));
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
   for (const n of ['cc-alpha-api', 'cc-beta-data', 'cc-gamma-x']) await row(page, n).click();
-  await row(page, 'cc-gamma-y').locator('.gsplit').click();
+  await row(page, 'cc-gamma-y').click({ modifiers: ['Shift'] });
   await page.waitForTimeout(200);
   check('1 every pane was told the modifier', await page.evaluate(() => [...document.querySelectorAll('iframe.gfr')].every(f => f.contentDocument.body.dataset.mod === 'win')));
   await page.click('#gtabs'); // focus outside any terminal
@@ -349,7 +349,7 @@ async function leakMode() {
   const counters = async () => { await cdp.send('HeapProfiler.collectGarbage'); const c = await cdp.send('Memory.getDOMCounters'); return { nodes: c.nodes, listeners: c.jsEventListeners, frames: await page.evaluate(() => document.querySelectorAll('iframe.gfr').length) }; };
   const empty0 = await counters();                                                                              // the empty grid, before any tab opens
   for (const n of ['cc-alpha-api', 'cc-beta-data']) await row(page, n).click();
-  for (const n of ['cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z', 'cc-alpha-web']) await row(page, n).locator('.gsplit').click();
+  for (const n of ['cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z', 'cc-alpha-web']) await row(page, n).click({ modifiers: ['Shift'] });
   await page.waitForTimeout(500);
   const base = await counters();
   check('1 six panes mounted', base.frames === 6, base);
@@ -440,7 +440,35 @@ async function pickerMode() {
   check('9 a reload drops an open picker silently', (await tabs(page)).length === 2 && !(await page.$eval('#gtabs', e => e.textContent)).includes('dropped'), await tabs(page));
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode };
+// the row's × asks before it kills (the list view's Kill -> Kill It): cancel and Escape keep it, Kill It posts /a/kill and closes its pane;
+// shift+click still splits (the split button gave its place to kill)
+async function killMode() {
+  const { ctx, page } = await open();
+  const kills = []; await ctx.route('**/a/kill', r => { kills.push(r.request().postData()); r.fulfill({ status: 204 }); });
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').click({ modifiers: ['Shift'] });
+  check('1 shift+click splits (two panes in one tab)', (await panes(page)).map(p => p.name).join() === 'cc-alpha-api,cc-alpha-web');
+  check('2 no split button left; every row has a kill button', await page.locator('#gsb .gsplit').count() === 0 && await page.locator('#gsb .gr .gkill').count() === FLEET.length);
+  const r = row(page, 'cc-alpha-web');
+  await r.hover(); await r.locator('.gkill').click();
+  check('3 kill asks first: the confirm in the row, focus on Cancel, nothing posted, the pane still open', await r.locator('.gkc').isVisible() && await page.evaluate(() => document.activeElement?.classList.contains('gkno')) && kills.length === 0 && (await panes(page)).length === 2);
+  await page.keyboard.press('Enter');
+  check('4 Enter on the default (Cancel) keeps it', await r.locator('.gkc').count() === 0 && kills.length === 0);
+  await r.hover(); await r.locator('.gkill').click(); await page.keyboard.press('Escape');
+  check('5 Escape keeps it', await r.locator('.gkc').count() === 0 && kills.length === 0);
+  await r.hover(); await r.locator('.gkill').click(); await r.locator('.gkyes').click(); await page.waitForTimeout(200);
+  const body = new URLSearchParams(kills[0] || '');
+  check('6 Kill It posts /a/kill with that name and closes its pane, the other stays', kills.length === 1 && body.get('name') === 'cc-alpha-web' && (await panes(page)).map(p => p.name).join() === 'cc-alpha-api', kills);
+  const dragTo = async (name, sel) => { const a = await row(page, name).boundingBox(), b = await page.locator(sel).first().boundingBox();
+    await page.mouse.move(a.x + 40, a.y + 10); await page.mouse.down(); await page.mouse.move(a.x + 80, a.y + 30, { steps: 4 }); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(150); };
+  await dragTo('cc-beta-data', '.gw:not([hidden])');
+  check('7 dragging a row onto the panes splits it beside them', (await tabs(page)).length === 1 && (await panes(page)).map(p => p.name).join() === 'cc-alpha-api,cc-beta-data');
+  await dragTo('cc-gamma-x', '#gtabs .gts');
+  check('8 dragging a row onto the strip opens it as a tab', (await tabs(page)).length === 2 && (await panes(page)).map(p => p.name).join() === 'cc-gamma-x');
+  await row(page, 'cc-alpha-api').click();
+  check('9 a plain click after a drag still opens normally', (await tabs(page))[0].on);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

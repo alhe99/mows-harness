@@ -88,8 +88,8 @@ grid-check `deeplink` 5, shell-check 15 (five pills).
 
 Sidebar row:
 - click → if the session is open anywhere, focus that tab and pane; else open it as a **new tab** (one pane).
-- the row's `⫿ split` button, or Shift+click → add it **beside** the panes of the current tab (cap 6; at the cap the
-  button is disabled with a title saying so). Already open in this tab → focus it.
+- Shift+click (or dragging the row; the row's `⫿ split` button became a kill `×` with an in-row confirm, 2026-10-12) → add it **beside** the panes of the current tab (cap 6; at the cap the
+  strip shows a notice saying so). Already open in this tab → focus it.
 - 1–9 on the sidebar (focus outside a terminal) → same as click on the nth visible row, as on `/`.
 
 Keys. Inside a terminal the iframe owns the keyboard, so the shell has one chord set that the terminal page
