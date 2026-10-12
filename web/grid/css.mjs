@@ -35,7 +35,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gtabs .gt.on{background:var(--card2);color:var(--fg)}#gtabs .gt:not(.on):hover{color:var(--fg2)}#gtabs .gt.dragging{opacity:.5}
 #gtabs .gt .gdot{border:0;background:var(--bd3);box-shadow:none}#gtabs .gt .gdot[data-state=working]{background:var(--ok)}#gtabs .gt .gdot[data-state=needs-you],#gtabs .gt .gdot[data-state=paused]{background:var(--warn)}
 #gtabs .gx{min-height:0;height:12px;width:20px;padding:0 0 0 8px;box-sizing:border-box;background:transparent;border:0;display:inline-flex;align-items:center;cursor:pointer}
-#gtabs .gnew{display:inline-flex;align-items:center;height:38px;padding:0 16px;border-right:1px solid var(--hair);flex-shrink:0}
+#gtabs .gnew{display:inline-flex;align-items:center;height:38px;padding:0 16px;background:transparent;border:0;border-right:1px solid var(--hair);cursor:pointer;flex-shrink:0}
 #gtabs .gsbt{min-height:0;height:38px;width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-right:1px solid var(--hair);cursor:pointer;flex-shrink:0}
 #gtabs .gsbt path{stroke:var(--mut)}#gtabs .gsbt:hover path{stroke:var(--fg)}
 #gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}.gph button path{stroke:var(--mut)}#gtabs .gx:hover path,#gtabs .gnew:hover path,.gph button:hover path{stroke:var(--fg)}

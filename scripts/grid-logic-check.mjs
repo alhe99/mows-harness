@@ -37,6 +37,18 @@ const z = S.stepPane(S.toggleZoom(s), 1), z2 = S.stepPane(z, -1);
 check('15b stepPane while zoomed moves the zoom with the focus; unzoomed it stays null', z.tabs[0].focus === 3 && z.tabs[0].zoom === 3 && z2.tabs[0].focus === 2 && z2.tabs[0].zoom === 2 && S.stepPane(s, 1).tabs[0].zoom === null);
 s = S.openTab(s, 'cc-g');
 check('16 moveTab reorders', S.moveTab(s, 2, 0).tabs.map(x => x.id).join() === [s.tabs[2].id, s.tabs[0].id, s.tabs[1].id].join());
+{ // picker panes: a tab of their own, renamed to the session the picker lands in, dropped silently by load
+  let p = S.openTab(S.empty('mac'), 'cc-a'); p = S.newPane(p);
+  const pn = p.tabs[1].panes[0];
+  check('16a newPane: a second tab, active, its pane a picker named after the tab', p.tabs.length === 2 && p.active === p.tabs[1].id && S.isPicker(pn) && pn === 'new:2' && !S.isPicker('cc-a'), p);
+  const r = S.renamePane(p, pn, 'cc-b');
+  check('16b renamePane: the pane is the session now, same tab, still active', r.tabs[1].panes.join() === 'cc-b' && r.active === r.tabs[1].id && !S.find(r, pn));
+  const r2 = S.renamePane(p, pn, 'cc-a');
+  check('16c renamePane to a session open elsewhere closes that pane first', r2.tabs.length === 1 && r2.tabs[0].panes.join() === 'cc-a' && r2.active === r2.tabs[0].id, r2);
+  check('16d renamePane of an unknown pane is a no-op', S.renamePane(p, 'new:9', 'cc-b') === p);
+  const m = mem(); S.save(m, p); const l = S.load(m, live, 'mac');
+  check('16e load drops picker panes silently (no dropped entry) and keeps the rest', l.state.tabs.length === 1 && l.state.tabs[0].panes.join() === 'cc-a' && l.dropped.length === 0, l);
+}
 let c = S.empty('mac'); for (let i = 0; i < 9; i++) c = S.openTab(c, 'cc-' + i); const c10 = S.openTab(c, 'cc-x');
 check('17 cap 9 tabs: the 10th is refused with a notice', c.tabs.length === 9 && c10.tabs.length === 9 && /9 tabs/.test(c10.notice));
 

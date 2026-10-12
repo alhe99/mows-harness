@@ -47,6 +47,8 @@ for d in infra/dashboard/routes dist infra/dashboard/app; do
 done
 run $SUDO install -m644 infra/webconsole/themes.json "$DEST/themes.json"
 run $SUDO install -m755 infra/webconsole/webterm-settle.sh "$DEST/webterm-settle.sh"
+# the picker/attach script ttyd spawns per connection: install unlinks first, so a bash already running it keeps its old inode
+run $SUDO install -m755 infra/webconsole/web-term.sh "$DEST/web-term.sh"
 # the term page: dist/term.html copied to $DEST/term-index.html, the previous one kept as term-index.legacy.html (it prints its own sudo line if DEST is not writable)
 run $SUDO infra/webconsole/make-term-index.sh "$DEST/term-index.html"
 

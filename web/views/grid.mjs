@@ -37,7 +37,7 @@ const tick = signal(0);
 const tabids = new Map();   // session name -> this pane's 8-hex tab id, minted once per mount (never persisted: a reload is a new client)
 let saveT = 0;
 const dispatch = f => { const next = f(st.value); if (next !== st.value) st.value = next; };
-const labelOf = (f, name) => (f ? f.label || f.proj || f.name : name.replace(/^cc-[^-]+-/, ''));
+const labelOf = (f, name) => (f ? f.label || f.proj || f.name : S.isPicker(name) ? 'new session' : name.replace(/^cc-[^-]+-/, ''));
 const fleetMap = () => new Map(store.fleet.value.map(f => [f.name, f]));
 // a drag: pointer capture on the handle, every iframe ignores the pointer meanwhile (#grid.drag); onMove gets the pointer's x, which becomes
 // the handle's left edge. It ends on pointerup, pointercancel or a lost capture (released off the window), whichever comes first.
@@ -81,6 +81,18 @@ function onKey(e) {
   if (/^[1-9]$/.test(e.key)) { const r = document.querySelectorAll('#gsb .gr'); const el = /** @type {HTMLElement} */ (r[+e.key - 1]); if (el && el.getClientRects().length) { e.preventDefault(); el.click(); } }
   else if (e.key === 'z') { e.preventDefault(); act('zoom'); }
   else if (e.key === 'Escape') { if (st.value.tabs.find(t => t.id === st.value.active)?.zoom != null) act('zoom'); }
+}
+// picker panes: every 2 s ask /a/tab which session the picker's tmux client sits in; once it is one the fleet knows, the pane becomes
+// that session (its iframe reloads into a plain attach, which takes the client over from the picker's). A session already open in another
+// pane closes there first (state.renamePane). Nothing to ask while no picker is open.
+function pollPickers() {
+  const s = st.value; if (!s) return;
+  for (const name of s.tabs.flatMap(t => t.panes).filter(S.isPicker)) {
+    const id = tabids.get(name); if (!id) continue;
+    fetch(`/a/tab?tab=${id}`).then(r => r.json()).then(({ session }) => {
+      if (session && fleetMap().has(session) && st.value && S.find(st.value, name)) dispatch(x => S.renamePane(x, name, session));
+    }).catch(() => {});
+  }
 }
 function onMsg(e) {
   if (e.origin !== location.origin || !e.data || e.data.t !== 'grid-key' || typeof e.data.key !== 'string') return;
@@ -159,14 +171,14 @@ function Sidebar() {
 
 function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
   if (!tabids.has(name)) tabids.set(name, mint());
-  const on = tab.focus === i, state = f ? f.state : 'ended';
-  return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
+  const on = tab.focus === i, state = f ? f.state : 'ended', picker = S.isPicker(name);
+  return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f || picker ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
       onPointerDown: () => go(s => S.focusPane(s, tab.id, i)) },
-    h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
+    h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, picker ? 'picker' : f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
       tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => go(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
       h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => go(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? I.shrink() : I.expand()),
       h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => go(s => S.closePane(s, tab.id, i)) }, I.x14())),
-    h('iframe', { class: 'gfr', src: `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: name, onLoad: postMod }));
+    h('iframe', { class: 'gfr', src: picker ? `/term/?arg=menu&arg=&arg=${tabids.get(name)}&v=3` : `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: picker ? 'new session' : name, onLoad: postMod }));
 }
 
 // the handle between columns k and k+1: the pointer's x as its new left edge sets column k's width, the pair keeps its sum, each stays >= minCol px
@@ -219,7 +231,7 @@ function Strip({ fm }) {
       } },
       h('span', { class: 'gdot', 'data-state': worst(t) }), h('span', { class: 'gtl' }, t.panes.map(n => labelOf(fm.get(n), n)).join(' | ')),
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
-    h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, I.plus())),
+    h('button', { class: 'gnew', type: 'button', title: 'new session (the terminal picker, in a tab here)', 'aria-label': 'new session', onClick: () => go(S.newPane) }, I.plus())),
     h('span', { id: 'gnotice', hidden: !s.notice }, s.notice),
     h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), NAV.map(([t, p]) => h('a', { href: base() + p }, t))));
 }
@@ -252,9 +264,9 @@ export default function Grid() {
   useEffect(() => {
     if (!ok) return;
     const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); sweep(); });
-    const t = setInterval(() => { tick.value++; }, 30000), sw = setInterval(sweep, 60000);
+    const t = setInterval(() => { tick.value++; }, 30000), sw = setInterval(sweep, 60000), pk = setInterval(pollPickers, 2000);
     document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur); document.addEventListener('visibilitychange', onVis); addEventListener('pageshow', onVis); // spec s8: pageshow / visible both remount
-    return () => { un(); clearInterval(t); clearInterval(sw); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', onVis); removeEventListener('pageshow', onVis); };
+    return () => { un(); clearInterval(t); clearInterval(sw); clearInterval(pk); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', onVis); removeEventListener('pageshow', onVis); };
   }, [ok]);
   if (!ok) return h('div', { 'data-view': 'grid-phone' }, 'The grid is a desktop view (a mouse and a window at least 1024 px wide). ', h('a', { href: '/' }, 'Back to sessions'));
   const s = st.value;

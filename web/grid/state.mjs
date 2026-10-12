@@ -43,6 +43,17 @@ export function closePane(s, id, i) {
   }
   return upd(s, id, x => ({ ...x, panes: x.panes.filter((_, j) => j !== i), cols: [], focus: i < x.focus ? x.focus - 1 : x.focus, zoom: null }));
 }
+// a picker pane: the terminal picker (web-term.sh menu) in a tab of its own, named 'new:<tab n>' (a ':' is not a tmux name). The view
+// polls /a/tab for the session it ends up in and renames the pane to that session; a reload drops picker panes silently (the tab id behind
+// the picker is gone with the page). openTab's caps and notices apply.
+export const isPicker = name => name.startsWith('new:');
+export const newPane = s => openTab(s, 'new:' + (s.n + 1));
+export function renamePane(s, from, to) {
+  const at = find(s, from); if (!at || from === to) return s;
+  const dup = find(s, to); if (dup) s = closePane(s, dup.tab, dup.i); // the session was open elsewhere: that pane goes, never a second socket
+  const a = find(s, from);
+  return upd({ ...s, active: a.tab }, a.tab, t => ({ ...t, panes: t.panes.map(n => (n === from ? to : n)) }));
+}
 export const focusPane = (s, id, i) => upd({ ...s, active: id }, id, t => ({ ...t, focus: clamp(i, 0, t.panes.length - 1) }));
 export const setActive = (s, id) => (tabAt(s, id) < 0 ? s : { ...s, active: id, notice: '' });
 export function stepTab(s, d) { const k = tabAt(s, s.active); if (k < 0 || s.tabs.length < 2) return s; return setActive(s, s.tabs[(k + d + s.tabs.length) % s.tabs.length].id); }
@@ -78,7 +89,7 @@ export function load(storage, live, mod) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tabs)) return { state: empty(['mac', 'win', 'alt'].includes(raw?.mod) ? raw.mod : mod), dropped: [] }; // /system may store the mod before any tab exists
   const dropped = [];
   const tabs = raw.tabs.filter(t => t && typeof t === 'object').map(t => {
-    const panes = (Array.isArray(t.panes) ? t.panes : []).filter(n => { const ok = typeof n === 'string' && live.has(n); if (!ok && typeof n === 'string') dropped.push(n); return ok; });
+    const panes = (Array.isArray(t.panes) ? t.panes : []).filter(n => { if (typeof n !== 'string' || isPicker(n)) return false; const ok = live.has(n); if (!ok) dropped.push(n); return ok; });
     return fit({ id: String(t.id || ''), panes, cols: Array.isArray(t.cols) && t.cols.every(c => typeof c === 'number' && Number.isFinite(c) && c > 0) ? t.cols : [], focus: Math.max(0, Math.floor(Number(t.focus)) || 0), zoom: Number.isInteger(t.zoom) && t.zoom >= 0 ? t.zoom : null });
   }).filter(t => t.panes.length && /^t\d+$/.test(t.id));
   const n = Math.max(Number(raw.n) || 0, ...tabs.map(t => +t.id.slice(1)));

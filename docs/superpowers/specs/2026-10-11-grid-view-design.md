@@ -158,6 +158,15 @@ reload is a new client). Nothing is sent to the server.
   existing phone rules hide it (`@media (pointer:coarse)` → `display:none`; tokens.css gains that one rule).
 - `/grid` on a touch device: the view renders "The grid is a desktop view" with a link to `/`.
 
+New session (2026-10-12): the strip's `+` opens the terminal picker (`web-term.sh menu`) as a tab of the grid, never a browser tab.
+The pane is named `new:<tab n>` (a `:` is not a tmux name), its iframe loads `/term/?arg=menu&arg=&arg=<tabid>`, the header reads
+`new session · picker`, and the sidebar never lists it. Every 2 s the view asks `GET /a/tab?tab=<tabid>` (`web-term.sh tabsess`:
+`tmux display-message -c <tty> '#{client_session}'` for the tty the tab registered) which session the picker's client sits in; once
+it names a session the fleet knows, `state.renamePane` makes the pane that session (its iframe reloads into a plain attach, which takes
+the client over from the picker's; a pane already showing that session closes first, never two sockets). A plain shell (`[s]`) stays a
+picker pane. A reload drops picker panes silently (their tab ids died with the page). `scripts/deploy-dashboard.sh` installs
+`web-term.sh` alongside the dashboard since this change, as it already did the settle helper.
+
 ## 8. Budgets, cost and leak control
 
 Measured 2026-10-11 on this box (24 GB, earlyoom present) with headless Chromium 1920×1080, panes attached to six

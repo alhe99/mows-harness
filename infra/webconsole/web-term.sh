@@ -281,6 +281,12 @@ case "${1-}" in
     else
       printf ' no session matches "%s"\n' "${2-}"; sleep 2
     fi ;;
+  tabsess) # /a/tab backend: web-term.sh tabsess <tabid> -> the tmux session that tab's client is attached to, '' while it sits in the picker
+    tab="${2-}"
+    [[ "$tab" =~ ^[0-9a-f]{8}$ ]] || exit 2
+    tty=$(cat "$CLIENTS_DIR/$tab" 2>/dev/null) || exit 2
+    tmux display-message -p -c "$tty" '#{client_session}' 2>/dev/null || true
+    exit 0 ;;
   switch) # /a/switch backend (design doc §2): web-term.sh switch <tabid> <to>
     tab="${2-}"; to="${3-}"
     [[ "$tab" =~ ^[0-9a-f]{8}$ ]] || exit 2

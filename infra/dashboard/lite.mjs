@@ -62,7 +62,7 @@ import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
 import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
-import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, termThemeAction } from './routes/actions.mjs';
+import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
 import { mdView } from './routes/md.mjs';
 
@@ -142,6 +142,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await restartAll(req, res);
     }
+    if (p === '/a/tab') return await tabAction(req, res, url);
     if (p === '/a/switch') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await switchAction(req, res);

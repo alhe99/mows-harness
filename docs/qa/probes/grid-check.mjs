@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
@@ -410,7 +410,37 @@ async function deeplinkMode() {
   check('5 the strip nav carries the view switch (grid on, list -> /) and no Sessions link', await page.evaluate(() => { const n = document.querySelector('.gnav'); return n.querySelector('.vsw a.on')?.dataset.v === 'grid' && n.querySelector('.vsw a[data-v=list]')?.getAttribute('href') === '/' && ![...n.querySelectorAll('a')].some(a => a.textContent === 'Sessions'); }));
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode };
+// the strip's +: the terminal picker as a tab here (never a new browser tab); once /a/tab names a live session the pane becomes it
+async function pickerMode() {
+  const { ctx, page } = await open();
+  let sess = '';
+  await ctx.route('**/a/tab?*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ session: sess }) }));
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
+  await row(page, 'cc-alpha-api').click(); await mark(page);
+  const popups = []; ctx.on('page', p => popups.push(p));
+  await page.click('#gtabs .gnew'); await page.waitForTimeout(100);
+  const p1 = await panes(page), t1 = await tabs(page);
+  check('1 + opens the picker as a new active tab: one pane, the menu url with a tab id, no browser tab', t1.length === 2 && t1[1].on && t1[1].text === 'new session' && p1.length === 1 && p1[0].name === 'new:2' && /^\/term\/\?arg=menu&arg=&arg=[0-9a-f]{8}&v=3$/.test(p1[0].src) && !p1[0].ended && popups.length === 0, { p1, t1, popups: popups.length });
+  check('2 its header reads new session · picker, the keyboard is in it', await page.evaluate(() => { const h = document.querySelector('.gw:not([hidden]) .gp header'); return h.querySelector('b').textContent === 'new session' && h.querySelectorAll('span')[0].textContent === 'picker' && document.activeElement === document.querySelector('.gw:not([hidden]) .gp.on iframe'); }));
+  check('3 the sidebar does not list it', (await page.$$('#gsb .gr')).length === FLEET.length);
+  await page.waitForTimeout(2300);
+  check('4 while /a/tab says nothing the pane stays a picker', (await panes(page))[0].name === 'new:2');
+  sess = 'cc-nope'; await page.waitForTimeout(2300);
+  check('5 a session the fleet does not know is ignored', (await panes(page))[0].name === 'new:2');
+  sess = 'cc-beta-data'; await page.waitForFunction(() => document.querySelector('.gw:not([hidden]) .gp')?.dataset.name === 'cc-beta-data', null, { timeout: 5000 }).catch(() => {});
+  const p2 = await panes(page);
+  check('6 a live session renames the pane: attach url with a tab id, header label, state word', p2.length === 1 && p2[0].name === 'cc-beta-data' && /^\/term\/\?arg=attach&arg=cc-beta-data&arg=[0-9a-f]{8}&v=3$/.test(p2[0].src) && (await tabs(page)).length === 2, p2);
+  check('7 the other tab was not reloaded', (await kept(page)).filter(k => k.name === 'cc-alpha-api').every(k => k.mark && k.loads === 1));
+  await page.click('#gtabs .gnew'); await page.waitForTimeout(100); sess = 'cc-alpha-api'; await page.waitForTimeout(2300);
+  const t3 = await tabs(page), p3 = await panes(page);
+  check('8 a picker landing in a session open elsewhere: that pane closes, the picker tab is the session now', t3.length === 2 && p3.length === 1 && p3[0].name === 'cc-alpha-api' && (await st(page)).tabs.map(t => t.panes.join()).join() === 'cc-beta-data,cc-alpha-api', { t3, p3 });
+  await page.click('#gtabs .gnew'); await page.waitForTimeout(400); sess = '';
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid'); await page.waitForTimeout(200);
+  check('9 a reload drops an open picker silently', (await tabs(page)).length === 2 && !(await page.$eval('#gtabs', e => e.textContent)).includes('dropped'), await tabs(page));
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');
