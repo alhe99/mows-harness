@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
 import * as S from '../grid/state.mjs';
-import { detectMod, MODS } from '../grid/keys.mjs';
+import { chordOf, detectMod, MODS } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
 
 const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
@@ -39,6 +39,42 @@ function drag(e, onMove) {
   e.preventDefault();
 }
 const postMod = () => { for (const f of document.querySelectorAll('iframe.gfr')) /** @type {HTMLIFrameElement} */ (f).contentWindow?.postMessage({ t: 'grid-mod', mod: st.value.mod }, location.origin); };
+const focusPaneFrame = () => setTimeout(() => /** @type {HTMLElement|null} */ (document.querySelector('.gw:not([hidden]) .gp.on iframe'))?.focus(), 0);
+// a decoded chord (keys.mjs), from this document or from a pane. A chord that moves the focus (tab, pane, close) hands the keyboard to the
+// newly focused terminal: typing resumes there, and its forwarder sends the next chord from the right pane
+const act = key => {
+  dispatch(s => {
+    const m = /^tab:(\d)$/.exec(key);
+    if (m) return s.tabs[+m[1] - 1] ? S.setActive(s, s.tabs[+m[1] - 1].id) : s;
+    if (key === 'pane:-1' || key === 'pane:1') return S.stepPane(s, +key.slice(5));
+    if (key === 'tabrel:-1' || key === 'tabrel:1') return S.stepTab(s, +key.slice(7));
+    if (key === 'zoom') return S.toggleZoom(s);
+    if (key === 'close') { const t = s.tabs.find(t => t.id === s.active); return t ? S.closePane(s, t.id, t.focus) : s; }
+    if (key === 'filter') { /** @type {HTMLElement|null} */ (document.querySelector('#gsb input[data-f=filter]'))?.focus(); return s; }
+    return s;
+  });
+  if (/^(tab|tabrel|pane):|^close$/.test(key)) focusPaneFrame();
+};
+const typing = () => { const t = document.activeElement; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || /** @type {HTMLElement} */ (t).isContentEditable); };
+function onKey(e) {
+  if (e.defaultPrevented || !st.value) return;
+  const key = chordOf(e, st.value.mod);
+  if (key) { if (key !== 'filter' && typing()) return; e.preventDefault(); act(key); return; }
+  if (typing() || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (/^[1-9]$/.test(e.key)) { const r = document.querySelectorAll('#gsb .gr'); const el = /** @type {HTMLElement} */ (r[+e.key - 1]); if (el && el.getClientRects().length) { e.preventDefault(); el.click(); } }
+  else if (e.key === 'z') { e.preventDefault(); act('zoom'); }
+  else if (e.key === 'Escape') { if (st.value.tabs.find(t => t.id === st.value.active)?.zoom != null) act('zoom'); }
+  else if (e.key === '/') { e.preventDefault(); act('filter'); }
+}
+function onMsg(e) {
+  if (e.origin !== location.origin || !e.data || e.data.t !== 'grid-key' || typeof e.data.key !== 'string') return;
+  const f = [...document.querySelectorAll('iframe.gfr')].find(x => /** @type {HTMLIFrameElement} */ (x).contentWindow === e.source);
+  const name = f?.closest('.gp')?.getAttribute('data-name');
+  if (name) { const at = S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); }
+  act(e.data.key);
+}
+// an iframe taking focus is the one event the parent sees of a click inside a terminal
+function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const at = name && S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); } }, 0); }
 
 function Row({ f, open }) {
   const s = st.value, tab = s.tabs.find(t => t.id === s.active), full = !!tab && tab.panes.length >= S.CAPS.panes && !tab.panes.includes(f.name);
@@ -109,7 +145,7 @@ function Strip({ fm }) {
   const s = st.value;
   const worst = t => t.panes.reduce((w, n) => { const k = fm.get(n)?.state || 'idle'; return ORDER[k] < ORDER[w] ? k : w; }, 'idle');
   return h('nav', { id: 'gtabs' },
-    s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); } },
+    s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); focusPaneFrame(); } },
       h('span', { class: 'gdot', 'data-state': worst(t) }), t.panes.map(n => labelOf(fm.get(n), n)).join(' | '),
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, '×'))),
     h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, '+'),
@@ -141,7 +177,8 @@ export default function Grid() {
     if (!ok) return;
     const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); });
     const t = setInterval(() => { tick.value++; }, 30000);
-    return () => { un(); clearInterval(t); clearTimeout(saveT); };
+    document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur);
+    return () => { un(); clearInterval(t); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); };
   }, [ok]);
   if (!ok) return h('div', { 'data-view': 'grid-phone' }, 'The grid is a desktop view (a mouse and a window at least 1024 px wide). ', h('a', { href: '/' }, 'Back to sessions'));
   const s = st.value;

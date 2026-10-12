@@ -18,6 +18,7 @@ import { sessions } from './sess.mjs';
 import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
 import { el, key, off } from './dom.mjs';
+import { gridKeys } from './gridkeys.mjs';
 // Android, light system theme: a light status bar so its dark icons read — the reasoning is in web/standalone.mjs, next to the same line.
 if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
 
@@ -101,6 +102,7 @@ setTimeout(() => requestAnimationFrame(() => {
 }), 900);
 
 client.start();
+gridKeys(term);
 
 // WebGL, Chromium only and lazy: iOS and WebKit keep the DOM renderer. A lost context drops back to it.
 if (/\b(Chrome|Edg)\//.test(navigator.userAgent) && !/CriOS|FxiOS/.test(navigator.userAgent)) {

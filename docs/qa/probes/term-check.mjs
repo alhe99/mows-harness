@@ -1,5 +1,5 @@
 // Cockpit phase 04 terminal probe (specs/cockpit/04-heavy-pages.md tasks 3-8, 11). Exit code is the verdict.
-// usage: node docs/qa/probes/term-check.mjs <webkit|chromium> <proto|keybar|ime|clipboard|sheet|paint|theme|all>
+// usage: node docs/qa/probes/term-check.mjs <webkit|chromium> <proto|keybar|ime|clipboard|sheet|paint|theme|framed|all>
 // env: DASH (default http://127.0.0.1:3105; only /assets/ is fetched from it), PLAYWRIGHT (module path; default: the repo's)
 // The page under test is dist/term.html, served by the probe in place of /term/ on the DASH origin; /term/token, the /term/ws socket (a fake ttyd:
 // every frame the page sends is recorded and the probe answers with '0' output frames), /app/live.json, /a/switch, /shot, /z and
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('term-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'webkit';
 const mode = process.argv[3] || 'all';
-const MODES = ['proto', 'keybar', 'ime', 'clipboard', 'sheet', 'paint', 'theme'];
+const MODES = ['proto', 'keybar', 'ime', 'clipboard', 'sheet', 'paint', 'theme', 'framed'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`term-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const ROOT = join(import.meta.dirname, '../../..');
@@ -501,7 +501,41 @@ async function theme() {
   check('no page errors', D.errors.length + U.errors.length + G.errors.length + O.errors.length === 0, [...D.errors, ...U.errors, ...G.errors, ...O.errors]);
 }
 
-const ALL = { proto, keybar, ime, clipboard, sheet, paint, theme };
+// ---- framed: inside an iframe the grid chords go to the parent as grid-key and never reach the pty; unframed, nothing is posted ----------
+async function framed() {
+  const W = await open(URL_A, { phone: false });
+  await W.page.evaluate(() => { window.__got = []; addEventListener('message', e => window.__got.push(e.data)); });
+  await W.page.locator('.xterm-helper-textarea').focus();
+  await W.page.keyboard.press('Control+Shift+Digit2');
+  await sleep(100);
+  check('unframed: Ctrl+Shift+2 posts nothing and reaches the pty as before (NUL): no handler is installed', (await W.page.evaluate(() => window.__got.length)) === 0 && W.inputs().at(-1) === '\x00', W.inputs());
+  await W.ctx.route('**/grid-host', r => r.fulfill({ contentType: 'text/html', body: `<!doctype html><title>host</title><script>window.__got = []; addEventListener('message', e => window.__got.push(e.data));</script><iframe id="f" src="${URL_A}" style="width:900px;height:600px"></iframe>` }));
+  const page = await W.ctx.newPage();
+  page.on('pageerror', e => W.errors.push(String(e)));
+  await page.goto(DASH + '/grid-host');
+  const frame = page.frames().find(f => f.url().includes('/term/'));
+  await frame.waitForFunction(() => /** @type {any} */ (window).term);
+  await frame.locator('.xterm-helper-textarea').focus();
+  await frame.evaluate(() => postMessage({ t: 'grid-mod', mod: 'win' }, location.origin)); // what the shell sends to a pane; same origin, so the frame can send it to itself
+  const n0 = W.inputs().length;
+  await page.keyboard.press('Control+Shift+Digit2');
+  await sleep(150);
+  const n1 = W.inputs().length;
+  await page.keyboard.press('Control+KeyC'); // not a chord: goes to the terminal as before (^C). Ctrl+Shift+<letter> would prove nothing: xterm sends no bytes for it
+  await sleep(150);
+  const got = await page.evaluate(() => window.__got.filter(m => m && m.t === 'grid-key'));
+  check('framed: Ctrl+Shift+2 reaches the parent as { t: grid-key, key: tab:2 }, once', got.length === 1 && got[0].key === 'tab:2', got);
+  const after = W.inputs().slice(n0);
+  check('framed: the chord did not reach the pty; Ctrl+C (not a chord) still does', n1 === n0 && after.join('') === '\x03', after);
+  await frame.evaluate(() => postMessage({ t: 'grid-mod', mod: 'alt' }, location.origin));
+  await page.keyboard.press('Alt+Digit3');
+  await sleep(100);
+  check('framed: after grid-mod alt, Alt+3 is the chord', (await page.evaluate(() => window.__got.filter(m => m && m.t === 'grid-key').map(m => m.key).join())) === 'tab:2,tab:3');
+  check('no page errors', W.errors.length === 0, W.errors);
+  await shut(W);
+}
+
+const ALL = { proto, keybar, ime, clipboard, sheet, paint, theme, framed };
 for (const m of mode === 'all' ? MODES : [mode]) {
   cur = m;
   try { await ALL[m](); } catch (e) { bad++; console.log(`FAIL ${engine}/${m} threw ${String(e.stack || e).split('\n').slice(0, 4).join(' | ')}`); }

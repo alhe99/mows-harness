@@ -353,6 +353,7 @@ web/pages/term/attach.mjs
 web/pages/term/bar.mjs
 web/pages/term/clip.mjs
 web/pages/term/dom.mjs
+web/pages/term/gridkeys.mjs
 web/pages/term/ime.mjs
 web/pages/term/index.html
 web/pages/term/paint.mjs

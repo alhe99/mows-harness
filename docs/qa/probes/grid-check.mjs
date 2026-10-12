@@ -3,6 +3,8 @@
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
 // Runs against the shell on the dev instance with a FIXTURE fleet (boot snapshot rewritten in flight, EventSource faked, every /term/*
 // answered with a stub page that speaks the grid-mod / grid-key messages), so nothing here reaches ttyd or a real session.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
@@ -23,12 +25,16 @@ const FLEET = [
   fx('ffff6666', 'cc-gamma-y', 'y', 'gamma', 'idle', 90001),
   fx('0000aaaa', 'cc-gamma-z', 'z', 'gamma', 'idle', 90002),
 ];
-// the stub /term/ page: records the mod it was told, can send a chord up, and counts its own loads in the parent's window.__loads (keyed by
-// its query, which names the session and the tab id) so a remount or reload of a pane is visible
+// the stub /term/ page: records the mod it was told, can send a chord up, forwards the grid chords typed into it as the real page's
+// forwarder does (web/pages/term/gridkeys.mjs, with the shell's own decoder inlined), and counts its own loads in the parent's
+// window.__loads (keyed by its query, which names the session and the tab id) so a remount or reload of a pane is visible
+const KEYS = readFileSync(join(import.meta.dirname, '../../../web/grid/keys.mjs'), 'utf8').replace(/^export /gm, '');
 const TERM = `<!doctype html><title>term</title><body data-stub=1><script>
 const L = parent.__loads || (parent.__loads = {}); L[location.search] = (L[location.search] || 0) + 1;
 addEventListener('message', e => { if (e.data && e.data.t === 'grid-mod') { window.__mod = e.data.mod; document.body.dataset.mod = e.data.mod; } });
 window.__send = key => parent.postMessage({ t: 'grid-key', key }, location.origin);
+</script><script type="module">${KEYS}
+addEventListener('keydown', e => { const key = chordOf(e, window.__mod || detectMod()); if (key) { e.preventDefault(); window.__send(key); } });
 </script>term</body>`;
 async function open(opts = {}) {
   const { w = 1600, h = 900, fleet = FLEET, touch = false, keep } = opts;
@@ -193,7 +199,52 @@ async function dragMode() {
   check('9 fractions survive a reload', (await st(page)).tabs[0].cols[0] < 0.4);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode };
+async function keysMode() {
+  const { ctx, page } = await open();
+  // once a chord has moved the keyboard into a pane, the next one travels stub -> postMessage -> shell: give it a moment to land
+  const press = async k => { await page.keyboard.press(k); await page.waitForTimeout(80); };
+  const typesInFocused = () => page.evaluate(() => document.activeElement === document.querySelector('.gw:not([hidden]) .gp.on iframe'));
+  for (const n of ['cc-alpha-api', 'cc-beta-data', 'cc-gamma-x']) await row(page, n).click();
+  await row(page, 'cc-gamma-y').locator('.gsplit').click();
+  await page.selectOption('#gmod', 'win');
+  await page.waitForTimeout(200);
+  check('1 every pane was told the modifier', await page.evaluate(() => [...document.querySelectorAll('iframe.gfr')].every(f => f.contentDocument.body.dataset.mod === 'win')));
+  await page.click('#gtabs'); // focus outside any terminal
+  await press('Control+Shift+Digit1');
+  check('2 Mod+1 switches to tab 1 and the keyboard goes to its terminal', (await tabs(page))[0].on && await typesInFocused());
+  await press('Control+Shift+ArrowDown'); // from inside tab 1's terminal now
+  check('3 Mod+↓ next tab', (await tabs(page))[1].on);
+  await press('Control+Shift+Digit3');
+  const b4 = (await panes(page)).findIndex(p => p.on);
+  await press('Control+Shift+ArrowRight');
+  const a4 = (await panes(page)).findIndex(p => p.on);
+  check('4 Mod+→ moves focus to the next pane (wrapping), and the keyboard with it', b4 >= 0 && a4 === (b4 + 1) % 2 && await typesInFocused(), [b4, a4]);
+  await press('Control+Shift+KeyZ');
+  check('5 Mod+Z zooms the focused pane (the other is display:none, still mounted)', (await panes(page)).filter(p => p.shown).length === 1 && (await panes(page)).length === 2);
+  await press('Control+Shift+KeyZ');
+  check('6 again unzooms', (await panes(page)).filter(p => p.shown).length === 2);
+  // a chord sent from inside a terminal (the stub posts what the real page's forwarder posts)
+  await page.frames().find(f => f.url().includes('cc-gamma-y')).evaluate(() => window.__send('tab:2'));
+  await page.waitForFunction(() => document.querySelector('#gtabs .gt.on')?.dataset.id === window.__grid.state().tabs[1].id);
+  check('7 a grid-key message from a pane switches tabs', (await tabs(page))[1].on);
+  await page.frames().find(f => f.url().includes('cc-beta-data')).evaluate(() => window.__send('close'));
+  await page.waitForFunction(() => document.querySelectorAll('#gtabs .gt').length === 2);
+  check('8 close from inside the only pane closes its tab', (await tabs(page)).length === 2);
+  await press('Control+Shift+KeyS');
+  check('9 Mod+S (sent from inside a terminal) focuses the sidebar filter', await page.evaluate(() => document.activeElement === document.querySelector('#gsb input[data-f=filter]')));
+  const s9 = await st(page);
+  await press('Control+Shift+ArrowLeft');
+  const s10 = await st(page);
+  check('10 arrows while typing in the filter do not move panes', s10.active === s9.active && s10.tabs.find(t => t.id === s10.active).focus === s9.tabs.find(t => t.id === s9.active).focus && await page.evaluate(() => document.activeElement === document.querySelector('#gsb input[data-f=filter]')));
+  await page.keyboard.press('Escape'); await page.click('#gtabs');
+  await page.keyboard.press('Digit2'); // grouped order: alpha · web, api — row 2 is cc-alpha-api, already open in tab 1
+  const s11 = await st(page);
+  check('11 plain 2 outside a terminal acts on the second sidebar row (as on /): its tab becomes active', s11.tabs.find(t => t.id === s11.active).panes.includes('cc-alpha-api'));
+  await page.evaluate(() => window.postMessage({ t: 'grid-key', key: 'tab:1' }, 'https://evil.example'));
+  check('12 a message from another origin is ignored (no throw, state unchanged)', errors.length === 0);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');
