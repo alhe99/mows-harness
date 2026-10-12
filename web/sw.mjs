@@ -12,7 +12,7 @@
 const sw = self;
 const ASSETS = 'mows-assets', PAGES = 'mows-pages', META = 'mows-meta', MAX_PAGES = 40;
 const FILES = (sw.PRECACHE && sw.PRECACHE.files) || {};
-const SHELL = /^\/(history|system|device|agents(\/.*)?|s\/.+)?$/;
+const SHELL = /^\/(grid|history|system|device|agents(\/.*)?|s\/.+)?$/;
 const OFF = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>offline</title><body style="background:#09090b;color:#9f9fa9;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center"><div><div style="color:#00d492;font-size:26px;padding-bottom:10px">&gt;_</div>offline — the console needs a connection.<br><br><a style="color:#00d492" href="/">retry</a></div>';
 
 // a response worth keeping: a 200 from this origin that was not reached through a redirect

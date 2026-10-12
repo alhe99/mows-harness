@@ -375,6 +375,7 @@ web/views/agents.mjs
 web/views/capability.mjs
 web/views/chat.mjs
 web/views/device.mjs
+web/views/grid.mjs
 web/views/history.mjs
 web/views/run.mjs
 web/views/session.mjs

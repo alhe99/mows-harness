@@ -72,7 +72,7 @@ import { mdView } from './routes/md.mjs';
 const UI = (args.find(a => a.startsWith('--ui=')) || '').slice(5) || flag('--ui', 'next');
 if (UI !== 'legacy' && UI !== 'next') { console.error(`lite: --ui is legacy or next, not "${UI}"`); process.exit(2); }
 // the routes the shell owns when it answers at `/` (web/main.mjs routes, MAP 3.2)
-const SHELL_RE = /^\/(history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
+const SHELL_RE = /^\/(grid|history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
 
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {

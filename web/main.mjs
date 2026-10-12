@@ -16,6 +16,7 @@ startPwa(store);
 // one lazy import() per view, so each view is its own chunk and budget (K-02)
 const routes = [
   ['/', lazy(() => import('./views/sessions.mjs'))],
+  ['/grid', lazy(() => import('./views/grid.mjs'))],
   ['/history', lazy(() => import('./views/history.mjs'))],
   ['/system', lazy(() => import('./views/system.mjs'))],
   ['/device', lazy(() => import('./views/device.mjs'))],
@@ -28,7 +29,7 @@ const NotFound = () => h('h1', { 'data-view': 'not-found' }, 'not found');
 
 // the path inside the shell, or null when it is outside it
 const inShell = p => (!base ? p : p === base || p.startsWith(base + '/') ? p.slice(base.length) || '/' : null);
-const tabOf = p => (p === '/' ? 'sessions' : /^\/(history|system|device|agents)(\/|$)/.exec(p)?.[1] ?? '');
+const tabOf = p => (p === '/' ? 'sessions' : /^\/(grid|history|system|device|agents)(\/|$)/.exec(p)?.[1] ?? '');
 function syncTabs() {
   const here = tabOf(inShell(location.pathname) ?? '');
   for (const a of document.querySelectorAll('.tb, .pnav a'))
