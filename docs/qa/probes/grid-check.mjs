@@ -128,20 +128,18 @@ async function groupsMode() {
   check('2 rows inside a group follow needs-you < working < paused < idle', g[0].rows.join() === 'cc-alpha-web,cc-alpha-api' && g[1].rows.join() === 'cc-beta-infra,cc-beta-data');
   await page.click('#ggroup');
   check('3 flat: no groups, rows in fleet order, button reads grouped', await page.evaluate(() => document.querySelectorAll('#gsb details.gg').length === 0 && document.querySelectorAll('#gsb .gr').length === 7) && (await page.locator('#ggroup').textContent()) === 'grouped');
-  await page.fill('#gsb input[data-f=filter]', 'gam');
-  check('4 filter narrows rows by label, proj and snippet', await page.$$eval('#gsb .gr', rs => rs.filter(r => r.getClientRects().length).map(r => r.dataset.name).join()) === 'cc-gamma-x,cc-gamma-y,cc-gamma-z');
-  check('5 mod select shows the detected modifier and the three labels', await page.$eval('#gmod', s => [...s.options].map(o => o.textContent).join() === '⌘⇧,Ctrl⇧,Alt' && ['mac', 'win', 'alt'].includes(s.value)));
+  check('4 the sidebar head is the group toggle only: no filter box, no modifier select (that lives on /system)', await page.evaluate(() => !document.querySelector('#gsb input') && !document.querySelector('#gmod') && !!document.querySelector('#ggroup')));
   await ctx.close();
 }
 async function persistMode() {
   const { ctx, page } = await open();
   await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').locator('.gsplit').click(); await row(page, 'cc-beta-data').click();
-  await page.selectOption('#gmod', 'alt'); await page.click('#ggroup');
+  await page.evaluate(() => window.__grid.dispatch(s => ({ ...s, mod: 'alt' }))); await page.click('#ggroup');
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('grid.v1')));
   check('1 stored: two tabs, panes by name, mod alt, grouped false, no notice', stored.tabs.length === 2 && stored.tabs[0].panes.join() === 'cc-alpha-api,cc-alpha-web' && stored.mod === 'alt' && stored.grouped === false && !('notice' in stored), stored);
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
-  check('2 reload restores tabs, active tab and the select', (await tabs(page)).length === 2 && (await tabs(page))[1].on && (await page.$eval('#gmod', s => s.value)) === 'alt');
+  check('2 reload restores tabs, active tab and the modifier', (await tabs(page)).length === 2 && (await tabs(page))[1].on && (await st(page)).mod === 'alt');
   await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('grid.v1')); s.tabs[0].panes.push('cc-dead'); s.tabs.push({ id: 't9', panes: ['cc-gone'], cols: [1], focus: 0, zoom: null }); localStorage.setItem('grid.v1', JSON.stringify(s)); });
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
   check('3 names not in the fleet are dropped and reported; the empty tab is gone', (await tabs(page)).length === 2 && /dropped 2 ended sessions/.test(await page.locator('#gnotice').textContent()) && await page.evaluate(() => document.querySelectorAll('iframe[src*="cc-dead"], iframe[src*="cc-gone"]').length === 0));
@@ -204,9 +202,11 @@ async function keysMode() {
   // once a chord has moved the keyboard into a pane, the next one travels stub -> postMessage -> shell: give it a moment to land
   const press = async k => { await page.keyboard.press(k); await page.waitForTimeout(80); };
   const typesInFocused = () => page.evaluate(() => document.activeElement === document.querySelector('.gw:not([hidden]) .gp.on iframe'));
+  // the modifier is set on /system (stored before any tab exists) and read when the grid mounts
+  await page.evaluate(() => localStorage.setItem('grid.v1', JSON.stringify({ mod: 'win' })));
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
   for (const n of ['cc-alpha-api', 'cc-beta-data', 'cc-gamma-x']) await row(page, n).click();
   await row(page, 'cc-gamma-y').locator('.gsplit').click();
-  await page.selectOption('#gmod', 'win');
   await page.waitForTimeout(200);
   check('1 every pane was told the modifier', await page.evaluate(() => [...document.querySelectorAll('iframe.gfr')].every(f => f.contentDocument.body.dataset.mod === 'win')));
   await page.click('#gtabs'); // focus outside any terminal
@@ -242,12 +242,9 @@ async function keysMode() {
   await page.frames().find(f => f.url().includes('cc-beta-data')).evaluate(() => window.__send('close'));
   await page.waitForFunction(() => document.querySelectorAll('#gtabs .gt').length === 2);
   check('8 close from inside the only pane closes its tab', (await tabs(page)).length === 2);
-  await press('Control+Shift+KeyS');
-  check('9 Mod+S (sent from inside a terminal) focuses the sidebar filter', await page.evaluate(() => document.activeElement === document.querySelector('#gsb input[data-f=filter]')));
   const s9 = await st(page);
-  await press('Control+Shift+ArrowLeft');
-  const s10 = await st(page);
-  check('10 arrows while typing in the filter do not move panes', s10.active === s9.active && s10.tabs.find(t => t.id === s10.active).focus === s9.tabs.find(t => t.id === s9.active).focus && await page.evaluate(() => document.activeElement === document.querySelector('#gsb input[data-f=filter]')));
+  await press('Control+Shift+KeyS');
+  check('9 Mod+S is not a chord (the filter box is gone): the state is unchanged', JSON.stringify(await st(page)) === JSON.stringify(s9));
   await page.keyboard.press('Escape'); await page.click('#gtabs');
   await page.keyboard.press('Digit2'); // grouped order: alpha · web, api — row 2 is cc-alpha-api, already open in tab 1
   const s11 = await st(page);

@@ -56,7 +56,7 @@ the push watcher, and the phone (`/grid` on a touch device is a link back to `/`
 
 - **Sidebar** (default 260 px, drag 180–480 px, double-click the handle resets). Grouped by `proj`; each group is a
   `<details open>` with a count of needs-you sessions; groups ordered by their most urgent member, then name.
-  A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. The filter box from `/` is kept.
+  A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new
   pane of a new tab. Tabs reorder by drag (pointer events on the tab; drop before or after another tab).
@@ -84,7 +84,7 @@ forwards and that also works with focus outside a terminal. The chord's **modifi
 | `win` | Ctrl + Shift | Windows, Linux, ChromeOS |
 | `alt` | Alt (⌥) alone | never by default; for a keyboard where the two above collide |
 
-Auto-detected on first run and shown as a select in the sidebar head (`⌘⇧ / Ctrl⇧ / Alt`); the choice is stored
+Auto-detected on first run and set on `/system` (Shortcuts card, `⌘⇧ / Ctrl⇧ / Alt`, next to Notifications; 2026-10-12, it was a select in the sidebar head before); the choice is stored
 with the layout. The parent posts `{ t: 'grid-mod', mod }` to every pane on mount and on change, so the forwarder
 in the terminal page matches the same modifier.
 
@@ -95,7 +95,7 @@ in the terminal page matches the same modifier.
 | Mod+↑ / ↓ | previous / next tab |
 | Mod+Z | zoom / unzoom the focused pane |
 | Mod+X | close the focused pane (last pane closes the tab) |
-| Mod+S | open the sidebar filter (focus leaves the terminal) |
+| Mod+S | unassigned (2026-10-12: the filter box was removed) |
 
 Letters were chosen against the browser's own bindings: ⌘⇧W / Ctrl⇧W close the window and cannot be intercepted,
 so close is **X**; ⌘1–9 / Ctrl1–9 switch browser tabs, so every chord carries Shift (or is Alt). None are tmux or

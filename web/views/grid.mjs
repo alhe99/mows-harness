@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
 import * as S from '../grid/state.mjs';
-import { chordOf, detectMod, MODS } from '../grid/keys.mjs';
+import { chordOf, detectMod } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
 import { base } from '../shared.mjs';
 // the shell's header is hidden on /grid (its row goes to the panes); these links at the strip's right end are the pill nav's, minus Grid
@@ -20,7 +20,6 @@ const mint = () => [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toS
 const desktop = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
 
 const st = signal(/** @type {S.State|null} */ (null));
-const filter = signal('');
 const parked = signal(/** @type {Set<string>} */ (new Set()));
 const tick = signal(0);
 const tabids = new Map();   // session name -> this pane's 8-hex tab id, minted once per mount (never persisted: a reload is a new client)
@@ -53,7 +52,6 @@ const act = key => {
     if (key === 'tabrel:-1' || key === 'tabrel:1') return S.stepTab(s, +key.slice(7));
     if (key === 'zoom') return S.toggleZoom(s);
     if (key === 'close') { const t = s.tabs.find(t => t.id === s.active); return t ? S.closePane(s, t.id, t.focus) : s; }
-    if (key === 'filter') { /** @type {HTMLElement|null} */ (document.querySelector('#gsb input[data-f=filter]'))?.focus(); return s; }
     return s;
   });
   if (/^(tab|tabrel|pane):|^close$/.test(key)) focusPaneFrame();
@@ -62,12 +60,11 @@ const typing = () => { const t = document.activeElement; return !!t && (t.tagNam
 function onKey(e) {
   if (e.defaultPrevented || !st.value) return;
   const key = chordOf(e, st.value.mod);
-  if (key) { if (key !== 'filter' && typing()) return; e.preventDefault(); act(key); return; }
+  if (key) { if (typing()) return; e.preventDefault(); act(key); return; }
   if (typing() || e.altKey || e.ctrlKey || e.metaKey) return;
   if (/^[1-9]$/.test(e.key)) { const r = document.querySelectorAll('#gsb .gr'); const el = /** @type {HTMLElement} */ (r[+e.key - 1]); if (el && el.getClientRects().length) { e.preventDefault(); el.click(); } }
   else if (e.key === 'z') { e.preventDefault(); act('zoom'); }
   else if (e.key === 'Escape') { if (st.value.tabs.find(t => t.id === st.value.active)?.zoom != null) act('zoom'); }
-  else if (e.key === '/') { e.preventDefault(); act('filter'); }
 }
 function onMsg(e) {
   if (e.origin !== location.origin || !e.data || e.data.t !== 'grid-key' || typeof e.data.key !== 'string') return;
@@ -121,24 +118,20 @@ function Row({ f, open }) {
 
 function Sidebar() {
   tick.value;
-  const s = st.value, q = filter.value.trim().toLowerCase();
+  const s = st.value;
   const isOpen = name => !!S.find(s, name);
-  const show = f => !q || `${labelOf(f, f.name)} ${f.proj} ${f.snippet}`.toLowerCase().includes(q);
   const sorted = [...store.fleet.value].sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.rel - a.rel);
   let list;
   if (s.grouped) {
     const groups = new Map();
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
     const gs = [...groups.entries()].sort((a, b) => ORDER[a[1][0].state] - ORDER[b[1][0].state] || a[0].localeCompare(b[0]));
-    list = gs.map(([proj, fs]) => { const vis = fs.filter(show); if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
+    list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
       return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
-  } else list = sorted.filter(show).map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }));
+  } else list = sorted.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }));
   return h('aside', { id: 'gsb' },
     h('div', { class: 'ghd' },
-      h('input', { type: 'search', 'data-f': 'filter', placeholder: 'filter…', 'aria-label': 'filter sessions', autocomplete: 'off', value: filter.value, onInput: e => { filter.value = e.currentTarget.value; } }),
-      h('button', { id: 'ggroup', type: 'button', title: 'group by project', onClick: () => dispatch(s => S.setGrouped(s, !s.grouped)) }, s.grouped ? 'flat' : 'grouped'),
-      h('select', { id: 'gmod', 'aria-label': 'shortcut modifier', value: s.mod, onChange: e => { dispatch(s => S.setMod(s, e.currentTarget.value)); postMod(); } },
-        Object.entries(MODS).map(([k, v]) => h('option', { value: k }, v)))),
+      h('button', { id: 'ggroup', type: 'button', title: 'group by project', onClick: () => dispatch(s => S.setGrouped(s, !s.grouped)) }, s.grouped ? 'flat' : 'grouped')), // the chord modifier is set on /system (Shortcuts card); the sidebar is sessions only
     h('div', { class: 'glist' }, list));
 }
 

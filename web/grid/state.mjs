@@ -58,7 +58,7 @@ export const setGrouped = (s, grouped) => ({ ...s, grouped });
 export function load(storage, live, mod) {
   let raw = null;
   try { raw = JSON.parse(storage.getItem(KEY) || 'null'); } catch { raw = null; }
-  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tabs)) return { state: empty(mod), dropped: [] };
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tabs)) return { state: empty(['mac', 'win', 'alt'].includes(raw?.mod) ? raw.mod : mod), dropped: [] }; // /system may store the mod before any tab exists
   const dropped = [];
   const tabs = raw.tabs.filter(t => t && typeof t === 'object').map(t => {
     const panes = (Array.isArray(t.panes) ? t.panes : []).filter(n => { const ok = typeof n === 'string' && live.has(n); if (!ok && typeof n === 'string') dropped.push(n); return ok; });

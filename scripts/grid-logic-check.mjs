@@ -58,7 +58,8 @@ check('K2 win: Ctrl+Shift+Digit3 -> tab:3, Ctrl+Digit3 alone -> null, ⌘+Shift 
 check('K3 mac: ⌘+Shift+Digit1 -> tab:1, Ctrl+Shift -> null', chordOf(ev('Digit1', 'ms'), 'mac') === 'tab:1' && chordOf(ev('Digit1', 'cs'), 'mac') === null);
 check('K4 alt: Alt+Digit9 -> tab:9, Alt+Shift -> null, Ctrl+Alt -> null', chordOf(ev('Digit9', 'a'), 'alt') === 'tab:9' && chordOf(ev('Digit9', 'as'), 'alt') === null && chordOf(ev('Digit9', 'ac'), 'alt') === null);
 check('K5 arrows: left/right -> pane, up/down -> tabrel', ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'pane:-1,pane:1,tabrel:-1,tabrel:1');
-check('K6 letters: Z zoom, X close, S filter, W is NOT a chord', ['KeyZ', 'KeyX', 'KeyS', 'KeyW'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'zoom,close,filter,');
+check('K6 letters: Z zoom, X close; S and W are NOT chords', ['KeyZ', 'KeyX', 'KeyS', 'KeyW'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'zoom,close,,');
+check('K7b a mod stored from /system before any tab existed is kept by load', S.load({ getItem: () => JSON.stringify({ mod: 'alt' }) }, live, 'mac').state.mod === 'alt');
 check('K7 Digit0 and a bare key are not chords', chordOf(ev('Digit0', 'cs'), 'win') === null && chordOf(ev('KeyZ', ''), 'win') === null);
 check('K8 labels for the select', MODS.mac === '⌘⇧' && MODS.win === 'Ctrl⇧' && MODS.alt === 'Alt');
 
