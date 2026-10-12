@@ -223,8 +223,8 @@ export default function Grid() {
     if (!ok) return;
     const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); sweep(); });
     const t = setInterval(() => { tick.value++; }, 30000), sw = setInterval(sweep, 60000);
-    document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur); document.addEventListener('visibilitychange', onVis);
-    return () => { un(); clearInterval(t); clearInterval(sw); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', onVis); };
+    document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur); document.addEventListener('visibilitychange', onVis); addEventListener('pageshow', onVis); // spec s8: pageshow / visible both remount
+    return () => { un(); clearInterval(t); clearInterval(sw); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', onVis); removeEventListener('pageshow', onVis); };
   }, [ok]);
   if (!ok) return h('div', { 'data-view': 'grid-phone' }, 'The grid is a desktop view (a mouse and a window at least 1024 px wide). ', h('a', { href: '/' }, 'Back to sessions'));
   const s = st.value;
