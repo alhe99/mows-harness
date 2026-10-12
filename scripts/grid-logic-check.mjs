@@ -43,6 +43,10 @@ check('18 save/load round-trips tabs, cols, focus, sidebar, grouped, mod; notice
 const gone = S.load(st, new Set(['cc-a', 'cc-c']), 'win');
 check('19 load drops names that are not live and reports them; a tab left empty goes; active stays valid', gone.state.tabs.every(x => x.panes.every(n => n === 'cc-a' || n === 'cc-c')) && gone.dropped.length > 0 && gone.state.tabs.some(x => x.id === gone.state.active), gone);
 check('20 load of nothing / garbage is empty with the given mod', S.load(mem(), live, 'mac').state.mod === 'mac' && S.load({ getItem: () => '{nope' }, live, 'mac').state.tabs.length === 0);
+const bad1 = j => S.load({ getItem: () => JSON.stringify(j) }, live, 'mac');
+check('20b load skips non-object tabs instead of throwing', (() => { try { const r = bad1({ tabs: [null, 3, 'x', { id: 't1', panes: ['cc-a'] }] }); return r.state.tabs.length === 1 && r.state.tabs[0].id === 't1'; } catch { return false; } })());
+check('20c load rejects non-finite or non-positive cols and falls back to even', [[['x'], 1], [['x', 'y'], 2], [[0, 1], 2], [[-1, 2], 2], [[null, null], 2]].every(([cols, k]) => { const t = bad1({ tabs: [{ id: 't1', panes: ['cc-a', 'cc-b'].slice(0, k), cols }] }).state.tabs[0]; return t.cols.length === (k === 1 ? 1 : 2) && t.cols.every(v => Number.isFinite(v) && v > 0) && Math.abs(t.cols.reduce((a, b) => a + b, 0) - 1) < 1e-9; }));
+check('20d load clamps negative focus and zoom to a valid value', (() => { const t = bad1({ tabs: [{ id: 't1', panes: ['cc-a', 'cc-b'], focus: -3, zoom: -1 }] }).state.tabs[0]; return t.focus === 0 && t.zoom === null; })() && bad1({ tabs: [{ id: 't1', panes: ['cc-a', 'cc-b'], focus: 'x', zoom: 1.5 }] }).state.tabs[0].focus === 0);
 check('21 setMod / setGrouped', S.setMod(s, 'alt').mod === 'alt' && S.setGrouped(s, false).grouped === false);
 
 console.log(bad ? `grid-logic-check: ${bad} FAIL` : 'grid-logic-check: all pass');

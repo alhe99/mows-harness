@@ -59,9 +59,9 @@ export function load(storage, live, mod) {
   try { raw = JSON.parse(storage.getItem(KEY) || 'null'); } catch { raw = null; }
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tabs)) return { state: empty(mod), dropped: [] };
   const dropped = [];
-  const tabs = raw.tabs.map(t => {
+  const tabs = raw.tabs.filter(t => t && typeof t === 'object').map(t => {
     const panes = (Array.isArray(t.panes) ? t.panes : []).filter(n => { const ok = typeof n === 'string' && live.has(n); if (!ok && typeof n === 'string') dropped.push(n); return ok; });
-    return fit({ id: String(t.id || ''), panes, cols: Array.isArray(t.cols) ? t.cols.map(Number) : [], focus: Number(t.focus) || 0, zoom: Number.isInteger(t.zoom) ? t.zoom : null });
+    return fit({ id: String(t.id || ''), panes, cols: Array.isArray(t.cols) && t.cols.every(c => typeof c === 'number' && Number.isFinite(c) && c > 0) ? t.cols : [], focus: Math.max(0, Math.floor(Number(t.focus)) || 0), zoom: Number.isInteger(t.zoom) && t.zoom >= 0 ? t.zoom : null });
   }).filter(t => t.panes.length && /^t\d+$/.test(t.id));
   const n = Math.max(Number(raw.n) || 0, ...tabs.map(t => +t.id.slice(1)));
   const active = tabs.some(t => t.id === raw.active) ? raw.active : (tabs[0]?.id || '');
