@@ -5,6 +5,7 @@ import { h } from 'preact';
 import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
+import { hid } from '../shared.mjs';
 import * as S from '../grid/state.mjs';
 import { chordOf, detectMod } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
@@ -105,12 +106,16 @@ function onVis() {
 
 function Row({ f, open }) {
   const s = st.value, tab = s.tabs.find(t => t.id === s.active), full = !!tab && tab.panes.length >= S.CAPS.panes && !tab.panes.includes(f.name);
+  const [ren, setRen] = useState(false); // rename: the pencil (shown on hover, like split) turns the label into an input; Enter posts /a/label, the fleet stream brings the new label; Escape or blur cancels
   return h('div', { class: 'gr', 'data-name': f.name, 'data-state': f.state, 'data-open': open ? '1' : undefined, tabIndex: 0,
       onClick: e => dispatch(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
       onKeyDown: e => { if (e.key === 'Enter') dispatch(s => S.openTab(s, f.name)); } },
     h('span', { class: `fli fli-${f.state}`, 'data-f': 'glyph', 'aria-hidden': 'true' }, GLYPH[f.state]),
-    h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
-    h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
+    ren ? h('form', { class: 'grn', method: 'post', action: '/a/label', onSubmit: e => { e.preventDefault(); const f = e.currentTarget; fetch(f.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(f))), redirect: 'manual' }).catch(() => {}); setRen(false); } /* not shared.mjs act(): that closes the nearest <details>, here the project group */, onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setRen(false); } },
+        hid('name', f.name), h('input', { name: 'label', value: f.label || '', maxlength: 60, placeholder: 'session name', 'aria-label': 'session name', autocomplete: 'off', ref: el => el && requestAnimationFrame(() => { el.focus(); el.select(); }), onBlur: () => setRen(false) }))
+      : h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
+    ren ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
+    ren ? null : h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
       onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split'),
     h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
     f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);

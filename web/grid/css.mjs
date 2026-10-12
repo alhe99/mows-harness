@@ -15,11 +15,14 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .glist{flex:1;overflow-y:auto;padding:4px 0}
 #gsb details.gg>summary{cursor:pointer;list-style:none;padding:6px 12px;font:600 12px var(--mono);color:var(--mut)}
 #gsb details.gg>summary::before{content:'▸ ';}#gsb details.gg[open]>summary::before{content:'▾ '}
-#gsb .gr{display:grid;grid-template-columns:16px minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:8px;padding:7px 12px;cursor:pointer;border-left:2px solid transparent}
+#gsb .gr{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto;grid-template-rows:auto auto;column-gap:8px;padding:7px 12px;cursor:pointer;border-left:2px solid transparent}
 #gsb .gr:hover{background:var(--card2)}#gsb .gr[data-open="1"]{border-left-color:var(--ok)}
 #gsb .gr .fli{grid-row:1/3;align-self:start;margin-top:2px}
 #gsb .gr .lb{font:500 13px var(--sans);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#gsb .gr .fst,#gsb .gr .fsnip{grid-column:2/4;font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#gsb .gr .grn{display:flex;min-width:0}#gsb .gr .grn input{flex:1;min-width:0;min-height:0;padding:0 6px;font:500 13px var(--sans);line-height:19px;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:5px}#gsb .gr .grn.busy input{opacity:.5}
+#gsb .gr .fst,#gsb .gr .fsnip{grid-column:2/5;font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#gsb .gr .gren{min-height:0;padding:1px 5px;font:12px var(--mono);background:transparent;color:var(--mut);border:1px solid transparent;border-radius:5px;opacity:0}#gsb .gr:hover .gren,#gsb .gr:focus-within .gren{opacity:1}#gsb .gr .gren:hover{border-color:var(--bd);color:var(--fg)}
+#gsb .gr .grn{grid-column:2/5}
 #gsb .gr .gsplit{min-height:0;padding:1px 6px;font:11px var(--mono);background:transparent;color:var(--mut);border:1px solid var(--bd);border-radius:5px;opacity:0}
 #gsb .gr:hover .gsplit,#gsb .gr:focus-within .gsplit{opacity:1}#gsb .gr .gsplit[data-full]{opacity:.3}
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}#gh-sb:hover,.gh:hover,#grid.drag #gh-sb,#grid.drag .gh{background:var(--bd)}

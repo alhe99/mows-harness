@@ -12,7 +12,7 @@ const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 't
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
-let bad = 0, errors = [], cur = '';
+let bad = 0, errors = [], cur = '', posted = []; // posted: bodies sent to /a/label (rename)
 const check = (id, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${mode === 'all' ? cur + ' ' : ''}${id}${detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
 const T = Date.now();
 const fx = (sid8, name, label, proj, state, age, snippet = '') => ({ sid8, name, label, proj, state, rel: T - age * 1000, snippet });
@@ -54,6 +54,7 @@ async function open(opts = {}) {
     });
     await ctx.route('**/term/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: TERM }));
     await ctx.route('**/z?*', r => r.fulfill({ status: 204 }));
+    await ctx.route('**/a/label', r => { posted.push(r.request().postData()); r.fulfill({ status: 204 }); }); // the real route answers 303; fetch(redirect: 'manual') ignores it either way, and WebKit's fulfill refuses a 3xx
     await ctx.route('**/api/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   }
   const page = await ctx.newPage();
@@ -122,6 +123,17 @@ async function openMode() {
 }
 async function groupsMode() {
   const { ctx, page } = await open();
+  // rename: the pencil turns the label into an input, Enter posts /a/label; the fleet stream brings the new label; Escape cancels without a post
+  await row(page, 'cc-alpha-api').locator('.gren').click();
+  await page.waitForFunction(() => /** @type {any} */ (document.activeElement)?.name === 'label'); // focus lands on the next frame
+  check('0a the pencil opens the rename input with the current label selected, no tab opened', await page.evaluate(() => { const i = document.querySelector('#gsb .gr[data-name="cc-alpha-api"] .grn input[name=label]'); return !!i && document.activeElement === i && i.value === 'api' && i.selectionEnd === 3; }));
+  await page.keyboard.type('billing'); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.querySelector('#gsb .grn'));
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => (f.name === 'cc-alpha-api' ? { ...f, label: 'billing' } : f))));
+  check('0b Enter posts name and label, the input closes, the row shows the label the stream brings', posted.join() === 'name=cc-alpha-api&label=billing' && (await row(page, 'cc-alpha-api').locator('.lb').textContent()) === 'billing' && (await st(page)).tabs.length === 0);
+  await row(page, 'cc-alpha-api').locator('.gren').click(); await page.waitForFunction(() => /** @type {any} */ (document.activeElement)?.name === 'label');
+  await page.keyboard.type('x'); await page.keyboard.press('Escape');
+  check('0c Escape cancels without a post', !(await page.$('#gsb .grn')) && posted.length === 1);
   const groups = () => page.$$eval('#gsb details.gg', ds => ds.map(d => ({ proj: d.dataset.proj, open: d.open, sum: d.querySelector('summary').textContent.trim(), rows: [...d.querySelectorAll('.gr')].map(r => r.dataset.name) })));
   let g = await groups();
   check('1 grouped by proj, most urgent group first, open, needs count in the summary', g.map(x => x.proj).join() === 'alpha,beta,gamma' && g[0].sum === 'alpha · 1' && g[1].sum === 'beta' && g.every(x => x.open), g);
