@@ -176,7 +176,7 @@ async function phoneMode() {
   const n = await open({ w: 900, h: 900 });
   const note = await n.page.evaluate(() => !!document.querySelector('[data-view=grid-phone]') && !document.querySelector('#grid'));
   await n.page.setViewportSize({ width: 1600, height: 900 });
-  const grid = await n.page.waitForSelector('#grid #gsb', { timeout: 5000 }).then(() => n.page.evaluate(() => document.body.classList.contains('gridv') && document.querySelectorAll('#gsb .gr').length === 7), () => false);
+  const grid = await n.page.waitForSelector('#grid #gsb', { timeout: 15000 }) /* WebKit on a loaded box: a 5 s wait flaked */.then(() => n.page.evaluate(() => document.body.classList.contains('gridv') && document.querySelectorAll('#gsb .gr').length === 7), () => false);
   check('2 a desktop window opened narrow shows the note, then mounts the grid once widened', note && grid, { note, grid });
   await n.ctx.close();
 }
@@ -407,6 +407,7 @@ async function deeplinkMode() {
   check('3 a second ?open= adds a tab and keeps the first (persisted)', (await tabs(page)).length === 2 && (await panes(page))[0].name === 'cc-alpha-api');
   await page.goto(DASH + '/grid?open=cc-nope', { waitUntil: 'load' }); await page.waitForSelector('.gw:not([hidden]) .gp'); await page.waitForTimeout(150);
   check('4 an unknown session is ignored', (await tabs(page)).length === 2 && new URL(page.url()).search === '?open=cc-nope');
+  check('5 the strip nav carries the view switch (grid on, list -> /) and no Sessions link', await page.evaluate(() => { const n = document.querySelector('.gnav'); return n.querySelector('.vsw a.on')?.dataset.v === 'grid' && n.querySelector('.vsw a[data-v=list]')?.getAttribute('href') === '/' && ![...n.querySelectorAll('a')].some(a => a.textContent === 'Sessions'); }));
   await ctx.close();
 }
 const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode };

@@ -127,7 +127,7 @@ export function createStore(env = globalThis) {
     open();
   }
 
-  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, peek, go: u => go(u), setGo: f => { go = f; }, watch, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
+  return { fleet, agents, chat, chatend, usage, system, busy, chatLog, scroll, getJson, peek, go: (u, replace) => go(u, replace), setGo: f => { go = f; }, watch, start, stop: () => { env.document.removeEventListener('visibilitychange', onVisibility); env.clearTimeout(hiddenTimer); close(); } };
 }
 
 export const store = createStore();

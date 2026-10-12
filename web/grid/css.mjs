@@ -40,7 +40,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gtabs .gsbt path{stroke:var(--mut)}#gtabs .gsbt:hover path{stroke:var(--fg)}
 #gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}.gph button path{stroke:var(--mut)}#gtabs .gx:hover path,#gtabs .gnew:hover path,.gph button:hover path{stroke:var(--fg)}
 #gnotice{font:11px/16.5px var(--mono);color:var(--warn);padding:0 16px;white-space:nowrap}
-.gnav{margin-left:auto;display:flex;gap:16px;flex-shrink:0;padding:0 16px}.gnav a{color:var(--mut);font:400 11px/16.5px var(--mono);white-space:nowrap;text-decoration:none}.gnav a:hover{color:var(--fg)}
+.gnav{margin-left:auto;display:flex;gap:16px;flex-shrink:0;padding:0 16px}.gnav a{color:var(--mut);font:400 11px/16.5px var(--mono);white-space:nowrap;text-decoration:none}.gnav a:hover{color:var(--fg)}.gnav .vsw a{padding:2px 8px;font:400 11px/16.5px var(--mono)}
 .gw{flex:1;min-height:0;display:grid;grid-auto-rows:minmax(0,1fr);gap:0;overflow:hidden}
 .gw[hidden]{display:none}
 .gp{display:flex;flex-direction:column;min-width:0;min-height:0}

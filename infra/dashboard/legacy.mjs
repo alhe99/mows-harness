@@ -1468,7 +1468,6 @@ export function mdDocument(real, st, src, host) {
 export function pageChrome(tab = '', liveN = null, host = '', agentsHref = '/ui/agents', base = '') {
   const pnav = `<nav class="pnav">
 <a class="${tab === 'sessions' ? 'on' : ''}" href="${base}/">Sessions${liveN != null ? ` <b class="pbdg" id="pnav-live"${liveN ? '' : ' hidden'}>${liveN}</b>` : ''}</a>
-<a class="${tab === 'grid' ? 'on' : ''}" href="${base}/grid">Grid</a>
 <a class="${tab === 'history' ? 'on' : ''}" href="${base}/history">History</a>
 <a class="${tab === 'system' ? 'on' : ''}" href="${base}/system">System</a>
 <a class="${tab === 'device' ? 'on' : ''}" href="${base}/device">Device</a>

@@ -89,7 +89,7 @@ await dp.goto(base, { waitUntil: 'load' });
 await dp.waitForSelector('#app h1[data-view="sessions"]', { state: 'attached' });
 const d = await dp.evaluate(() => { const n = document.querySelector('.pnav'), r = n.getBoundingClientRect();
   return { nav: getComputedStyle(n).display !== 'none' && r.width > 0 && r.height > 0, tabs: getComputedStyle(document.querySelector('.tabs')).display, links: n.querySelectorAll('a').length }; });
-check('15 1280x800: header nav shows, tab bar hidden', d.nav && d.tabs === 'none' && d.links === 6, d);
+check('15 1280x800: header nav shows, tab bar hidden, five links (the grid is the sessions page\'s view switch, not a pill)', d.nav && d.tabs === 'none' && d.links === 5, d);
 check('16 zero console errors', errors.length === 0, errors);
 await browser.close();
 console.log(bad ? `shell-check ${engine}: ${bad} FAILED` : `shell-check ${engine}: all passed`);

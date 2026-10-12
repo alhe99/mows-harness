@@ -67,6 +67,12 @@ Home page (2026-10-12): where the grid runs (a mouse, >= 1024 px, the installed 
 `/grid?open=<name>` in the same tab; the grid opens that session as a tab (or brings its tab to the front), gives it the keyboard and
 drops the query from the URL. Below 1024 px, on a phone or with a coarse pointer the row keeps the terminal document of its own
 (sessions.mjs attach). Probes: sessions-check `links` 0a/0b and 8, grid-check `deeplink`.
+
+View switch (2026-10-12): the grid is the fleet's other VIEW, not a page of its own: the header's pill nav has no Grid entry. A
+`list | grid` switch sits beside the fleet filter on / (desktop only) and in the grid's strip nav in place of the Sessions link. The
+choice is remembered per browser (`localStorage.mows.view`): landing on / with `grid` remembered routes to /grid in place (a replace
+navigation, so Back does not bounce); the grid's `list` stores `list` and comes back to /. Probes: sessions-check `links` 0c-0f,
+grid-check `deeplink` 5, shell-check 15 (five pills).
   A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new

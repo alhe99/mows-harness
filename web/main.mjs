@@ -70,17 +70,17 @@ function restore(y) { // the view swaps a few frames after popstate and the docu
 // The transition's callback settles when the Router reports the new route committed (lazy views suspend until loaded).
 let navigate = /** @type {(url: string) => void} */ (() => {});
 let settle = /** @type {null | (() => void)} */ (null);
-function go(url) {
+function go(url, replace = false) { // replace: the remembered grid view lands on /grid in place of /, so Back does not bounce
   store.scroll.set(here, scrollY);
   pushed = true;
   if (new URL(url, location.href).pathname === location.pathname) { // query-only: no route change event, land at the top (K-35)
-    navigate(url); const u = new URL(url, location.href); here = u.pathname + u.search; pushed = false; scrollTo(0, 0); return;
+    navigate(url, replace); const u = new URL(url, location.href); here = u.pathname + u.search; pushed = false; scrollTo(0, 0); return;
   }
-  if (!document.startViewTransition) return navigate(url);
+  if (!document.startViewTransition) return navigate(url, replace);
   document.startViewTransition(() => new Promise(done => {
     const t = setTimeout(done, 1000); // never hold the page behind a transition that cannot settle
     settle = () => { clearTimeout(t); settle = null; done(undefined); };
-    navigate(url);
+    navigate(url, replace);
   }));
 }
 

@@ -10,8 +10,9 @@ import * as S from '../grid/state.mjs';
 import { chordOf, detectMod, MODS } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
 import { base } from '../shared.mjs';
+import { ViewSwitch } from './sessions.mjs';
 // the shell's header is hidden on /grid (its row goes to the panes); these links at the strip's right end are the pill nav's, minus Grid
-const NAV = [['Sessions', '/'], ['History', '/history'], ['System', '/system'], ['Device', '/device'], ['Agents', '/agents']];
+const NAV = [['History', '/history'], ['System', '/system'], ['Device', '/device'], ['Agents', '/agents']]; // Sessions is the view switch's `list`
 
 // the Figma frame's icons (lucide strokes at 12/14 px), stroke colours as designed; hover brightens them in css.mjs
 const svg = (sz, stroke, ds) => h('svg', { width: sz, height: sz, viewBox: `0 0 ${sz} ${sz}`, fill: 'none', 'aria-hidden': 'true' }, ds.map(d => h('path', { d, stroke, 'stroke-width': sz === 12 ? 1 : 1.16667, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
@@ -220,7 +221,7 @@ function Strip({ fm }) {
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
     h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, I.plus())),
     h('span', { id: 'gnotice', hidden: !s.notice }, s.notice),
-    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, NAV.map(([t, p]) => h('a', { href: base() + p }, t))));
+    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), NAV.map(([t, p]) => h('a', { href: base() + p }, t))));
 }
 
 export default function Grid() {

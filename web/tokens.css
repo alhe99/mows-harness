@@ -340,6 +340,9 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 .segbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;font:500 12px var(--sans);color:var(--dim)}
 .segbtn.on{background:var(--pop);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .segbtn:hover{color:var(--fg2)}
+/* the list | grid view switch of the sessions page (and the grid's strip): the grid is a view of the fleet, remembered per browser */
+.vsw{display:inline-flex;border:1px solid var(--bd);border-radius:6px;overflow:hidden;font:400 11px var(--mono);letter-spacing:0;text-transform:none;vertical-align:middle}
+.vsw a{padding:3px 9px;color:var(--mut);text-decoration:none}.vsw a+a{border-left:1px solid var(--bd)}.vsw a:hover{color:var(--fg2)}.vsw a.on{background:var(--pop);color:var(--fg)}
 .ctlhead{font:700 10px var(--sans);color:var(--dimmer);letter-spacing:.1em;text-transform:uppercase;line-height:15px;margin:0 0 12px}
 .ctlgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ctlgrid.icons4{grid-template-columns:repeat(4,1fr)}

@@ -283,6 +283,16 @@ async function links() {
     await d.page.waitForSelector('#grid .gp[data-name=cc-alpha]');
     const u = new URL(d.page.url());
     check('0b the click routes in place to /grid with that session as a pane, the query stripped', u.pathname === '/grid' && u.search === '' && (await d.page.evaluate(() => window.__doc)) === 'same-document' && (await d.page.evaluate(() => window.__grid.state().tabs.map(t => t.panes.join()).join('|'))) === 'cc-alpha', { url: d.page.url() });
+    // the view switch: `grid` is remembered, / then lands on /grid in place (one history entry); the grid's own switch `list` comes back and stays
+    await d.page.goto(base, { waitUntil: 'load' }); await d.page.waitForSelector('.sect .vsw a[data-v=grid]');
+    check('0c the sessions page carries the list | grid switch, list on', await d.page.evaluate(() => document.querySelector('.sect .vsw a.on')?.dataset.v === 'list' && document.querySelectorAll('.pnav a').length === 5 && ![...document.querySelectorAll('.pnav a')].some(a => a.getAttribute('href') === '/grid')));
+    await d.page.click('.sect .vsw a[data-v=grid]'); await d.page.waitForSelector('#grid'); await d.page.waitForTimeout(100);
+    check('0d grid: /grid, remembered', new URL(d.page.url()).pathname === '/grid' && (await d.page.evaluate(() => localStorage.getItem('mows.view'))) === 'grid');
+    const len0 = await d.page.evaluate(() => history.length);
+    await d.page.goto(base, { waitUntil: 'load' }); await d.page.waitForSelector('#grid'); await d.page.waitForTimeout(100);
+    check('0e / with the grid remembered lands on /grid, in place (no extra history entry)', new URL(d.page.url()).pathname === '/grid' && (await d.page.evaluate(() => history.length)) === len0 + 1, { len0, now: await d.page.evaluate(() => history.length) });
+    await d.page.click('.gnav .vsw a[data-v=list]'); await d.page.waitForSelector('#app h1[data-view=sessions]', { state: 'attached' }); await d.page.waitForTimeout(150);
+    check('0f the grid\'s switch `list` comes back to / and stays', new URL(d.page.url()).pathname === '/' && (await d.page.evaluate(() => localStorage.getItem('mows.view'))) === 'list' && (await d.page.evaluate(() => document.querySelector('.sect .vsw a.on')?.dataset.v)) === 'list');
     await d.ctx.close();
   }
   const { ctx, page } = await open({ w: 1000 }); // a fine pointer below 1024 px: the terminal document in a named window, as before
@@ -314,6 +324,7 @@ async function links() {
     const x = await open(o);
     const t = await grab(x.page);
     check(id, t.length === 4 && t.every(y => y.target === null && y.nw.startsWith('t-')), { why, targets: t.map(y => y.target) });
+    check(id.slice(0, 1) + 'v no view switch here', await x.page.evaluate(() => !document.querySelector('.vsw')));
     if (id.startsWith('7')) {
       const href = await x.page.evaluate(() => document.querySelector('#fleet-cards > .lp[data-sid=aaaa1111] [data-f=attach]').getAttribute('href'));
       await x.page.click('#fleet-cards > .lp[data-sid=aaaa1111] [data-f=attach]');
