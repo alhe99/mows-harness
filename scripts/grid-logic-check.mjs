@@ -69,6 +69,9 @@ check('M1 merge appends the panes, closes the source, keeps the target active, e
 check('M2 merge into itself or an unknown tab is a no-op', S.mergeTab(m0, 't1', 't1') === m0 && S.mergeTab(m0, 't9', 't2') === m0 && S.mergeTab(m0, 't1', 't9') === m0);
 let m2 = m1; for (const n of ['cc-d', 'cc-e', 'cc-f']) m2 = S.split(m2, n); // six panes
 const m3 = S.openTab(m2, 'cc-g'), m4 = S.mergeTab(m3, m3.active, 't2');
+const d1 = S.detachPane(m1, 't2', 2); // t2 [cc-b, cc-c, cc-a] -> t2 [cc-b, cc-c], new tab [cc-a] right after, active
+check('D1 detaching a pane gives it a tab of its own right after, active; the source keeps the rest, even cols', d1.tabs.length === 2 && d1.tabs[0].panes.join() === 'cc-b,cc-c' && d1.tabs[0].cols.length === 2 && d1.tabs[1].panes.join() === 'cc-a' && d1.active === d1.tabs[1].id && d1.tabs[1].id !== 't2' && d1.n === m1.n + 1);
+check('D2 a single pane, a bad index or the tab cap leave the state alone (cap: with a notice)', S.detachPane(d1, d1.tabs[1].id, 0) === d1 && S.detachPane(m1, 't2', 7) === m1 && (() => { let x = m1; for (let j = 0; j < 8; j++) x = S.openTab(x, 'cc-x' + j); const y = S.detachPane(x, 't2', 0); return y.tabs.length === 9 && y.notice.includes('9'); })());
 check('M3 a merge past six panes is refused with a notice and changes nothing else', m4.tabs.length === 2 && m4.tabs[1].panes.join() === 'cc-g' && m4.notice.includes('6'));
 
 console.log(bad ? `grid-logic-check: ${bad} FAIL` : 'grid-logic-check: all pass');

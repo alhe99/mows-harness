@@ -294,6 +294,11 @@ async function tabsMode() {
   await page.mouse.up();
   const s5 = await st(page), t5 = s5.tabs.find(t => t.id === s5.active);
   check('6 dropped onto the panes: the dragged tab is gone, its pane is the active tab\'s second pane and focused, nothing else moved', s5.tabs.length === 2 && !s5.tabs.some(t => t.id === srcId) && s5.active === ids1[0] && t5.panes.length === 2 && t5.focus === 1 && (await panes(page)).length === 2 && !(await page.evaluate(() => document.getElementById('grid').classList.contains('drag'))), s5);
+  // the way back: the pane header's own-tab button, shown only while the tab holds more than one pane
+  check('7 a pane in a tab of two shows the own-tab button; a lone pane does not', await page.evaluate(() => document.querySelectorAll('.gw:not([hidden]) .gown').length === 2 && [...document.querySelectorAll('.gw[hidden] .gown')].length === 0));
+  await page.locator('.gw:not([hidden]) .gp').nth(1).locator('.gown').click();
+  const s7 = await st(page), t7 = s7.tabs.find(t => t.id === s7.active);
+  check('8 the pane moves to a new tab right after its old one, active, with the old tab back to one pane and no own-tab button', s7.tabs.length === 3 && s7.tabs[1].id === s7.active && t7.panes.length === 1 && s7.tabs[0].panes.length === 1 && (await panes(page)).length === 1 && await page.evaluate(() => document.querySelectorAll('.gown').length === 0), s7);
   await ctx.close();
 }
 async function parkMode() {

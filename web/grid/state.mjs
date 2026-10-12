@@ -57,6 +57,14 @@ export function mergeTab(s, from, into) {
   if (src.panes.length + s.tabs[b].panes.length > CAPS.panes) return { ...s, notice: `at most ${CAPS.panes} panes in a tab` };
   return upd({ ...s, tabs: s.tabs.filter(t => t.id !== from), active: into }, into, t => ({ ...t, panes: [...t.panes, ...src.panes], cols: [], focus: t.panes.length, zoom: null }));
 }
+// the opposite of a merge: pane i leaves its tab for a new tab of its own, placed right after it and made active (its iframe reloads, see mergeTab)
+export function detachPane(s, id, i) {
+  const k = tabAt(s, id); if (k < 0) return s;
+  const t = s.tabs[k], name = t.panes[i]; if (t.panes.length < 2 || !name) return s;
+  if (s.tabs.length >= CAPS.tabs) return { ...s, notice: `at most ${CAPS.tabs} tabs` };
+  const nid = 't' + (s.n + 1), tabs = [...s.tabs]; tabs.splice(k + 1, 0, { id: nid, panes: [name], cols: [1], focus: 0, zoom: null });
+  return upd({ ...s, n: s.n + 1, tabs, active: nid }, id, x => ({ ...x, panes: x.panes.filter((_, j) => j !== i), cols: [], focus: i < x.focus ? x.focus - 1 : x.focus, zoom: null }));
+}
 export function moveTab(s, from, to) { const tabs = [...s.tabs]; const [t] = tabs.splice(from, 1); tabs.splice(to, 0, t); return { ...s, tabs }; }
 export const setCols = (s, id, cols) => upd(s, id, t => ({ ...t, cols: norm(cols) }));
 export const setSidebar = (s, px) => ({ ...s, sidebar: clamp(Math.round(px), CAPS.sidebar[0], CAPS.sidebar[1]) });

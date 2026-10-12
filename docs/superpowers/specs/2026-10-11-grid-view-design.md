@@ -59,7 +59,7 @@ the push watcher, and the phone (`/grid` on a touch device is a link back to `/`
   A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new
-  pane of a new tab. Tabs reorder by drag (pointer events on the tab; drop before or after another tab). A tab dropped onto the panes merges: its panes join the tab on screen (at most 6, else a notice), the dragged tab closes, and those panes reload once (their iframes change parent; 2026-10-12).
+  pane of a new tab. Tabs reorder by drag (pointer events on the tab; drop before or after another tab). A tab dropped onto the panes merges: its panes join the tab on screen (at most 6, else a notice), the dragged tab closes, and those panes reload once (their iframes change parent; 2026-10-12). The way back is the pane header's ⧉ button (shown while the tab holds more than one pane): the pane moves to a new tab right after its old one.
 - **Panes**: a tab holds 1–6 panes as columns of a CSS grid, `grid-template-columns` from stored fractions;
   4–6 panes wrap to two rows (2×2, 3×2) with equal rows. A drag handle sits between adjacent columns. Each pane is
   a header plus an `<iframe>` of the terminal document with its own minted tab id. The focused pane has an accent

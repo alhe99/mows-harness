@@ -146,6 +146,7 @@ function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
   return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
       onPointerDown: () => dispatch(s => S.focusPane(s, tab.id, i)) },
     h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
+      tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => dispatch(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
       h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => dispatch(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? '⤡' : '⤢'),
       h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => dispatch(s => S.closePane(s, tab.id, i)) }, '×')),
     h('iframe', { class: 'gfr', src: `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: name, onLoad: postMod }));
