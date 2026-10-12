@@ -13,7 +13,16 @@ import { base } from '../shared.mjs';
 // the shell's header is hidden on /grid (its row goes to the panes); these links at the strip's right end are the pill nav's, minus Grid
 const NAV = [['Sessions', '/'], ['History', '/history'], ['System', '/system'], ['Device', '/device'], ['Agents', '/agents']];
 
-const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
+// the Figma frame's icons (lucide strokes at 12/14 px), stroke colours as designed; hover brightens them in css.mjs
+const svg = (sz, stroke, ds) => h('svg', { width: sz, height: sz, viewBox: `0 0 ${sz} ${sz}`, fill: 'none', 'aria-hidden': 'true' }, ds.map(d => h('path', { d, stroke, 'stroke-width': sz === 12 ? 1 : 1.16667, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
+const I = {
+  chev: () => svg(14, '#71717B', ['M3.5 5.25L7 8.75L10.5 5.25']),
+  x12: () => svg(12, '#52525C', ['M9 3L3 9', 'M3 3L9 9']),
+  plus: () => svg(14, '#52525C', ['M2.91667 7H11.0833', 'M7 2.91667V11.0833']),
+  expand: () => svg(14, '#858585', ['M8.75 1.75H12.25V5.25', 'M12.25 1.75L8.16667 5.83333', 'M1.75 12.25L5.83333 8.16667', 'M5.25 12.25H1.75V8.75']),
+  shrink: () => svg(14, '#858585', ['M2.33333 8.16667H5.83333V11.6667', 'M11.6667 5.83333H8.16667V2.33333', 'M8.16667 5.83333L12.25 1.75', 'M1.75 12.25L5.83333 8.16667']),
+  x14: () => svg(14, '#858585', ['M10.5 3.5L3.5 10.5', 'M3.5 3.5L10.5 10.5']),
+};
 const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
 const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
 const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now' : s < 5400 ? (s / 60 | 0) + 'm' : s < 129600 ? (s / 3600 | 0) + 'h' : (s / 86400 | 0) + 'd'; };
@@ -110,13 +119,14 @@ function Row({ f, open }) {
   return h('div', { class: 'gr', 'data-name': f.name, 'data-state': f.state, 'data-open': open ? '1' : undefined, tabIndex: 0,
       onClick: e => dispatch(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
       onKeyDown: e => { if (e.key === 'Enter') dispatch(s => S.openTab(s, f.name)); } },
-    h('span', { class: `fli fli-${f.state}`, 'data-f': 'glyph', 'aria-hidden': 'true' }, GLYPH[f.state]),
+    h('span', { class: 'gdot', 'data-state': f.state, 'aria-hidden': 'true' }),
     ren ? h('form', { class: 'grn', method: 'post', action: '/a/label', onSubmit: e => { e.preventDefault(); const f = e.currentTarget; fetch(f.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(f))), redirect: 'manual' }).catch(() => {}); setRen(false); } /* not shared.mjs act(): that closes the nearest <details>, here the project group */, onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setRen(false); } },
         hid('name', f.name), h('input', { name: 'label', value: f.label || '', maxlength: 60, placeholder: 'session name', 'aria-label': 'session name', autocomplete: 'off', ref: el => el && requestAnimationFrame(() => { el.focus(); el.select(); }), onBlur: () => setRen(false) }))
       : h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
-    ren ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
-    ren ? null : h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
-      onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split'),
+    ren ? null : h('span', { class: 'gact' },
+      h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
+      h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
+        onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split')),
     h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
     f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
@@ -132,7 +142,7 @@ function Sidebar() {
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
     const gs = [...groups.entries()].sort((a, b) => ORDER[a[1][0].state] - ORDER[b[1][0].state] || a[0].localeCompare(b[0]));
     list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
-      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
+      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, I.chev(), h('span', null, needs ? `${proj} · ${needs}` : proj)), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
   } else list = sorted.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }));
   return h('aside', { id: 'gsb' },
     h('div', { class: 'ghd' },
@@ -147,8 +157,8 @@ function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
       onPointerDown: () => dispatch(s => S.focusPane(s, tab.id, i)) },
     h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
       tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => dispatch(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
-      h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => dispatch(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? '⤡' : '⤢'),
-      h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => dispatch(s => S.closePane(s, tab.id, i)) }, '×')),
+      h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => dispatch(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? I.shrink() : I.expand()),
+      h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => dispatch(s => S.closePane(s, tab.id, i)) }, I.x14())),
     h('iframe', { class: 'gfr', src: `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: name, onLoad: postMod }));
 }
 
@@ -172,8 +182,10 @@ function Tab({ tab, active, fm }) {
 
 function Strip({ fm }) {
   const s = st.value;
+  useEffect(() => { document.querySelector('#gtabs .gt.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); }, [s.active]); // the tabs box scrolls: keep the active tab in it
   const worst = t => t.panes.reduce((w, n) => { const k = fm.get(n)?.state || 'idle'; return ORDER[k] < ORDER[w] ? k : w; }, 'idle');
   return h('nav', { id: 'gtabs' },
+    h('div', { class: 'gts' }, // the tabs scroll in their own box (no scrollbar), so + and the nav never leave the strip
     s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); focusPaneFrame(); },
       // a press that travels more than 6 px is a drag: released over another tab, this one lands before or after it (by the half it is
       // released over). Only the strip reorders; the pane wrappers keep creation order (Grid), so no iframe moves
@@ -197,9 +209,9 @@ function Strip({ fm }) {
         };
         el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', end);
       } },
-      h('span', { class: 'gdot', 'data-state': worst(t) }), t.panes.map(n => labelOf(fm.get(n), n)).join(' | '),
-      h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, '×'))),
-    h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, '+'),
+      h('span', { class: 'gdot', 'data-state': worst(t) }), h('span', { class: 'gtl' }, t.panes.map(n => labelOf(fm.get(n), n)).join(' | ')),
+      h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
+    h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, I.plus())),
     h('span', { id: 'gnotice', hidden: !s.notice }, s.notice),
     h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, NAV.map(([t, p]) => h('a', { href: base() + p }, t))));
 }
@@ -240,7 +252,7 @@ export default function Grid() {
     h(Sidebar, null),
     h('div', { id: 'gh-sb', title: 'drag to resize · double-click to reset',
       onPointerDown: e => { const left = document.getElementById('grid').getBoundingClientRect().left; drag(e, x => dispatch(s => S.setSidebar(s, x - left))); },
-      onDblClick: () => dispatch(s => S.setSidebar(s, 260)) }),
+      onDblClick: () => dispatch(s => S.setSidebar(s, 256)) }),
     h('main', { id: 'gmain' },
       h(Strip, { fm }),
       s.tabs.length ? [...s.tabs].sort((a, b) => +a.id.slice(1) - +b.id.slice(1)).map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; "split" puts it beside the current panes.')));

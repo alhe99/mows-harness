@@ -203,7 +203,7 @@ async function dragMode() {
   await page.mouse.move(sb.x + 123, sb.y + 200); await page.mouse.down(); await page.mouse.move(sb.x + 900, sb.y + 200, { steps: 6 }); await page.mouse.up();
   check('7 clamped at 480', (await st(page)).sidebar === 480);
   await page.locator('#gh-sb').dblclick();
-  check('8 double-click resets to 260', (await st(page)).sidebar === 260);
+  check('8 double-click resets to 256', (await st(page)).sidebar === 256);
   await page.waitForTimeout(400); // the layout is saved 250 ms after the last change
   await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
   check('9 fractions survive a reload', (await st(page)).tabs[0].cols[0] < 0.4);

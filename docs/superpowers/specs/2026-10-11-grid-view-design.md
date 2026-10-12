@@ -56,6 +56,7 @@ the push watcher, and the phone (`/grid` on a touch device is a link back to `/`
 
 - **Sidebar** (default 260 px, drag 180–480 px, double-click the handle resets). Grouped by `proj`; each group is a
   `<details open>` with a count of needs-you sessions; groups ordered by their most urgent member, then name.
+  Visual reference (2026-10-12): the Figma frame "Mission Control Dashboard Redesign" (mows-control, node 52-2): 256 px sidebar, 24 px gutter, 38 px tab strip, 12 px-radius rows, Inter / JetBrains Mono, lucide strokes for the icons; css.mjs carries its measures.
   A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new

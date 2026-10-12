@@ -11,7 +11,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const tabAt = (s, id) => s.tabs.findIndex(t => t.id === id);
 const upd = (s, id, f) => ({ ...s, notice: '', tabs: s.tabs.map(t => (t.id === id ? fit(f(t)) : t)) });
 
-export const empty = mod => ({ sidebar: 260, grouped: true, mod, active: '', n: 0, notice: '', tabs: [] });
+export const empty = mod => ({ sidebar: 256, grouped: true, mod, active: '', n: 0, notice: '', tabs: [] });
 
 export function find(s, name) {
   for (const t of s.tabs) { const i = t.panes.indexOf(name); if (i >= 0) return { tab: t.id, i }; }
@@ -82,7 +82,7 @@ export function load(storage, live, mod) {
   }).filter(t => t.panes.length && /^t\d+$/.test(t.id));
   const n = Math.max(Number(raw.n) || 0, ...tabs.map(t => +t.id.slice(1)));
   const active = tabs.some(t => t.id === raw.active) ? raw.active : (tabs[0]?.id || '');
-  const state = { sidebar: clamp(Number(raw.sidebar) || 260, CAPS.sidebar[0], CAPS.sidebar[1]), grouped: raw.grouped !== false, mod: ['mac', 'win', 'alt'].includes(raw.mod) ? raw.mod : mod, active, n, notice: '', tabs };
+  const state = { sidebar: clamp(Number(raw.sidebar) || 256, CAPS.sidebar[0], CAPS.sidebar[1]), grouped: raw.grouped !== false, mod: ['mac', 'win', 'alt'].includes(raw.mod) ? raw.mod : mod, active, n, notice: '', tabs };
   return { state, dropped };
 }
 export function save(storage, s) {

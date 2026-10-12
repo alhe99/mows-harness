@@ -7,7 +7,7 @@ const mem = () => { const m = new Map(); return { getItem: k => m.has(k) ? m.get
 const live = new Set(['cc-a', 'cc-b', 'cc-c', 'cc-d', 'cc-e', 'cc-f', 'cc-g']);
 
 let s = S.empty('win');
-check('1 empty: no tabs, sidebar 260, grouped, mod kept', s.tabs.length === 0 && s.sidebar === 260 && s.grouped && s.mod === 'win');
+check('1 empty: no tabs, sidebar 256, grouped, mod kept', s.tabs.length === 0 && s.sidebar === 256 && s.grouped && s.mod === 'win');
 s = S.openTab(s, 'cc-a');
 check('2 openTab: one tab, one pane, active, cols [1]', s.tabs.length === 1 && s.tabs[0].panes.join() === 'cc-a' && s.active === s.tabs[0].id && s.tabs[0].cols.join() === '1', s);
 s = S.openTab(s, 'cc-b');
