@@ -3,9 +3,10 @@
 export const CSS = `
 /* full bleed: the shell's body is a 1024 px column with 48 px padding (tokens.css), which boxed the grid into a third of a desktop screen;
    here the body is a column the height of the viewport, the header keeps its own height, the grid takes the rest, the footer goes */
-body.gridv{max-width:none;padding:10px 14px 8px;height:100dvh;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}
-body.gridv .hdr{margin-bottom:8px;flex-shrink:0}body.gridv #app{flex:1;min-height:0;display:flex;flex-direction:column}
-body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:none}
+body.gridv{max-width:none;padding:8px 14px 8px;height:100dvh;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}
+body.gridv #app{flex:1;min-height:0;display:flex;flex-direction:column}
+/* the shell header's row goes to the panes: its nav lives at the right end of the tab strip (.gnav), its New Session is the strip's + */
+body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:none}
 #grid{display:grid;grid-template-columns:var(--gsb,260px) 6px minmax(0,1fr);flex:1;min-height:0;gap:0}
 #gsb{display:flex;flex-direction:column;min-width:0;overflow:hidden;background:var(--card);border:1px solid var(--bd);border-radius:12px}
 #gsb .ghd{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--hair);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
@@ -28,7 +29,8 @@ body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:none}
 #gtabs .gt.on{background:var(--card2);color:var(--fg)}#gtabs .gt.dragging{opacity:.5}
 #gtabs .gdot{width:8px;height:8px;border-radius:50%;background:var(--dim)}#gtabs .gdot[data-state=working]{background:var(--ok)}#gtabs .gdot[data-state=needs-you],#gtabs .gdot[data-state=paused]{background:var(--warn)}
 #gtabs .gx,#gtabs .gnew{min-height:0;height:22px;padding:0 6px;background:transparent;color:var(--mut);border:none;font:13px var(--mono);cursor:pointer}#gtabs .gx:hover,#gtabs .gnew:hover{color:var(--fg)}
-#gnotice{margin-left:auto;font:12px var(--mono);color:var(--warn);padding:0 8px}
+#gnotice{font:12px var(--mono);color:var(--warn);padding:0 8px}
+.gnav{margin-left:auto;display:flex;gap:2px;flex-shrink:0;padding-left:8px}.gnav a{padding:4px 10px;border-radius:999px;color:var(--mut);font:500 12.5px var(--sans);white-space:nowrap;text-decoration:none}.gnav a:hover{color:var(--fg2);background:var(--card2)}
 .gw{flex:1;min-height:0;display:grid;grid-auto-rows:minmax(0,1fr);gap:0;border:1px solid var(--bd);border-radius:0 12px 12px 12px;overflow:hidden}
 .gw[hidden]{display:none}
 .gp{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid transparent;outline:1px solid var(--hair);outline-offset:-1px}
