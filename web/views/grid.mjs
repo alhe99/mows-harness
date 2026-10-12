@@ -25,6 +25,19 @@ let saveT = 0;
 const dispatch = f => { const next = f(st.value); if (next !== st.value) st.value = next; };
 const labelOf = (f, name) => (f ? f.label || f.proj || f.name : name.replace(/^cc-[^-]+-/, ''));
 const fleetMap = () => new Map(store.fleet.value.map(f => [f.name, f]));
+// a drag: pointer capture on the handle, every iframe ignores the pointer meanwhile (#grid.drag); onMove gets the pointer's x, which becomes
+// the handle's left edge. It ends on pointerup, pointercancel or a lost capture (released off the window), whichever comes first.
+const ENDS = ['pointerup', 'pointercancel', 'lostpointercapture'];
+function drag(e, onMove) {
+  if (e.button !== 0) return;
+  const el = /** @type {HTMLElement} */ (e.currentTarget), g = document.getElementById('grid');
+  el.setPointerCapture(e.pointerId);
+  g?.classList.add('drag');
+  const move = ev => onMove(ev.clientX);
+  const end = () => { el.removeEventListener('pointermove', move); for (const n of ENDS) el.removeEventListener(n, end); g?.classList.remove('drag'); };
+  el.addEventListener('pointermove', move); for (const n of ENDS) el.addEventListener(n, end);
+  e.preventDefault();
+}
 const postMod = () => { for (const f of document.querySelectorAll('iframe.gfr')) /** @type {HTMLIFrameElement} */ (f).contentWindow?.postMessage({ t: 'grid-mod', mod: st.value.mod }, location.origin); };
 
 function Row({ f, open }) {
@@ -63,10 +76,10 @@ function Sidebar() {
     h('div', { class: 'glist' }, list));
 }
 
-function Pane({ tab, i, name, f, hiddenByZoom }) {
+function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
   if (!tabids.has(name)) tabids.set(name, mint());
   const on = tab.focus === i, state = f ? f.state : 'ended';
-  return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : undefined,
+  return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
       onPointerDown: () => dispatch(s => S.focusPane(s, tab.id, i)) },
     h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
       h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => dispatch(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? '⤡' : '⤢'),
@@ -74,12 +87,22 @@ function Pane({ tab, i, name, f, hiddenByZoom }) {
     h('iframe', { class: 'gfr', src: `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: name, onLoad: postMod }));
 }
 
+// the handle between columns k and k+1: the pointer's x as its new left edge sets column k's width, the pair keeps its sum, each stays >= minCol px
+function colDrag(e, tab, k) {
+  const g = /** @type {HTMLElement} */ (e.currentTarget).parentElement, n = tab.cols.length, W = g.clientWidth - 6 * (n - 1), left = g.getBoundingClientRect().left + g.clientLeft;
+  const before = tab.cols.slice(0, k).reduce((a, b) => a + b, 0) * W, pair = (tab.cols[k] + tab.cols[k + 1]) * W, min = S.CAPS.minCol;
+  drag(e, x => { const px = Math.min(Math.max(min, x - left - before - 6 * k), pair - min), cols = [...tab.cols]; cols[k] = px / W; cols[k + 1] = (pair - px) / W; dispatch(s => S.setCols(s, tab.id, cols)); });
+}
+
+// panes are placed by explicit grid cells and the handles come after every pane in the DOM: a handle appearing or going (the column count
+// changes with the pane count) never shifts or reorders a pane wrapper, so no iframe is moved. Handles exist only while the tab is not zoomed.
 function Tab({ tab, active, fm }) {
-  const isParked = parked.value.has(tab.id);
-  const cols = tab.zoom != null ? '1fr' : tab.cols.map(c => `minmax(${S.CAPS.minCol}px,${c}fr)`).join(' ');
-  return h('div', { class: 'gw', 'data-tab': tab.id, hidden: !active, style: `grid-template-columns:${cols}` },
-    isParked ? h('div', { class: 'gpark' }, 'parked · click the tab to reattach')
-      : tab.panes.map((name, i) => h(Pane, { key: name, tab, i, name, f: fm.get(name), hiddenByZoom: tab.zoom != null && tab.zoom !== i })));
+  const isParked = parked.value.has(tab.id), zoomed = tab.zoom != null, n = tab.cols.length, rows = Math.ceil(tab.panes.length / n) || 1;
+  const cols = zoomed ? '1fr' : tab.cols.map(c => `minmax(${S.CAPS.minCol}px,${c}fr)`).join(' 6px ');
+  return h('div', { class: 'gw', 'data-tab': tab.id, hidden: !active, style: `grid-template-columns:${cols};grid-template-rows:repeat(${zoomed ? 1 : rows},minmax(0,1fr))` },
+    isParked ? h('div', { class: 'gpark' }, 'parked · click the tab to reattach') : [
+      ...tab.panes.map((name, i) => h(Pane, { key: name, tab, i, name, f: fm.get(name), hiddenByZoom: zoomed && tab.zoom !== i, cell: zoomed ? '' : `grid-area:${(i / n | 0) + 1}/${2 * (i % n) + 1}` })),
+      ...(zoomed ? [] : tab.cols.slice(1).map((_, k) => h('div', { class: 'gh', 'data-k': k, key: 'h' + k, style: `grid-column:${2 * k + 2}`, onPointerDown: e => colDrag(e, tab, k) })))]);
 }
 
 function Strip({ fm }) {
@@ -126,7 +149,9 @@ export default function Grid() {
   const fm = fleetMap();
   return h('div', { id: 'grid', style: `--gsb:${s.sidebar}px` },
     h(Sidebar, null),
-    h('div', { id: 'gh-sb', title: 'drag to resize · double-click to reset' }),
+    h('div', { id: 'gh-sb', title: 'drag to resize · double-click to reset',
+      onPointerDown: e => { const left = document.getElementById('grid').getBoundingClientRect().left; drag(e, x => dispatch(s => S.setSidebar(s, x - left))); },
+      onDblClick: () => dispatch(s => S.setSidebar(s, 260)) }),
     h('main', { id: 'gmain' },
       h(Strip, { fm }),
       s.tabs.length ? s.tabs.map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; "split" puts it beside the current panes.')));

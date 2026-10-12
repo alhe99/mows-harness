@@ -17,7 +17,7 @@ body.gridv{padding-bottom:8px}body.gridv .hdr{margin-bottom:12px}body.gridv .ter
 #gsb .gr .fst,#gsb .gr .fsnip{grid-column:2/4;font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #gsb .gr .gsplit{min-height:0;padding:1px 6px;font:11px var(--mono);background:transparent;color:var(--mut);border:1px solid var(--bd);border-radius:5px;opacity:0}
 #gsb .gr:hover .gsplit,#gsb .gr:focus-within .gsplit{opacity:1}#gsb .gr .gsplit[data-full]{opacity:.3}
-#gh-sb,.gh{cursor:col-resize;background:transparent}#gh-sb:hover,.gh:hover,#grid.drag #gh-sb,#grid.drag .gh{background:var(--bd)}
+#gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}#gh-sb:hover,.gh:hover,#grid.drag #gh-sb,#grid.drag .gh{background:var(--bd)}
 #gmain{display:flex;flex-direction:column;min-width:0;min-height:0}
 #gtabs{display:flex;align-items:center;gap:4px;height:34px;flex-shrink:0;padding:0 4px;overflow-x:auto}
 #gtabs .gt{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 10px;border:1px solid var(--bd);border-radius:8px 8px 0 0;background:var(--card);color:var(--mut);font:13px var(--mono);cursor:pointer;user-select:none;white-space:nowrap;touch-action:none}

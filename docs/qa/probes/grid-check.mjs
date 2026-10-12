@@ -164,7 +164,36 @@ async function phoneMode() {
   check('2 a desktop window opened narrow shows the note, then mounts the grid once widened', note && grid, { note, grid });
   await n.ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode };
+async function dragMode() {
+  const { ctx, page } = await open();
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-alpha-web').locator('.gsplit').click();
+  const widths = () => page.$$eval('.gw:not([hidden]) .gp', ps => ps.map(p => Math.round(p.getBoundingClientRect().width)));
+  const w0 = await widths();
+  check('1 two equal columns to start', Math.abs(w0[0] - w0[1]) <= 2, w0);
+  const hb = await page.locator('.gw:not([hidden]) .gh').first().boundingBox();
+  await page.mouse.move(hb.x + 3, hb.y + 100); await page.mouse.down(); await page.mouse.move(hb.x - 200, hb.y + 100, { steps: 8 });
+  check('2 while dragging #grid.drag is set (iframes ignore the pointer)', await page.evaluate(() => document.getElementById('grid').classList.contains('drag')));
+  await page.mouse.up();
+  const w1 = await widths();
+  check('3 the left column shrank by about 200 px, the right grew, drag class cleared', w0[0] - w1[0] > 150 && w1[1] - w0[1] > 150 && !(await page.evaluate(() => document.getElementById('grid').classList.contains('drag'))), [w0, w1]);
+  const cols = (await st(page)).tabs[0].cols;
+  check('4 state holds normalised fractions', Math.abs(cols[0] + cols[1] - 1) < 1e-6 && cols[0] < 0.4, cols);
+  const hb2 = await page.locator('.gw:not([hidden]) .gh').first().boundingBox(); // the handle where the first drag left it
+  await page.mouse.move(hb2.x + 3, hb2.y + 100); await page.mouse.down(); await page.mouse.move(hb2.x + 120, hb2.y + 100, { steps: 4 }); await page.mouse.move(hb2.x - 2000, hb2.y + 100, { steps: 6 }); await page.mouse.up();
+  check('5 a drag past the edge leaves the column at the 160 px minimum', (await widths())[0] >= 160 && (await widths())[0] < 200, await widths());
+  const sb = await page.locator('#gh-sb').boundingBox();
+  await page.mouse.move(sb.x + 3, sb.y + 200); await page.mouse.down(); await page.mouse.move(sb.x + 120, sb.y + 200, { steps: 6 }); await page.mouse.up();
+  check('6 the sidebar handle resizes the sidebar and the state', Math.abs((await st(page)).sidebar - 380) <= 4 && Math.abs((await page.locator('#gsb').boundingBox()).width - 380) <= 4, (await st(page)).sidebar);
+  await page.mouse.move(sb.x + 123, sb.y + 200); await page.mouse.down(); await page.mouse.move(sb.x + 900, sb.y + 200, { steps: 6 }); await page.mouse.up();
+  check('7 clamped at 480', (await st(page)).sidebar === 480);
+  await page.locator('#gh-sb').dblclick();
+  check('8 double-click resets to 260', (await st(page)).sidebar === 260);
+  await page.waitForTimeout(400); // the layout is saved 250 ms after the last change
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
+  check('9 fractions survive a reload', (await st(page)).tabs[0].cols[0] < 0.4);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');
