@@ -240,8 +240,14 @@ async function keysMode() {
   await page.keyboard.press('Digit2'); // grouped order: alpha · web, api — row 2 is cc-alpha-api, already open in tab 1
   const s11 = await st(page);
   check('11 plain 2 outside a terminal acts on the second sidebar row (as on /): its tab becomes active', s11.tabs.find(t => t.id === s11.active).panes.includes('cc-alpha-api'));
-  await page.evaluate(() => window.postMessage({ t: 'grid-key', key: 'tab:1' }, 'https://evil.example'));
-  check('12 a message from another origin is ignored (no throw, state unchanged)', errors.length === 0);
+  // dispatched straight at the shell's window: a real cross-origin postMessage to self would be dropped by the browser before onMsg ran
+  const other = s11.tabs.findIndex(t => t.id !== s11.active), key = `tab:${other + 1}`;
+  const sendAs = (origin, k) => page.evaluate(([o, k]) => dispatchEvent(new MessageEvent('message', { data: { t: 'grid-key', key: k }, origin: o })), [origin, key]);
+  await sendAs('https://evil.example', key); await page.waitForTimeout(80);
+  const s12 = await st(page);
+  await sendAs(await page.evaluate(() => location.origin), key); await page.waitForTimeout(80);
+  const c12 = await st(page);
+  check('12 a grid-key message from another origin is ignored (state unchanged; the same message from the shell origin does act)', other >= 0 && errors.length === 0 && s12.active === s11.active && s12.tabs.every((t, i) => t.id === s11.tabs[i].id && t.focus === s11.tabs[i].focus) && c12.active === s11.tabs[other].id, { key, before: s11.active, evil: s12.active, control: c12.active });
   await ctx.close();
 }
 const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode };
