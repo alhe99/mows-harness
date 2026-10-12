@@ -184,8 +184,15 @@ It drives `/grid` on the dev instance with a fixture fleet (the boot snapshot is
 page that speaks the `grid-mod` / `grid-key` messages, so no pane ever reaches ttyd or a real tmux session. The modes: `open` (panes, tabs, caps), `groups`
 (sidebar grouping and filter), `persist` (a stored layout naming a gone session is dropped, and says so), `ended` (a pane whose session ends), `phone` (a touch or narrow device gets a note and a link to `/`, not the grid), `drag` (column and sidebar handles stay normalised), `keys` (chords, including from the framed terminal page), `tabs` (drag-reorder), `park`
 (hidden tabs close their sockets after 10 minutes and come back on click), `leak` (20 cycles of chords, parking and reordering with six panes: the same six
-iframes, listeners within +20 and DOM nodes within +200 of the start, and nothing left after every tab is closed). `leak` reads Chromium's DevTools counters
+iframes, listeners within +20 and DOM nodes within +200 of the start, and, once every tab is closed, no iframe and listeners within +20 and DOM nodes within +60 of the empty grid counted before the first tab opened). `leak` reads Chromium's DevTools counters
 (`Memory.getDOMCounters`), so it is Chromium-only. The pure layout state has its own browser-less check, `node scripts/grid-logic-check.mjs`, run by preflight.
+
+## Known red
+
+- **`sessions-check.mjs chromium history`, check 3** (`scroll -> Back -> Forward -> Back lands on the offset just set (700)`): fails with `{"back2":300}`.
+  Not caused by the grid view: a clean detached worktree of `main` (e618bb2, before `feat/grid-view`) fails identically, 3 runs of 3, so it predates this
+  branch (the branch diff touches no scroll restoration). Owner: alonso, the shell's history/scroll restoration, to be fixed on its own branch. Until then
+  `sessions-check chromium all` is expected to end `1 FAILED` on this one check and nothing else; any other FAIL there is new.
 
 ## What they cannot tell you
 

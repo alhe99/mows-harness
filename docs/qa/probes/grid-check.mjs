@@ -295,6 +295,7 @@ async function leakMode() {
   const { ctx, page } = await open();
   const cdp = await ctx.newCDPSession(page);
   const counters = async () => { await cdp.send('HeapProfiler.collectGarbage'); const c = await cdp.send('Memory.getDOMCounters'); return { nodes: c.nodes, listeners: c.jsEventListeners, frames: await page.evaluate(() => document.querySelectorAll('iframe.gfr').length) }; };
+  const empty0 = await counters();                                                                              // the empty grid, before any tab opens
   for (const n of ['cc-alpha-api', 'cc-beta-data']) await row(page, n).click();
   for (const n of ['cc-gamma-x', 'cc-gamma-y', 'cc-gamma-z', 'cc-alpha-web']) await row(page, n).locator('.gsplit').click();
   await page.waitForTimeout(500);
@@ -316,7 +317,7 @@ async function leakMode() {
   while ((await tabs(page)).length) { await page.locator('#gtabs .gt').first().locator('.gx').click(); await page.waitForTimeout(50); } // close every tab through the UI
   await page.waitForTimeout(300);
   const empty = await counters();
-  check('3 everything closed: no iframes, listeners back within +20 of the empty grid', empty.frames === 0 && empty.listeners <= base.listeners, { base, empty });
+  check('3 everything closed: no iframes, listeners within +20 and DOM nodes within +60 of the empty grid taken before the first tab', empty.frames === 0 && empty.listeners - empty0.listeners <= 20 && empty.nodes - empty0.nodes <= 60, { empty0, base, empty });
   check('4 no errors', errors.length === 0, errors);
   await ctx.close();
 }
