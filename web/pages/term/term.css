@@ -10,6 +10,7 @@ html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#161b2
 body{overscroll-behavior:none}
 #terminal-container{width:100%;height:100%;margin:0 auto;padding:0}
 #terminal-container .terminal{padding:5px;height:calc(100% - 10px)}
+.xterm .xterm-viewport{background-color:transparent;scrollbar-width:thin;scrollbar-color:#3f3f47 transparent} /* xterm paints the viewport #000 and the theme never repaints it: the 5 px padding and the space under the last row were a black frame on every theme; the body carries the theme background */
 
 #cckb{display:none;position:fixed;left:0;right:0;bottom:0;height:46px;z-index:50;background:#161b22;border-top:1px solid #30363d;
 padding:5px 6px calc(5px + env(safe-area-inset-bottom));gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
