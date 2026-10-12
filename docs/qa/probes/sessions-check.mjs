@@ -234,7 +234,7 @@ async function keys() {
   await page.keyboard.press('1');
   await page.keyboard.press('9');
   const ck = await page.evaluate(() => window.__clicked);
-  check('2 digit keys click the nth attach link (2 -> row 2, 1 -> row 1; 9 with 4 rows does nothing)', ck.length === 2 && ck[0].includes('arg=cc-alpha') && ck[1].includes('arg=cc-beta') && hrefs.length === 4, ck);
+  check('2 digit keys click the nth attach link (2 -> row 2, 1 -> row 1; 9 with 4 rows does nothing)', ck.length === 2 && ck[0].includes('cc-alpha') && ck[1].includes('cc-beta') && hrefs.length === 4, ck);
   await page.evaluate(() => { window.__clicked.length = 0; });
   for (const k of ['Control+1', 'Alt+1', 'Meta+1']) await page.keyboard.press(k);
   check('3 ...ignored with Ctrl, Alt or Meta', (await page.evaluate(() => window.__clicked)).length === 0);
@@ -273,9 +273,21 @@ async function keys() {
 async function links() {
   const names = ['cc-beta', 'cc-alpha', 'cc-gamma', 'cc-delta'];
   const grab = page => page.evaluate(() => [...document.querySelectorAll('#fleet-rows > .li [data-f=attach]')].map(a => ({ href: a.getAttribute('href'), nw: a.dataset.nw, target: a.getAttribute('target') })));
-  const { ctx, page } = await open();
+  // the grid's desktop (a mouse, >= 1024 px): a row routes into /grid in this tab, that session as a pane; the query is gone afterwards
+  {
+    const d = await open();
+    const g = await grab(d.page);
+    check('0a on the grid\'s desktop the attach href is /grid?open=<name>, no data-nw, no target', g.every((x, i) => x.href === `/grid?open=${names[i]}` && x.nw === undefined && x.target === null), g);
+    await d.ctx.route('**/term/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>t</title>stub' }));
+    await d.page.click('#fleet-rows > .li[data-sid=aaaa1111] [data-f=attach]');
+    await d.page.waitForSelector('#grid .gp[data-name=cc-alpha]');
+    const u = new URL(d.page.url());
+    check('0b the click routes in place to /grid with that session as a pane, the query stripped', u.pathname === '/grid' && u.search === '' && (await d.page.evaluate(() => window.__doc)) === 'same-document' && (await d.page.evaluate(() => window.__grid.state().tabs.map(t => t.panes.join()).join('|'))) === 'cc-alpha', { url: d.page.url() });
+    await d.ctx.close();
+  }
+  const { ctx, page } = await open({ w: 1000 }); // a fine pointer below 1024 px: the terminal document in a named window, as before
   const a = await grab(page);
-  check('1 attach href = /term/?arg=attach&arg=<name>&arg=<8 hex>&v=3', a.every((x, i) => x.href.startsWith(`/term/?arg=attach&arg=${names[i]}&arg=`) && /^\/term\/\?arg=attach&arg=[^&]+&arg=[0-9a-f]{8}&v=3$/.test(x.href)), a.map(x => x.href));
+  check('1 below 1024 px: attach href = /term/?arg=attach&arg=<name>&arg=<8 hex>&v=3', a.every((x, i) => x.href.startsWith(`/term/?arg=attach&arg=${names[i]}&arg=`) && /^\/term\/\?arg=attach&arg=[^&]+&arg=[0-9a-f]{8}&v=3$/.test(x.href)), a.map(x => x.href));
   check('2 data-nw = t-<name>', a.every((x, i) => x.nw === 't-' + names[i]), a.map(x => x.nw));
   check('3 browser display-mode, >= 700 px, fine pointer: data-nw becomes target', a.every((x, i) => x.target === 't-' + names[i]), a.map(x => x.target));
   await emit(page, FLEET.map(f => ({ ...f })));
@@ -297,7 +309,6 @@ async function links() {
 
   for (const [id, o, why] of [
     ['7 a 390 px phone: no target', { w: 390, h: 844, mobile: true }, 'width < 700'],
-    ['8 the installed app (display-mode standalone): no target', { stub: { standalone: true } }, 'standalone'],
     ['9 a landscape phone (>= 700 px, coarse pointer): no target', { w: 812, h: 375, stub: { coarse: true } }, 'coarse'],
   ]) {
     const x = await open(o);
@@ -309,6 +320,12 @@ async function links() {
       await x.page.waitForURL(/\/term\//);
       check('10 on a phone the attach link navigates in place', /^\/term\/\?arg=attach&arg=cc-alpha&arg=[0-9a-f]{8}&v=3$/.test(href) && new URL(x.page.url()).pathname === '/term/', x.page.url());
     }
+    await x.ctx.close();
+  }
+  { // the installed app on a desktop (standalone, a mouse, 1280 px) is the grid's desktop too: the row routes into the grid
+    const x = await open({ stub: { standalone: true } });
+    const t = await grab(x.page);
+    check('8 the installed app on a desktop: the grid link, no target', t.length === 4 && t.every(y => y.target === null && y.href.startsWith('/grid?open=')), t.map(y => y.href));
     await x.ctx.close();
   }
 }

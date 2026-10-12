@@ -5,6 +5,7 @@ import { h, Fragment } from 'preact';
 import { useEffect, useLayoutEffect } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
+import { base } from '../shared.mjs';
 
 const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
 const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
@@ -15,6 +16,9 @@ const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now'
 export const termHref = (kind, name) => `/term/?arg=${kind}&arg=${encodeURIComponent(name)}&arg=${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')}&v=3`;
 // a named window per session, in a desktop BROWSER only: the installed app has no second window, and a touch device has nowhere to put one
 const namedWindows = () => matchMedia('(display-mode: browser)').matches && innerWidth >= 700 && matchMedia('(pointer:fine)').matches;
+// where the grid runs (views/grid.mjs desktop(): a mouse, >= 1024 px) a row opens its session as a pane of /grid, in this tab; a phone, a
+// narrow window or the installed app keep the terminal document of its own (2026-10-12)
+const gridDesk = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
 
 const filter = signal('');
 const now = signal(0); // bumped every 30 s: relative times re-render between snapshots
@@ -63,8 +67,10 @@ function Menu({ f, back }) {
 }
 
 const glyph = f => h('span', { class: `fli fli-${f.state}`, 'aria-hidden': 'true', 'data-f': 'glyph' }, GLYPH[f.state]);
-const attach = (f, cls, extra) => h('a', { class: cls, 'data-nw': 't-' + f.name, 'data-f': 'attach', href: termHref('attach', f.name),
-  title: 'attach', 'aria-label': 'attach ' + f.name, target: namedWindows() ? 't-' + f.name : undefined, ...extra }, '>_');
+const attach = (f, cls, extra) => (gridDesk()
+  ? h('a', { class: cls, 'data-f': 'attach', href: `${base()}/grid?open=${encodeURIComponent(f.name)}`, title: 'attach (in the grid)', 'aria-label': 'attach ' + f.name, ...extra }, '>_')
+  : h('a', { class: cls, 'data-nw': 't-' + f.name, 'data-f': 'attach', href: termHref('attach', f.name),
+    title: 'attach', 'aria-label': 'attach ' + f.name, target: namedWindows() ? 't-' + f.name : undefined, ...extra }, '>_'));
 const snip = (f, extra) => h('div', { class: 'fsnip', 'data-f': 'snip', style: f.snippet ? extra : (extra ? extra + ';' : '') + 'display:none' }, f.snippet);
 
 function Row({ f, i, back, show }) {

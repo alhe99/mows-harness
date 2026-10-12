@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
@@ -395,7 +395,21 @@ async function sidebarMode() {
   check('6 Mod+B from inside a pane hides it', !(await shown()).sb);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode };
+// /grid?open=<name> (the home page's rows): that session as a tab, the keyboard in it, the query gone; an unknown name is ignored
+async function deeplinkMode() {
+  const { ctx, page } = await open();
+  await page.evaluate(() => localStorage.clear());
+  await page.goto(DASH + '/grid?open=cc-beta-data', { waitUntil: 'load' }); await page.waitForSelector('.gw:not([hidden]) .gp'); await page.waitForTimeout(400); // past the 250 ms save debounce before the next navigation
+  const p = await panes(page), u = new URL(page.url());
+  check('1 ?open= opens that session as the active tab and strips the query', p.length === 1 && p[0].name === 'cc-beta-data' && p[0].on && u.pathname === '/grid' && u.search === '', { p, url: page.url() });
+  check('2 the keyboard went to its pane', await page.evaluate(() => document.activeElement === document.querySelector('.gw:not([hidden]) .gp.on iframe')));
+  await page.goto(DASH + '/grid?open=cc-alpha-api', { waitUntil: 'load' }); await page.waitForSelector('.gw:not([hidden]) .gp'); await page.waitForTimeout(400);
+  check('3 a second ?open= adds a tab and keeps the first (persisted)', (await tabs(page)).length === 2 && (await panes(page))[0].name === 'cc-alpha-api');
+  await page.goto(DASH + '/grid?open=cc-nope', { waitUntil: 'load' }); await page.waitForSelector('.gw:not([hidden]) .gp'); await page.waitForTimeout(150);
+  check('4 an unknown session is ignored', (await tabs(page)).length === 2 && new URL(page.url()).search === '?open=cc-nope');
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

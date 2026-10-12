@@ -241,6 +241,10 @@ export default function Grid() {
     const live = new Set(store.fleet.value.map(f => f.name));
     const { state, dropped } = S.load(localStorage, live, detectMod());
     st.value = dropped.length ? { ...state, notice: `dropped ${dropped.length} ended session${dropped.length === 1 ? '' : 's'}` } : state;
+    // /grid?open=<session>: a row of the home page (sessions.mjs attach) lands here; that session becomes a tab (or its tab comes to the
+    // front), the keyboard goes to it, and the query leaves the URL so a reload is the plain grid
+    const open = new URLSearchParams(location.search).get('open');
+    if (open && live.has(open)) { st.value = { ...S.openTab(st.value, open), notice: st.value.notice }; history.replaceState(history.state, '', location.pathname); focusPaneFrame(); }
     /** @type {any} */ (window).__grid = { state: () => st.value, dispatch, fleet: () => store.fleet.value, sweep, parked: () => [...parked.value] };
     return () => { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(x => x !== sheet); document.body.classList.remove('gridv'); st.value = null; tabids.clear(); parked.value = new Set(); hiddenAt.clear(); pageHiddenAt = 0; delete (/** @type {any} */ (window)).__grid; };
   }, [ok]);

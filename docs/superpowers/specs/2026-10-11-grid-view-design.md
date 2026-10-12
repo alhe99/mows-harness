@@ -62,6 +62,11 @@ Keyboard (2026-10-12): every action that picks a pane (a sidebar row, split, a p
 that pane's iframe, and the framed terminal document moves the focus on to xterm on its window's focus event; before, the row or
 button kept the keyboard and typing went nowhere. Sidebar toggle: the strip's first button and Mod+B (from the shell or from inside a
 pane) hide the session list for a screen share; `sb` in the stored state, the grid becomes one column. Probe: grid-focus-check.mjs.
+
+Home page (2026-10-12): where the grid runs (a mouse, >= 1024 px, the installed app included) a session row on / routes to
+`/grid?open=<name>` in the same tab; the grid opens that session as a tab (or brings its tab to the front), gives it the keyboard and
+drops the query from the URL. Below 1024 px, on a phone or with a coarse pointer the row keeps the terminal document of its own
+(sessions.mjs attach). Probes: sessions-check `links` 0a/0b and 8, grid-check `deeplink`.
   A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new
