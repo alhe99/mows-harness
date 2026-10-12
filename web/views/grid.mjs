@@ -15,8 +15,8 @@ const NAV = [['Sessions', '/'], ['History', '/history'], ['System', '/system'], 
 
 // the Figma frame's icons (lucide strokes at 12/14 px), stroke colours as designed; hover brightens them in css.mjs
 const svg = (sz, stroke, ds) => h('svg', { width: sz, height: sz, viewBox: `0 0 ${sz} ${sz}`, fill: 'none', 'aria-hidden': 'true' }, ds.map(d => h('path', { d, stroke, 'stroke-width': sz === 12 ? 1 : 1.16667, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
+const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' }; // the sidebar rows (tokens.css .fli-*)
 const I = {
-  chev: () => svg(14, '#71717B', ['M3.5 5.25L7 8.75L10.5 5.25']),
   x12: () => svg(12, '#52525C', ['M9 3L3 9', 'M3 3L9 9']),
   plus: () => svg(14, '#52525C', ['M2.91667 7H11.0833', 'M7 2.91667V11.0833']),
   expand: () => svg(14, '#858585', ['M8.75 1.75H12.25V5.25', 'M12.25 1.75L8.16667 5.83333', 'M1.75 12.25L5.83333 8.16667', 'M5.25 12.25H1.75V8.75']),
@@ -119,14 +119,13 @@ function Row({ f, open }) {
   return h('div', { class: 'gr', 'data-name': f.name, 'data-state': f.state, 'data-open': open ? '1' : undefined, tabIndex: 0,
       onClick: e => dispatch(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))),
       onKeyDown: e => { if (e.key === 'Enter') dispatch(s => S.openTab(s, f.name)); } },
-    h('span', { class: 'gdot', 'data-state': f.state, 'aria-hidden': 'true' }),
+    h('span', { class: `fli fli-${f.state}`, 'data-f': 'glyph', 'aria-hidden': 'true' }, GLYPH[f.state]),
     ren ? h('form', { class: 'grn', method: 'post', action: '/a/label', onSubmit: e => { e.preventDefault(); const f = e.currentTarget; fetch(f.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(f))), redirect: 'manual' }).catch(() => {}); setRen(false); } /* not shared.mjs act(): that closes the nearest <details>, here the project group */, onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setRen(false); } },
         hid('name', f.name), h('input', { name: 'label', value: f.label || '', maxlength: 60, placeholder: 'session name', 'aria-label': 'session name', autocomplete: 'off', ref: el => el && requestAnimationFrame(() => { el.focus(); el.select(); }), onBlur: () => setRen(false) }))
       : h('span', { class: 'lb', 'data-f': 'label' }, labelOf(f, f.name)),
-    ren ? null : h('span', { class: 'gact' },
-      h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
-      h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
-        onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split')),
+    ren ? null : h('button', { class: 'gren', type: 'button', title: 'rename', 'aria-label': 'rename session', onClick: e => { e.stopPropagation(); setRen(true); } }, '✎'),
+    ren ? null : h('button', { class: 'gsplit', type: 'button', title: full ? `at most ${S.CAPS.panes} panes in a tab` : 'split beside the current panes', 'data-full': full ? '1' : undefined,
+      onClick: e => { e.stopPropagation(); dispatch(s => S.split(s, f.name)); } }, '⫿ split'),
     h('span', { class: 'fst', 'data-f': 'meta' }, `${WORD[f.state]} ${relStr(f.rel)}`),
     f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
@@ -142,7 +141,7 @@ function Sidebar() {
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
     const gs = [...groups.entries()].sort((a, b) => ORDER[a[1][0].state] - ORDER[b[1][0].state] || a[0].localeCompare(b[0]));
     list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
-      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, I.chev(), h('span', null, needs ? `${proj} · ${needs}` : proj)), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
+      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
   } else list = sorted.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }));
   return h('aside', { id: 'gsb' },
     h('div', { class: 'ghd' },
@@ -251,7 +250,7 @@ export default function Grid() {
   return h('div', { id: 'grid', style: `--gsb:${s.sidebar}px` },
     h(Sidebar, null),
     h('div', { id: 'gh-sb', title: 'drag to resize · double-click to reset',
-      onPointerDown: e => { const left = document.getElementById('grid').getBoundingClientRect().left; drag(e, x => dispatch(s => S.setSidebar(s, x - left))); },
+      onPointerDown: e => { const left = document.getElementById('gsb').getBoundingClientRect().left; drag(e, x => dispatch(s => S.setSidebar(s, x - left))); }, // the card's own left edge: the grid pads 8 px before it
       onDblClick: () => dispatch(s => S.setSidebar(s, 256)) }),
     h('main', { id: 'gmain' },
       h(Strip, { fm }),
