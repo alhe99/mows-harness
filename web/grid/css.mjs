@@ -19,7 +19,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr:hover{background:var(--card2)}#gsb .gr[data-open="1"]{border-left-color:var(--ok)}
 #gsb .gr .fli{grid-row:1/3;align-self:start;margin-top:2px}
 #gsb .gr .lb{font:500 13px var(--sans);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#gsb .gr .grn{display:flex;min-width:0}#gsb .gr .grn input{flex:1;min-width:0;min-height:0;padding:0 6px;font:500 13px var(--sans);line-height:19px;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:5px}#gsb .gr .grn.busy input{opacity:.5}
+#gsb .gr .grn{display:flex;min-width:0}#gsb .gr .grn input{flex:1;min-width:0;min-height:0;height:20px;box-sizing:border-box;padding:0 6px;font:500 13px var(--sans);line-height:18px;background:var(--card2);color:var(--fg);border:1px solid var(--bd);border-radius:5px;outline-offset:-2px}
 #gsb .gr .fst,#gsb .gr .fsnip{grid-column:2/5;font:11px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #gsb .gr .gren{min-height:0;padding:1px 5px;font:12px var(--mono);background:transparent;color:var(--mut);border:1px solid transparent;border-radius:5px;opacity:0}#gsb .gr:hover .gren,#gsb .gr:focus-within .gren{opacity:1}#gsb .gr .gren:hover{border-color:var(--bd);color:var(--fg)}
 #gsb .gr .grn{grid-column:2/5}
