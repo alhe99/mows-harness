@@ -32,6 +32,8 @@ s = S.focusPane(s, s.tabs[0].id, 2);
 check('13 stepPane wraps', S.stepPane(s, 1).tabs[0].focus === 3 && S.stepPane(S.focusPane(s, s.tabs[0].id, 4), 1).tabs[0].focus === 0 && S.stepPane(S.focusPane(s, s.tabs[0].id, 0), -1).tabs[0].focus === 4);
 check('14 stepTab wraps', S.stepTab(s, 1).active === s.tabs[1].id && S.stepTab(S.setActive(s, s.tabs[1].id), 1).active === s.tabs[0].id);
 check('15 toggleZoom sets the focused index, again clears it', S.toggleZoom(s).tabs[0].zoom === 2 && S.toggleZoom(S.toggleZoom(s)).tabs[0].zoom === null);
+const z = S.stepPane(S.toggleZoom(s), 1), z2 = S.stepPane(z, -1);
+check('15b stepPane while zoomed moves the zoom with the focus; unzoomed it stays null', z.tabs[0].focus === 3 && z.tabs[0].zoom === 3 && z2.tabs[0].focus === 2 && z2.tabs[0].zoom === 2 && S.stepPane(s, 1).tabs[0].zoom === null);
 s = S.openTab(s, 'cc-g');
 check('16 moveTab reorders', S.moveTab(s, 2, 0).tabs.map(x => x.id).join() === [s.tabs[2].id, s.tabs[0].id, s.tabs[1].id].join());
 let c = S.empty('mac'); for (let i = 0; i < 9; i++) c = S.openTab(c, 'cc-' + i); const c10 = S.openTab(c, 'cc-x');

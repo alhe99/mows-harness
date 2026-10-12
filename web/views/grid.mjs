@@ -76,14 +76,16 @@ function onMsg(e) {
 // an iframe taking focus is the one event the parent sees of a click inside a terminal
 function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const at = name && S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); } }, 0); }
 // parking (spec: 10 min hidden): a tab off screen for S.CAPS.park ms unmounts its panes (their sockets close) and shows the .gpark
-// placeholder until clicked; the page hidden that long parks every tab but the one on screen, which keeps its panes. Swept every minute and
-// on every state change (an active-tab change starts or clears a tab's hidden clock at once)
+// placeholder until clicked. The page hidden that long parks every tab, the one on screen included (a background browser tab holds no
+// sockets); back on screen, that one remounts at once and the others stay parked until clicked. Swept every minute and on every state
+// change (an active-tab change starts or clears a tab's hidden clock at once)
 const hiddenAt = new Map(); // tab id -> ms it was last hidden (runtime only)
 let pageHiddenAt = 0;
 function sweep() {
   const s = st.value; if (!s) return;
-  const now = Date.now(), p = new Set(parked.value);
+  const now = Date.now(), p = new Set(parked.value), away = pageHiddenAt > 0 && now - pageHiddenAt >= S.CAPS.park;
   for (const t of s.tabs) {
+    if (away) { p.add(t.id); continue; }
     if (t.id === s.active) { hiddenAt.delete(t.id); p.delete(t.id); continue; }
     if (!hiddenAt.has(t.id)) hiddenAt.set(t.id, now);
     else if (now - hiddenAt.get(t.id) >= S.CAPS.park) p.add(t.id);
@@ -94,7 +96,7 @@ function sweep() {
 function onVis() {
   if (document.visibilityState === 'hidden') { pageHiddenAt = Date.now(); return; }
   if (pageHiddenAt && Date.now() - pageHiddenAt >= S.CAPS.park && st.value) {
-    // every tab is parked except the one on screen, in one assignment: its iframe is never unmounted, so its sockets never close
+    // the sweep parked every tab if it ran meanwhile (a suspended laptop runs none): all but the one on screen stay parked, that one remounts
     parked.value = new Set(st.value.tabs.map(t => t.id).filter(id => id !== st.value.active));
     for (const t of st.value.tabs) hiddenAt.set(t.id, Date.now());
   }

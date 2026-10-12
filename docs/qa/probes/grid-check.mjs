@@ -223,6 +223,18 @@ async function keysMode() {
   check('5 Mod+Z zooms the focused pane (the other is display:none, still mounted)', (await panes(page)).filter(p => p.shown).length === 1 && (await panes(page)).length === 2);
   await press('Control+Shift+KeyZ');
   check('6 again unzooms', (await panes(page)).filter(p => p.shown).length === 2);
+  // arrows while zoomed: the zoom follows the focus, so the pane that is shown is the one that types (and that a Mod+X would close)
+  const zoomShown = async () => { const p = await panes(page), sh = p.filter(x => x.shown), s = await st(page), t = s.tabs.find(x => x.id === s.active); return { one: sh.length === 1 && sh[0].on, focus: t.focus, zoom: t.zoom }; };
+  await press('Control+Shift+KeyZ');
+  const z0 = await zoomShown();
+  await page.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('#ggroup')).focus()); // the keyboard back in the shell document, on a button
+  const outside = await page.evaluate(() => document.activeElement === document.querySelector('#ggroup'));
+  await press('Control+Shift+ArrowRight');
+  const z1 = await zoomShown(), in1 = await typesInFocused();
+  await press('Control+Shift+ArrowRight'); // now from inside the zoomed terminal
+  const z2 = await zoomShown();
+  check('6b zoomed, Mod+→ from the shell and then from inside the terminal: the zoom follows the focus, the shown pane is the focused one and has the keyboard', z0.one && outside && z1.one && z1.focus === (z0.focus + 1) % 2 && z1.zoom === z1.focus && in1 && z2.one && z2.focus === z0.focus && z2.zoom === z2.focus && await typesInFocused(), { z0, outside, z1, in1, z2 });
+  await press('Control+Shift+KeyZ');
   // a chord sent from inside a terminal (the stub posts what the real page's forwarder posts)
   await page.frames().find(f => f.url().includes('cc-gamma-y')).evaluate(() => window.__send('tab:2'));
   await page.waitForFunction(() => document.querySelector('#gtabs .gt.on')?.dataset.id === window.__grid.state().tabs[1].id);
@@ -281,13 +293,32 @@ async function parkMode() {
   await page.locator('#gtabs .gt').nth(0).click();
   await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 2);
   check('4 clicking the parked tab remounts its pane (a fresh iframe, same name)', (await panes(page))[0].name === 'cc-alpha-api' && (await page.evaluate(() => window.__grid.parked())).length === 0);
+  // the page hidden (a background browser tab, a lid closed with the box awake): visibilitychange is faked, the clock moved by the probe
+  const vis = (state, at) => page.evaluate(([v, ms]) => { window.__now = ms; Object.defineProperty(document, 'visibilityState', { value: v, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); }, [state, at]);
+  const sweepAt = ms => page.evaluate(m => { window.__now = m; window.__grid.sweep(); }, ms);
+  const parkedN = () => page.evaluate(() => window.__grid.parked().length);
+  const M = 60 * 1000;
+  // a suspended laptop: no sweep runs while hidden, so the tab on screen still has its iframe on return
   await mark(page);
-  await page.evaluate(() => { window.__now = 11 * 60 * 1000; Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
-  await page.evaluate(() => { window.__now = 22 * 60 * 1000 + 1000; Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await vis('hidden', 11 * M); await vis('visible', 22 * M + 1000);
   await page.waitForTimeout(300);
-  check('5 page hidden 11 minutes: every tab parked, the active one remounted at once', (await page.evaluate(() => window.__grid.parked())).length === 1 && await n() === 1 && (await panes(page)).length === 1);
-  const k6 = await kept(page);
-  check('6 the tab on screen kept its iframe through it (its socket was never closed)', k6.length === 1 && k6[0].name === 'cc-alpha-api' && k6[0].mark, k6);
+  const k5 = await kept(page);
+  check('5 hidden 11 minutes with no sweep meanwhile (suspended): the other tab parked, the tab on screen kept its iframe', await parkedN() === 1 && await n() === 1 && k5.length === 1 && k5[0].name === 'cc-alpha-api' && k5[0].mark, k5);
+  // awake but hidden: the sweep keeps running; at 9 minutes nothing changes, at 11 every tab is parked, the one on screen included
+  await vis('hidden', 23 * M);
+  await sweepAt(32 * M);
+  const at9 = { parked: await parkedN(), frames: await n() };
+  await sweepAt(34 * M + 1000);
+  await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 0);
+  const at11 = { parked: await parkedN(), frames: await n(), placeholder: await page.evaluate(() => !!document.querySelector('.gw:not([hidden]) .gpark')) };
+  check('6 page hidden with the sweep running: at 9 minutes the tab on screen is still mounted, at 11 every tab is parked and no iframe is left (no socket held)', at9.parked === 1 && at9.frames === 1 && at11.parked === 2 && at11.frames === 0 && at11.placeholder, { at9, at11 });
+  await vis('visible', 35 * M);
+  await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 1);
+  const p7 = await panes(page), s7 = await st(page);
+  check('7 back on screen: the active tab remounts at once (same name, a fresh iframe), the other stays parked until clicked', await parkedN() === 1 && p7.length === 1 && p7[0].name === 'cc-alpha-api' && s7.active === s7.tabs[0].id && await page.evaluate(() => !document.querySelector('.gw:not([hidden]) .gpark')), p7);
+  await page.locator('#gtabs .gt').nth(1).click();
+  await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 2);
+  check('8 clicking the parked tab remounts it too; no errors', await parkedN() === 0 && errors.length === 0, errors);
   await ctx.close();
 }
 async function leakMode() {

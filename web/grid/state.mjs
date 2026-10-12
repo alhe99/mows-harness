@@ -46,7 +46,8 @@ export function closePane(s, id, i) {
 export const focusPane = (s, id, i) => upd({ ...s, active: id }, id, t => ({ ...t, focus: clamp(i, 0, t.panes.length - 1) }));
 export const setActive = (s, id) => (tabAt(s, id) < 0 ? s : { ...s, active: id, notice: '' });
 export function stepTab(s, d) { const k = tabAt(s, s.active); if (k < 0 || s.tabs.length < 2) return s; return setActive(s, s.tabs[(k + d + s.tabs.length) % s.tabs.length].id); }
-export function stepPane(s, d) { const k = tabAt(s, s.active); if (k < 0) return s; const t = s.tabs[k]; return focusPane(s, t.id, (t.focus + d + t.panes.length) % t.panes.length); }
+// while zoomed the zoom follows the focus: the pane that takes the keyboard (and a later close) is always the one on screen
+export function stepPane(s, d) { const k = tabAt(s, s.active); if (k < 0) return s; const t = s.tabs[k], i = (t.focus + d + t.panes.length) % t.panes.length; return upd(s, t.id, x => ({ ...x, focus: i, zoom: x.zoom == null ? null : i })); }
 export function toggleZoom(s) { const k = tabAt(s, s.active); if (k < 0) return s; return upd(s, s.active, t => ({ ...t, zoom: t.zoom == null ? t.focus : null })); }
 export function moveTab(s, from, to) { const tabs = [...s.tabs]; const [t] = tabs.splice(from, 1); tabs.splice(to, 0, t); return { ...s, tabs }; }
 export const setCols = (s, id, cols) => upd(s, id, t => ({ ...t, cols: norm(cols) }));
