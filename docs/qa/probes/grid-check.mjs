@@ -287,6 +287,13 @@ async function tabsMode() {
   await page.locator('#gtabs .gt').nth(1).click();
   await page.keyboard.press('Control+Shift+Digit1');
   check('4 a short press without movement is a click (no reorder)', (await tabs(page)).map(t => t.id).join() === ids1.join());
+  // merge: a tab dropped onto the panes joins the tab on screen (tab 1 is active after Mod+1)
+  const src = await page.locator('#gtabs .gt').nth(1).boundingBox(), gw = await page.locator('.gw:not([hidden])').boundingBox(), srcId = (await tabs(page))[1].id;
+  await page.mouse.move(src.x + src.width / 2, src.y + src.height / 2); await page.mouse.down(); await page.mouse.move(gw.x + gw.width / 2, gw.y + gw.height / 2, { steps: 8 });
+  check('5 while a tab is dragged the panes show the drop target and iframes ignore the pointer', await page.evaluate(() => document.getElementById('grid').classList.contains('tabdrag') && getComputedStyle(document.querySelector('iframe.gfr')).pointerEvents === 'none'));
+  await page.mouse.up();
+  const s5 = await st(page), t5 = s5.tabs.find(t => t.id === s5.active);
+  check('6 dropped onto the panes: the dragged tab is gone, its pane is the active tab\'s second pane and focused, nothing else moved', s5.tabs.length === 2 && !s5.tabs.some(t => t.id === srcId) && s5.active === ids1[0] && t5.panes.length === 2 && t5.focus === 1 && (await panes(page)).length === 2 && !(await page.evaluate(() => document.getElementById('grid').classList.contains('drag'))), s5);
   await ctx.close();
 }
 async function parkMode() {

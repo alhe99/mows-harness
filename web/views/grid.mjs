@@ -180,12 +180,15 @@ function Strip({ fm }) {
         if (e.button || /** @type {HTMLElement} */ (e.target).closest('.gx')) return; // pointer capture would retarget the close button's click to the tab
         const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX; let moved = false;
         el.setPointerCapture(e.pointerId);
-        const move = ev => { if (Math.abs(ev.clientX - x0) > 6) { moved = true; el.classList.add('dragging'); } };
-        const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); };
+        const grid = document.getElementById('grid');
+        const move = ev => { if (Math.abs(ev.clientX - x0) > 6 || Math.abs(ev.clientY - e.clientY) > 6) { moved = true; el.classList.add('dragging'); grid?.classList.add('drag', 'tabdrag'); } }; // drag: iframes ignore the pointer, the panes show the drop target
+        const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); grid?.classList.remove('drag', 'tabdrag'); };
         const up = ev => {
           end();
           if (!moved) return;
-          const over = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY))?.closest('.gt');
+          const at = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY));
+          if (at?.closest('.gw')) { dispatch(s => S.mergeTab(s, t.id, s.active)); return; } // dropped onto the panes: this tab's panes join the tab on screen
+          const over = at?.closest('.gt');
           if (!over || over === el) return;
           const r = over.getBoundingClientRect(), ids = st.value.tabs.map(t => t.id), from = ids.indexOf(t.id);
           let to = ids.indexOf(over.dataset.id); if (ev.clientX > r.left + r.width / 2) to++; if (to > from) to--;

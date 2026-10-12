@@ -43,6 +43,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 .gph b{color:var(--fg);font-weight:600}.gph .gsp{flex:1}.gph button{min-height:0;height:20px;padding:0 6px;background:transparent;color:var(--mut);border:1px solid transparent;border-radius:4px;font:12px var(--mono);cursor:pointer}.gph button:hover{border-color:var(--bd);color:var(--fg)}
 .gfr{flex:1;width:100%;border:0;background:#2b2b2b;min-height:0}
 #grid.drag iframe{pointer-events:none}
+#grid.tabdrag .gw:not([hidden]){outline:2px dashed var(--mut);outline-offset:-3px;cursor:copy}
 .gpark{display:flex;align-items:center;justify-content:center;color:var(--mut);font:13px var(--mono)}
 .gempty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font:14px var(--sans)}
 [data-view=grid-phone]{padding:24px 8px;color:var(--mut);font:15px var(--sans)}

@@ -49,6 +49,14 @@ export function stepTab(s, d) { const k = tabAt(s, s.active); if (k < 0 || s.tab
 // while zoomed the zoom follows the focus: the pane that takes the keyboard (and a later close) is always the one on screen
 export function stepPane(s, d) { const k = tabAt(s, s.active); if (k < 0) return s; const t = s.tabs[k], i = (t.focus + d + t.panes.length) % t.panes.length; return upd(s, t.id, x => ({ ...x, focus: i, zoom: x.zoom == null ? null : i })); }
 export function toggleZoom(s) { const k = tabAt(s, s.active); if (k < 0) return s; return upd(s, s.active, t => ({ ...t, zoom: t.zoom == null ? t.focus : null })); }
+// a tab dropped onto the panes of another: its panes join that tab (appended, even columns, the first of them focused) and it closes.
+// ponytail: the moved panes' iframes change parent in the DOM and reload, the only DOM move the grid makes; a split + close would reload them too.
+export function mergeTab(s, from, into) {
+  const a = tabAt(s, from), b = tabAt(s, into); if (a < 0 || b < 0 || from === into) return s;
+  const src = s.tabs[a];
+  if (src.panes.length + s.tabs[b].panes.length > CAPS.panes) return { ...s, notice: `at most ${CAPS.panes} panes in a tab` };
+  return upd({ ...s, tabs: s.tabs.filter(t => t.id !== from), active: into }, into, t => ({ ...t, panes: [...t.panes, ...src.panes], cols: [], focus: t.panes.length, zoom: null }));
+}
 export function moveTab(s, from, to) { const tabs = [...s.tabs]; const [t] = tabs.splice(from, 1); tabs.splice(to, 0, t); return { ...s, tabs }; }
 export const setCols = (s, id, cols) => upd(s, id, t => ({ ...t, cols: norm(cols) }));
 export const setSidebar = (s, px) => ({ ...s, sidebar: clamp(Math.round(px), CAPS.sidebar[0], CAPS.sidebar[1]) });

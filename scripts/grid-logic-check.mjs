@@ -62,6 +62,14 @@ check('K6 letters: Z zoom, X close; S and W are NOT chords', ['KeyZ', 'KeyX', 'K
 check('K7b a mod stored from /system before any tab existed is kept by load', S.load({ getItem: () => JSON.stringify({ mod: 'alt' }) }, live, 'mac').state.mod === 'alt');
 check('K7 Digit0 and a bare key are not chords', chordOf(ev('Digit0', 'cs'), 'win') === null && chordOf(ev('KeyZ', ''), 'win') === null);
 check('K8 labels for the select', MODS.mac === '⌘⇧' && MODS.win === 'Ctrl⇧' && MODS.alt === 'Alt');
+// merging tabs (a tab dropped onto the panes)
+const m0 = S.split(S.openTab(S.openTab(S.empty('mac'), 'cc-a'), 'cc-b'), 'cc-c'); // t1 [cc-a], t2 [cc-b, cc-c] active
+const m1 = S.mergeTab(m0, 't1', 't2');
+check('M1 merge appends the panes, closes the source, keeps the target active, even cols, first merged pane focused', m1.tabs.length === 1 && m1.tabs[0].id === 't2' && m1.tabs[0].panes.join() === 'cc-b,cc-c,cc-a' && m1.active === 't2' && m1.tabs[0].cols.length === 3 && m1.tabs[0].focus === 2 && m1.tabs[0].zoom === null);
+check('M2 merge into itself or an unknown tab is a no-op', S.mergeTab(m0, 't1', 't1') === m0 && S.mergeTab(m0, 't9', 't2') === m0 && S.mergeTab(m0, 't1', 't9') === m0);
+let m2 = m1; for (const n of ['cc-d', 'cc-e', 'cc-f']) m2 = S.split(m2, n); // six panes
+const m3 = S.openTab(m2, 'cc-g'), m4 = S.mergeTab(m3, m3.active, 't2');
+check('M3 a merge past six panes is refused with a notice and changes nothing else', m4.tabs.length === 2 && m4.tabs[1].panes.join() === 'cc-g' && m4.notice.includes('6'));
 
 console.log(bad ? `grid-logic-check: ${bad} FAIL` : 'grid-logic-check: all pass');
 process.exit(bad ? 1 : 0);
