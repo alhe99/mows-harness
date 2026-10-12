@@ -158,7 +158,6 @@ export interface DeclarativePush {                           // what the server 
 export const BUDGET = {
   shell_js_kb: 30,
   view_js_kb: 15,
-  grid_js_kb: 20,        // the one exception: the desktop-only grid route carries its own stylesheet and the pane machinery
   md_vendor_kb: 25,
   css_kb: 12,
   fonts_kb: 80,          // identity bytes: woff2 is already compressed
