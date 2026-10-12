@@ -297,6 +297,7 @@ scripts/fixtures/chat-tools-measured.txt
 scripts/fixtures/inherited-tools.json
 scripts/fleet-classify-check.mjs
 scripts/gen-cockpit-specs.mjs
+scripts/grid-logic-check.mjs
 scripts/legacy-parity-check.mjs
 scripts/lh-gate.mjs
 scripts/live-agents.sh
@@ -339,6 +340,7 @@ watchdogs/logrotate.d/claude-harness
 web/contract.d.ts
 web/fonts/inter-var-latin.woff2
 web/fonts/jetbrains-mono-var-latin.woff2
+web/grid/state.mjs
 web/keys.mjs
 web/list.mjs
 web/main.mjs
