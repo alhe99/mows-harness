@@ -13,6 +13,8 @@ const cases = [
   ['dialog beats everything', { tail: 'Do you want to proceed?\n❯ 1. Yes\n  2. No', mt: old }, 'needs-you'],
   ['paused beats dialog', { paused: true, tail: 'Do you want to proceed?', mt: recent }, 'paused'],
   ['no transcript, no signals', { tail: '$ ', mt: 0 }, 'idle'],
+  ['resumed from the grid: bookkeeping touched the transcript, last turn long ago (2026-10-12)', { tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent', mt: recent, turn: old }, 'idle'],
+  ['resumed, no assistant entry in the tail at all', { tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: recent, turn: 0 }, 'idle'],
 ];
 let bad = 0;
 for (const [name, input, want] of cases) {

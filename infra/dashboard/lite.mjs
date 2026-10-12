@@ -257,6 +257,7 @@ if (args.includes('--selftest')) {
     { name: 'paused wins over a pending dialog', tail: 'Do you want to proceed?', mt: now - 1000, paused: true, want: 'paused' },
     { name: 'idle: quiet pane, transcript over an hour cold', tail: '│ >                          │\n? for shortcuts', mt: now - 3600000, paused: false, want: 'idle' },
     { name: 'idle: no transcript match at all (pane signals only)', tail: '$ ', mt: 0, paused: false, want: 'idle' },
+    { name: 'idle: resumed just now (transcript touched by bookkeeping), last turn an hour cold', tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: now - 60000, turn: now - 3600000, paused: false, want: 'idle' },
     { name: 'working: background /workflows monitor overlay, no esc-to-interrupt text', tail: '✻ Waiting for 1 dynamic workflow to finish\n↑↓ select · x stop workflow · p pause · esc back · s save', mt: 0, paused: false, want: 'working' },
   ];
   let fleetFail = 0;

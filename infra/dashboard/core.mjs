@@ -282,11 +282,11 @@ async function tmuxLiveCompute() {
 // ---------- fleet snippet: "what is it doing now" (last 16KB, newest message, mtime-cached) ----------
 // mirror of titleOf() above but reads the TAIL of the transcript, not the head — titleOf
 // stays the session's opening ask (history rows); this is the fleet card/row snippet.
-const tailCache = new Map(); // path -> {mt, text}
+const tailCache = new Map(); // path -> {mt, text, turn}: turn = when the newest assistant entry was written (0: none in the tail)
 async function tailOf(e) {
   const hit = tailCache.get(e.path);
   if (hit && hit.mt === e.mt) return hit;
-  let text = '';
+  let text = '', turn = 0;
   try {
     const fh = await fsp.open(e.path, 'r');
     const size = e.sz != null ? e.sz : (await fh.stat()).size;
@@ -302,6 +302,7 @@ async function tailOf(e) {
       if (!lines[i]) continue;
       let j; try { j = JSON.parse(lines[i]); } catch { continue; }
       if (j.type === 'assistant' && j.message) {
+        if (!turn) turn = Date.parse(j.timestamp) || 0;
         const c = j.message.content;
         const t = Array.isArray(c) ? (c.find(x => x.type === 'text') || {}).text : (typeof c === 'string' ? c : '');
         if (t) { text = t; break; } // newest assistant text wins outright
@@ -313,7 +314,7 @@ async function tailOf(e) {
     }
   } catch {}
   text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
-  const v = { mt: e.mt, text };
+  const v = { mt: e.mt, text, turn };
   if (tailCache.size > 4000) tailCache.clear();
   tailCache.set(e.path, v);
   return v;
@@ -344,13 +345,14 @@ const FLEET_RE = {
 // pure classifier — no I/O, no closures over live state — so it's unit-testable in
 // isolation (see the --selftest fixture block at the bottom of this file).
 // First match wins, exactly per the spec table: paused > needs-you > working > idle.
-export function classifyFleet({ paused, tail = '', mt = 0 }) {
+export function classifyFleet({ paused, tail = '', mt = 0, turn = mt }) {
   if (paused) return 'paused';
   if (FLEET_RE.dialog.test(tail)) return 'needs-you';
-  // idle prompt showing + the transcript's last turn finished < 10 min ago = work
-  // completed but not yet seen. mt=0 (no transcript match) can never satisfy this —
-  // sessions with no transcript row classify on pane signals alone, per spec.
-  if (mt && Date.now() - mt < 600000 && FLEET_RE.idlePrompt.test(tail) && !FLEET_RE.working.test(tail)) return 'needs-you';
+  // idle prompt showing + the transcript's last ASSISTANT turn written < 10 min ago = work completed but not yet seen. turn=0 (no
+  // transcript match, or no assistant entry in its tail) can never satisfy this: such sessions classify on pane signals alone, per spec.
+  // turn, not mt: a resume appends bookkeeping entries (cost-state, bridge-session) and bumps the mtime with no turn behind it, so a
+  // session just reopened idle read as needs-you (2026-10-12, two sessions attached from the grid).
+  if (turn && Date.now() - turn < 600000 && FLEET_RE.idlePrompt.test(tail) && !FLEET_RE.working.test(tail)) return 'needs-you';
   if (FLEET_RE.working.test(tail) || FLEET_RE.workflowMonitor.test(tail) || (mt && Date.now() - mt < 45000)) return 'working';
   return 'idle';
 }
@@ -385,9 +387,10 @@ async function fleetStateCompute() {
     const tail = l.paneId
       ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
-    const state = classifyFleet({ paused: l.paused, tail, mt });
+    const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0 };
+    const state = classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn });
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
-    const snippet = row ? (await tailOf({ path: row.path, mt, sz })).text : '';
+    const snippet = tl.text;
     // display "seen X ago" prefers the transcript write, else tmux's own last-activity
     // timestamp, else (no tmux report at all, shouldn't happen) session creation — NOT
     // session_created as the primary fallback, see the tmuxLive() comment on why.
