@@ -250,7 +250,47 @@ async function keysMode() {
   check('12 a grid-key message from another origin is ignored (state unchanged; the same message from the shell origin does act)', other >= 0 && errors.length === 0 && s12.active === s11.active && s12.tabs.every((t, i) => t.id === s11.tabs[i].id && t.focus === s11.tabs[i].focus) && c12.active === s11.tabs[other].id, { key, before: s11.active, evil: s12.active, control: c12.active });
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode };
+async function tabsMode() {
+  const { ctx, page } = await open();
+  for (const n of ['cc-alpha-api', 'cc-beta-data', 'cc-gamma-x']) await row(page, n).click();
+  const ids0 = (await tabs(page)).map(t => t.id);
+  await mark(page);
+  const a = await page.locator('#gtabs .gt').nth(2).boundingBox(), b = await page.locator('#gtabs .gt').nth(0).boundingBox();
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await page.mouse.down(); await page.mouse.move(b.x + 4, b.y + a.height / 2, { steps: 8 }); await page.mouse.up();
+  const ids1 = (await tabs(page)).map(t => t.id);
+  check('1 dragging the third tab onto the left half of the first puts it first', ids1.join() === [ids0[2], ids0[0], ids0[1]].join(), [ids0, ids1]);
+  check('2 pane wrappers did not move: DOM order is still creation order, iframes not reloaded', await page.evaluate(ids => [...document.querySelectorAll('.gw')].map(w => w.dataset.tab).join() === ids.join() && [...document.querySelectorAll('iframe.gfr')].every(f => f.contentDocument?.body?.dataset.stub === '1'), ids0) && allKept(await kept(page)));
+  await page.waitForTimeout(400); // the layout is saved 250 ms after the last change
+  await page.reload({ waitUntil: 'load' }); await page.waitForSelector('#grid');
+  check('3 the order survives a reload', (await tabs(page)).map(t => t.id).join() === ids1.join());
+  await page.locator('#gtabs .gt').nth(1).click();
+  await page.keyboard.press('Control+Shift+Digit1');
+  check('4 a short press without movement is a click (no reorder)', (await tabs(page)).map(t => t.id).join() === ids1.join());
+  await ctx.close();
+}
+async function parkMode() {
+  const { ctx, page } = await open();
+  await row(page, 'cc-alpha-api').click(); await row(page, 'cc-beta-data').click(); // tab 2 active, tab 1 hidden
+  const n = () => page.evaluate(() => document.querySelectorAll('iframe.gfr').length);
+  check('1 both tabs mounted: two iframes', await n() === 2);
+  await page.evaluate(() => { window.__now = 9 * 60 * 1000; window.__grid.sweep(); });
+  check('2 at 9 minutes nothing is parked', await n() === 2 && (await page.evaluate(() => window.__grid.parked())).length === 0);
+  await page.evaluate(() => { window.__now = 11 * 60 * 1000; window.__grid.sweep(); });
+  await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 1);
+  check('3 at 11 minutes the hidden tab is parked: one iframe left, the active tab untouched', (await page.evaluate(() => window.__grid.parked())).length === 1 && (await panes(page)).length === 1);
+  await page.locator('#gtabs .gt').nth(0).click();
+  await page.waitForFunction(() => document.querySelectorAll('iframe.gfr').length === 2);
+  check('4 clicking the parked tab remounts its pane (a fresh iframe, same name)', (await panes(page))[0].name === 'cc-alpha-api' && (await page.evaluate(() => window.__grid.parked())).length === 0);
+  await mark(page);
+  await page.evaluate(() => { window.__now = 11 * 60 * 1000; Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.evaluate(() => { window.__now = 22 * 60 * 1000 + 1000; Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
+  check('5 page hidden 11 minutes: every tab parked, the active one remounted at once', (await page.evaluate(() => window.__grid.parked())).length === 1 && await n() === 1 && (await panes(page)).length === 1);
+  const k6 = await kept(page);
+  check('6 the tab on screen kept its iframe through it (its socket was never closed)', k6.length === 1 && k6[0].name === 'cc-alpha-api' && k6[0].mark, k6);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

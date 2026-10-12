@@ -75,6 +75,31 @@ function onMsg(e) {
 }
 // an iframe taking focus is the one event the parent sees of a click inside a terminal
 function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const at = name && S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); } }, 0); }
+// parking (spec: 10 min hidden): a tab off screen for S.CAPS.park ms unmounts its panes (their sockets close) and shows the .gpark
+// placeholder until clicked; the page hidden that long parks every tab but the one on screen, which keeps its panes. Swept every minute and
+// on every state change (an active-tab change starts or clears a tab's hidden clock at once)
+const hiddenAt = new Map(); // tab id -> ms it was last hidden (runtime only)
+let pageHiddenAt = 0;
+function sweep() {
+  const s = st.value; if (!s) return;
+  const now = Date.now(), p = new Set(parked.value);
+  for (const t of s.tabs) {
+    if (t.id === s.active) { hiddenAt.delete(t.id); p.delete(t.id); continue; }
+    if (!hiddenAt.has(t.id)) hiddenAt.set(t.id, now);
+    else if (now - hiddenAt.get(t.id) >= S.CAPS.park) p.add(t.id);
+  }
+  for (const id of p) if (!s.tabs.some(t => t.id === id)) p.delete(id);
+  if (p.size !== parked.value.size || [...p].some(x => !parked.value.has(x))) parked.value = p;
+}
+function onVis() {
+  if (document.visibilityState === 'hidden') { pageHiddenAt = Date.now(); return; }
+  if (pageHiddenAt && Date.now() - pageHiddenAt >= S.CAPS.park && st.value) {
+    // every tab is parked except the one on screen, in one assignment: its iframe is never unmounted, so its sockets never close
+    parked.value = new Set(st.value.tabs.map(t => t.id).filter(id => id !== st.value.active));
+    for (const t of st.value.tabs) hiddenAt.set(t.id, Date.now());
+  }
+  pageHiddenAt = 0;
+}
 
 function Row({ f, open }) {
   const s = st.value, tab = s.tabs.find(t => t.id === s.active), full = !!tab && tab.panes.length >= S.CAPS.panes && !tab.panes.includes(f.name);
@@ -145,7 +170,26 @@ function Strip({ fm }) {
   const s = st.value;
   const worst = t => t.panes.reduce((w, n) => { const k = fm.get(n)?.state || 'idle'; return ORDER[k] < ORDER[w] ? k : w; }, 'idle');
   return h('nav', { id: 'gtabs' },
-    s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); focusPaneFrame(); } },
+    s.tabs.map((t, k) => h('div', { class: `gt${t.id === s.active ? ' on' : ''}`, 'data-id': t.id, key: t.id, onClick: () => { parked.value = new Set([...parked.value].filter(x => x !== t.id)); dispatch(s => S.setActive(s, t.id)); focusPaneFrame(); },
+      // a press that travels more than 6 px is a drag: released over another tab, this one lands before or after it (by the half it is
+      // released over). Only the strip reorders; the pane wrappers keep creation order (Grid), so no iframe moves
+      onPointerDown: e => {
+        if (e.button || /** @type {HTMLElement} */ (e.target).closest('.gx')) return; // pointer capture would retarget the close button's click to the tab
+        const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX; let moved = false;
+        el.setPointerCapture(e.pointerId);
+        const move = ev => { if (Math.abs(ev.clientX - x0) > 6) { moved = true; el.classList.add('dragging'); } };
+        const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); };
+        const up = ev => {
+          end();
+          if (!moved) return;
+          const over = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY))?.closest('.gt');
+          if (!over || over === el) return;
+          const r = over.getBoundingClientRect(), ids = st.value.tabs.map(t => t.id), from = ids.indexOf(t.id);
+          let to = ids.indexOf(over.dataset.id); if (ev.clientX > r.left + r.width / 2) to++; if (to > from) to--;
+          dispatch(s => S.moveTab(s, from, to));
+        };
+        el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', end);
+      } },
       h('span', { class: 'gdot', 'data-state': worst(t) }), t.panes.map(n => labelOf(fm.get(n), n)).join(' | '),
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, '×'))),
     h('a', { class: 'gnew', href: `/term/?arg=menu&arg=&arg=${mint()}&v=3`, target: 't-menu', 'data-nw': 't-menu', title: 'new session (terminal picker)' }, '+'),
@@ -170,15 +214,15 @@ export default function Grid() {
     const live = new Set(store.fleet.value.map(f => f.name));
     const { state, dropped } = S.load(localStorage, live, detectMod());
     st.value = dropped.length ? { ...state, notice: `dropped ${dropped.length} ended session${dropped.length === 1 ? '' : 's'}` } : state;
-    /** @type {any} */ (window).__grid = { state: () => st.value, dispatch, fleet: () => store.fleet.value };
-    return () => { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(x => x !== sheet); document.body.classList.remove('gridv'); st.value = null; tabids.clear(); parked.value = new Set(); delete (/** @type {any} */ (window)).__grid; };
+    /** @type {any} */ (window).__grid = { state: () => st.value, dispatch, fleet: () => store.fleet.value, sweep, parked: () => [...parked.value] };
+    return () => { document.adoptedStyleSheets = document.adoptedStyleSheets.filter(x => x !== sheet); document.body.classList.remove('gridv'); st.value = null; tabids.clear(); parked.value = new Set(); hiddenAt.clear(); pageHiddenAt = 0; delete (/** @type {any} */ (window)).__grid; };
   }, [ok]);
   useEffect(() => {
     if (!ok) return;
-    const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); });
-    const t = setInterval(() => { tick.value++; }, 30000);
-    document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur);
-    return () => { un(); clearInterval(t); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); };
+    const un = st.subscribe(s => { if (!s) return; clearTimeout(saveT); saveT = setTimeout(() => S.save(localStorage, s), 250); sweep(); });
+    const t = setInterval(() => { tick.value++; }, 30000), sw = setInterval(sweep, 60000);
+    document.addEventListener('keydown', onKey); addEventListener('message', onMsg); addEventListener('blur', onBlur); document.addEventListener('visibilitychange', onVis);
+    return () => { un(); clearInterval(t); clearInterval(sw); clearTimeout(saveT); document.removeEventListener('keydown', onKey); removeEventListener('message', onMsg); removeEventListener('blur', onBlur); document.removeEventListener('visibilitychange', onVis); };
   }, [ok]);
   if (!ok) return h('div', { 'data-view': 'grid-phone' }, 'The grid is a desktop view (a mouse and a window at least 1024 px wide). ', h('a', { href: '/' }, 'Back to sessions'));
   const s = st.value;
@@ -191,5 +235,5 @@ export default function Grid() {
       onDblClick: () => dispatch(s => S.setSidebar(s, 260)) }),
     h('main', { id: 'gmain' },
       h(Strip, { fm }),
-      s.tabs.length ? s.tabs.map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; "split" puts it beside the current panes.')));
+      s.tabs.length ? [...s.tabs].sort((a, b) => +a.id.slice(1) - +b.id.slice(1)).map(t => h(Tab, { key: t.id, tab: t, active: t.id === s.active, fm })) : h('div', { class: 'gempty' }, 'Click a session on the left to open it here; "split" puts it beside the current panes.')));
 }
