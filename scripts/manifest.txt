@@ -340,6 +340,7 @@ watchdogs/logrotate.d/claude-harness
 web/contract.d.ts
 web/fonts/inter-var-latin.woff2
 web/fonts/jetbrains-mono-var-latin.woff2
+web/grid/keys.mjs
 web/grid/state.mjs
 web/keys.mjs
 web/list.mjs

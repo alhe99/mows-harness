@@ -49,5 +49,16 @@ check('20c load rejects non-finite or non-positive cols and falls back to even',
 check('20d load clamps negative focus and zoom to a valid value', (() => { const t = bad1({ tabs: [{ id: 't1', panes: ['cc-a', 'cc-b'], focus: -3, zoom: -1 }] }).state.tabs[0]; return t.focus === 0 && t.zoom === null; })() && bad1({ tabs: [{ id: 't1', panes: ['cc-a', 'cc-b'], focus: 'x', zoom: 1.5 }] }).state.tabs[0].focus === 0);
 check('21 setMod / setGrouped', S.setMod(s, 'alt').mod === 'alt' && S.setGrouped(s, false).grouped === false);
 
+import { chordOf, detectMod, MODS } from '../web/grid/keys.mjs';
+const ev = (code, m) => ({ code, ctrlKey: m.includes('c'), metaKey: m.includes('m'), shiftKey: m.includes('s'), altKey: m.includes('a') });
+check('K1 detectMod: Mac and iPad -> mac, everything else -> win', detectMod('MacIntel') === 'mac' && detectMod('iPad') === 'mac' && detectMod('Win32') === 'win' && detectMod('Linux x86_64') === 'win');
+check('K2 win: Ctrl+Shift+Digit3 -> tab:3, Ctrl+Digit3 alone -> null, ⌘+Shift -> null', chordOf(ev('Digit3', 'cs'), 'win') === 'tab:3' && chordOf(ev('Digit3', 'c'), 'win') === null && chordOf(ev('Digit3', 'ms'), 'win') === null);
+check('K3 mac: ⌘+Shift+Digit1 -> tab:1, Ctrl+Shift -> null', chordOf(ev('Digit1', 'ms'), 'mac') === 'tab:1' && chordOf(ev('Digit1', 'cs'), 'mac') === null);
+check('K4 alt: Alt+Digit9 -> tab:9, Alt+Shift -> null, Ctrl+Alt -> null', chordOf(ev('Digit9', 'a'), 'alt') === 'tab:9' && chordOf(ev('Digit9', 'as'), 'alt') === null && chordOf(ev('Digit9', 'ac'), 'alt') === null);
+check('K5 arrows: left/right -> pane, up/down -> tabrel', ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'pane:-1,pane:1,tabrel:-1,tabrel:1');
+check('K6 letters: Z zoom, X close, S filter, W is NOT a chord', ['KeyZ', 'KeyX', 'KeyS', 'KeyW'].map(k => chordOf(ev(k, 'cs'), 'win')).join() === 'zoom,close,filter,');
+check('K7 Digit0 and a bare key are not chords', chordOf(ev('Digit0', 'cs'), 'win') === null && chordOf(ev('KeyZ', ''), 'win') === null);
+check('K8 labels for the select', MODS.mac === '⌘⇧' && MODS.win === 'Ctrl⇧' && MODS.alt === 'Alt');
+
 console.log(bad ? `grid-logic-check: ${bad} FAIL` : 'grid-logic-check: all pass');
 process.exit(bad ? 1 : 0);
