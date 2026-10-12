@@ -76,21 +76,35 @@ Sidebar row:
 - 1–9 on the sidebar (focus outside a terminal) → same as click on the nth visible row, as on `/`.
 
 Keys. Inside a terminal the iframe owns the keyboard, so the shell has one chord set that the terminal page
-forwards and that also works with focus outside a terminal:
+forwards and that also works with focus outside a terminal. The chord's **modifier is a setting**, `Mod`:
 
-| chord | action |
+| `Mod` | keys | default on |
+|---|---|---|
+| `mac` | ⌘ + Shift | macOS and iPadOS (`navigator.platform` starts with `Mac` or is `iPad`) |
+| `win` | Ctrl + Shift | Windows, Linux, ChromeOS |
+| `alt` | Alt (⌥) alone | never by default; for a keyboard where the two above collide |
+
+Auto-detected on first run and shown as a select in the sidebar head (`⌘⇧ / Ctrl⇧ / Alt`); the choice is stored
+with the layout. The parent posts `{ t: 'grid-mod', mod }` to every pane on mount and on change, so the forwarder
+in the terminal page matches the same modifier.
+
+| chord (with `Mod`) | action |
 |---|---|
-| Ctrl+Shift+1…9 | switch to tab n |
-| Ctrl+Shift+← / → | focus previous / next pane in the tab |
-| Ctrl+Shift+↑ / ↓ | previous / next tab |
-| Ctrl+Shift+Z | zoom / unzoom the focused pane |
-| Ctrl+Shift+W | close the focused pane (last pane closes the tab) |
-| Ctrl+Shift+S | open the sidebar filter (focus leaves the terminal) |
+| Mod+1…9 | switch to tab n |
+| Mod+← / → | focus previous / next pane in the tab |
+| Mod+↑ / ↓ | previous / next tab |
+| Mod+Z | zoom / unzoom the focused pane |
+| Mod+X | close the focused pane (last pane closes the tab) |
+| Mod+S | open the sidebar filter (focus leaves the terminal) |
+
+Letters were chosen against the browser's own bindings: ⌘⇧W / Ctrl⇧W close the window and cannot be intercepted,
+so close is **X**; ⌘1–9 / Ctrl1–9 switch browser tabs, so every chord carries Shift (or is Alt). None are tmux or
+Claude Code bindings (prefix is C-q).
 
 The terminal page gets one `term.attachCustomKeyEventHandler` that, **only when framed** (`window.parent !==
-window`), posts `{ t: 'grid-key', key }` to the parent for exactly these chords and swallows them; every other key
-goes to the pty as today. None of these chords are tmux or Claude Code bindings (prefix is C-q). Outside a terminal
-the shell also accepts plain `1–9`, `z`, `Esc` and `/`, as `/` does.
+window`), posts `{ t: 'grid-key', key }` to the parent for exactly these chords under the current `Mod` and swallows
+them; every other key goes to the pty as today. Outside a terminal the shell also accepts plain `1–9`, `z`, `Esc`
+and `/`, as `/` does.
 
 Focus tracking: the shell marks a pane focused on `pointerdown` in its header or iframe and on window `blur` when
 `document.activeElement` is that iframe. Clicking a tab focuses its last focused pane and calls `focus()` on its
@@ -109,7 +123,7 @@ session comes back, as on the phone).
 `localStorage['grid.v1']`:
 
 ```json
-{ "sidebar": 260, "grouped": true, "active": "t1",
+{ "sidebar": 260, "grouped": true, "mod": "mac", "active": "t1",
   "tabs": [ { "id": "t1", "panes": ["cc-work-api", "cc-work-web"], "cols": [0.5, 0.5], "focus": 0, "zoom": null } ] }
 ```
 
@@ -185,7 +199,7 @@ Recorded in `docs/qa/` like the mobile gates.
 1. Server: route, tab regex, nav entry with `desk` class, the one tokens.css rule.
 2. `views/grid.mjs` + `grid.css`: sidebar (grouped/flat, filter), tab strip, pane grid, state in localStorage.
 3. Resizing: column and sidebar handles.
-4. Keys: chord set in the shell; `grid-key` forwarding in `pages/term/term.mjs` when framed.
+4. Keys: `Mod` setting (auto-detect + select), chord set in the shell; `grid-mod` / `grid-key` messages with `pages/term/term.mjs` when framed.
 5. Tab drag-reorder; zoom; ended overlay; parking of hidden tabs and of the hidden page (10 min).
 6. Probe `grid-check.mjs` including the `leak` mode, manifest, run.sh and CI wiring; budgets green.
 7. ARCHITECTURE §2 route list and a ledger row; manual gate record; deploy from branch, verify live, merge.
