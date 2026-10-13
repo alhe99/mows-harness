@@ -65,5 +65,11 @@ for (let i = 0; i < 6; i++) st.push((await post({ code: bogus, rd: '/' }, L)).st
 check('five misses lock the account: the sixth try is 429', st.join() === '401,401,401,401,401,429', st);
 check('locked: even the right code is refused', (await post({ code: code(LOCK), rd: '/' }, L)).status() === 429);
 
+// sign out: the footer's link expires mows_2fa before oauth2-proxy's sign-out, so the next login asks for a code again
+r = await api.get(DASH + '/2fa/logout', { maxRedirects: 0 });
+check('sign out: 302 to /oauth2/sign_out, mows_2fa expired', r.status() === 302 && r.headers().location === '/oauth2/sign_out' && /mows_2fa=;.*Max-Age=0/.test(r.headers()['set-cookie']), r.headers());
+check('after sign out /2fa/auth is 401 again', (await api.get(DASH + '/2fa/auth')).status() === 401);
+const fr = await api.get(DASH + '/2fa/logout', { maxRedirects: 0, headers: { host: 'alonso.example.com', 'x-forwarded-proto': 'https' } });
+check('behind Caddy: expired on the host and every parent domain', ['', '; Secure; Domain=.alonso.example.com', '; Secure; Domain=.example.com'].every(d => fr.headersArray().some(h => h.name.toLowerCase() === 'set-cookie' && h.value === `mows_2fa=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${d}`)), fr.headersArray().filter(h => /set-cookie/i.test(h.name)));
 await browser.close();
 process.exit(bad ? 1 : 0);

@@ -141,6 +141,15 @@ export async function twofaView(req, res, url) {
     res.writeHead(ok ? 200 : 401, { 'cache-control': 'no-store' });
     return res.end();
   }
+  // the footer's sign out: expire mows_2fa, then oauth2-proxy's own sign-out, so the next login asks for a code again. The cookie was set on
+  // .<apex> by a POST on the apex, but this link is followed from the per-account hosts too: expire it on this host and every parent of it.
+  if (url.pathname === '/2fa/logout') {
+    const h = hostOf(req), tls = req.headers['x-forwarded-proto'] === 'https', ls = h.split('.');
+    const doms = tls ? ls.slice(0, -1).map((_, i) => ls.slice(i).join('.')) : [];
+    res.writeHead(302, { location: '/oauth2/sign_out', 'cache-control': 'no-store',
+      'set-cookie': ['', ...doms].map(d => `mows_2fa=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${d ? `; Secure; Domain=.${d}` : ''}`) });
+    return res.end();
+  }
   if (url.pathname !== '/2fa') return page(req, res, 404, { email, form: false, err: 'Not found.' });
   if (!email) return page(req, res, 401, { email, form: false, err: 'Sign in with Google first.' });
   if (!o) return page(req, res, 503, { email, form: false, err: 'The second factor is unavailable. Check the dashboard log on the box.' });

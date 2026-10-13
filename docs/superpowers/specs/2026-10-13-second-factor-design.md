@@ -69,6 +69,7 @@ Mounted in `lite.mjs`'s dispatch, before the `/app` views:
 | `/2fa/auth` | GET | 200 empty when the `mows_2fa` cookie verifies for the request's `X-Auth-Request-Email`, else 401 empty. No HTML, no redirect: Caddy does that. |
 | `/2fa` | GET | the challenge page. Shell tokens (`web/tokens.css` palette), one numeric input (`inputmode=numeric autocomplete=one-time-code`), a submit, the error line. `rd` is echoed into a hidden field. An email with no secret gets a 403 page: "not enrolled, run `2fa enroll` on the box". |
 | `/2fa` | POST | form body `code`, `rd`. Checks the code, sets the cookie, 303 to `rd` when `rd` is `https://` on the request's host or a subdomain of it (or a same-origin path), else to `/`. Wrong code: 401 and the page with the error. Cross-site POST (Origin/Referer on another host): 403. |
+| `/2fa/logout` | GET | the footer's sign out: expires `mows_2fa` (host-only and on every parent domain, since it is followed from the per-account hosts too), then 302 to `/oauth2/sign_out`. Without it a sign-out and re-login skipped the code for the rest of the 7 days (found live, 2026-10-13). The shell's link router leaves `/2fa/*` to the browser. |
 
 TOTP (RFC 6238 over RFC 4226): HMAC-SHA1 of the 8-byte big-endian counter
 `floor(now/30)`, dynamic truncation, 6 digits, zero-padded. Steps `-1, 0, +1` accepted.
