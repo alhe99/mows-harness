@@ -65,6 +65,10 @@ import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
 import { mdView } from './routes/md.mjs';
+import { cli as twofaCli, twofaView } from './routes/twofa.mjs';
+
+// `lite.mjs 2fa enroll|revoke|list`: the second factor's CLI (routes/twofa.mjs), run over SSH; never starts the server
+if (args[0] === '2fa') process.exit(twofaCli(args.slice(1)));
 
 // --ui=next|legacy (ARCHITECTURE section 10, K-21; the rollback is this flag, not a second mount): which document answers `/` and the
 // tab routes. `next` is the cockpit shell and the default since the cutover (phase 05); `legacy` is the old server-rendered dashboard
@@ -81,6 +85,7 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
+    if (p === '/2fa' || p.startsWith('/2fa/')) return await twofaView(req, res, url);
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
     if (UI === 'legacy' && p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));

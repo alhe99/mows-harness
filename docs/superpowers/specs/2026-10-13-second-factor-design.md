@@ -4,8 +4,8 @@ Date: 2026-10-13. Status: approved in chat, spec for `superpowers:writing-plans`
 
 ## Intent
 
-mows.me is gated by Google sign-in only: Caddy's `(gauth)` snippet calls oauth2-proxy on
-every request, and a 7-day cookie on `.mows.me` then opens the dashboard, every `/term`
+The console is gated by Google sign-in only: Caddy's `(gauth)` snippet calls oauth2-proxy on
+every request, and a 7-day cookie on `.{{DOMAIN}}` then opens the dashboard, every `/term`
 terminal, the vnc watch browser, the droid console and the sandbox on all hostnames. A
 logged-in Google browser or a stolen oauth2-proxy cookie therefore owns every live
 session on the box. This adds one more challenge, a TOTP code from an authenticator app,
@@ -68,7 +68,7 @@ Mounted in `lite.mjs`'s dispatch, before the `/app` views:
 |---|---|---|
 | `/2fa/auth` | GET | 200 empty when the `mows_2fa` cookie verifies for the request's `X-Auth-Request-Email`, else 401 empty. No HTML, no redirect: Caddy does that. |
 | `/2fa` | GET | the challenge page. Shell tokens (`web/tokens.css` palette), one numeric input (`inputmode=numeric autocomplete=one-time-code`), a submit, the error line. `rd` is echoed into a hidden field. An email with no secret gets a 403 page: "not enrolled, run `2fa enroll` on the box". |
-| `/2fa` | POST | form body `code`, `rd`. Checks the code, sets the cookie, 303 to `rd` when `rd` is `https://<host>.{{DOMAIN}}/...` (same-site check on the hostname suffix), else to `/`. Wrong code: 401 and the page with the error. |
+| `/2fa` | POST | form body `code`, `rd`. Checks the code, sets the cookie, 303 to `rd` when `rd` is `https://` on the request's host or a subdomain of it (or a same-origin path), else to `/`. Wrong code: 401 and the page with the error. Cross-site POST (Origin/Referer on another host): 403. |
 
 TOTP (RFC 6238 over RFC 4226): HMAC-SHA1 of the 8-byte big-endian counter
 `floor(now/30)`, dynamic truncation, 6 digits, zero-padded. Steps `-1, 0, +1` accepted.
@@ -76,8 +76,9 @@ Comparison with `timingSafeEqual` on the padded strings. The secret is 20 random
 stored and displayed base32 (RFC 4648, no padding), which is what authenticator apps
 read from an `otpauth://` URI.
 
-Replay: the last accepted counter per email is kept in memory; a code equal to or
-older than it is refused, so one captured code cannot be used twice within its window.
+Replay: the last accepted counter per email and secret is kept in memory; a code equal
+to or older than it is refused, so one captured code cannot be used twice within its
+window, and a freshly re-enrolled app's first code is not refused by the old secret's state.
 
 Brute force: five wrong codes for one email within five minutes lock that email for
 five minutes (in memory, cleared on restart). Lockout answers 429 with the page and
@@ -88,8 +89,17 @@ keyed by the 32-byte `key` from the secrets file; attributes `Secure; HttpOnly;
 SameSite=Lax; Path=/; Domain=.{{DOMAIN}}; Max-Age=604800` (7 days). Verification: three
 fields, hmac equal (`timingSafeEqual`), expiry in the future, email equal to the
 `X-Auth-Request-Email` header. A cookie minted for one Google account is worthless
-under another. The domain comes from the `--domain` flag / `MOWS_DOMAIN` env, default
-`mows.me`; a dev instance on loopback sets no `Domain` attribute at all.
+under another. There is no domain setting: Caddy sends every challenge to
+`https://{{DOMAIN}}/2fa`, so the page and its POST run on the apex and the request's own
+`Host` is the domain (the cookie's `Domain`, the `rd` allowlist, the page's CSP). `Secure`
+and `Domain` are set only when Caddy says `X-Forwarded-Proto: https`; a dev instance on
+loopback gets a host-only cookie.
+
+`rd` arrives exactly as Caddy writes it, `rd={scheme}://{host}{uri}`, unescaped, so a
+`/term/?arg=..&arg=..` target runs on past the first `&`: the page takes the query after
+`?rd=` raw rather than as one parameter. The page's CSP widens `form-action` to
+`https://{{DOMAIN}} https://*.{{DOMAIN}}`, because Chrome holds the redirect after a form
+POST to `form-action` and the base policy says `'self'`.
 
 The email is always `X-Auth-Request-Email` as Caddy sets it, lower-cased. A request
 reaching these routes with no such header (a dev instance with no Caddy) is treated as
@@ -117,7 +127,7 @@ node /opt/claude-dashboard/lite.mjs 2fa revoke <email>   # removes the secret: t
 node /opt/claude-dashboard/lite.mjs 2fa list             # emails and enrolledAt, never secrets
 ```
 
-URI: `otpauth://totp/mows.me:<email>?secret=<base32>&issuer=mows.me&algorithm=SHA1&digits=6&period=30`.
+URI: `otpauth://totp/mows:<email>?secret=<base32>&issuer=mows&algorithm=SHA1&digits=6&period=30`.
 No QR rendering: the box has no `qrencode`, and one account types the secret once.
 Re-enrolling rotates the secret; existing `mows_2fa` cookies stay valid until expiry
 (the cookie key is separate), which is the intended "lost phone, still logged in on the
@@ -146,8 +156,8 @@ factor at once.
   without a cookie; `/2fa` renders; a wrong code shows the error; the right code
   (computed in the probe from the scratch secret) sets the cookie and redirects to `rd`;
   `/2fa/auth` 200 with the cookie; a screenshot of the page read as an image.
-- Live, after deploy and Caddy reload: `curl -sI https://mows.me/`, `/term/`, `/vnc/`,
-  `https://sandbox.mows.me/` with only a Google cookie → 302 to `/2fa`; without any
+- Live, after deploy and Caddy reload: `curl -sI https://{{DOMAIN}}/`, `/term/`, `/vnc/`,
+  `https://sandbox.{{DOMAIN}}/` with only a Google cookie → 302 to `/2fa`; without any
   cookie → 302 to `/oauth2/start` (unchanged). Then the real flow in a browser: Google →
   `/2fa` → code → back to the grid, the `/term` panes connect, and a second subdomain
   opens without a new challenge. That browser run is the user's manual gate.
