@@ -481,8 +481,11 @@ async function svcMode() {
   check('2 it reads as a service: its tmux name, one tag per window, no state glyph, no state word, no rename',
     (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.gwin').allTextContents()).join() === 'main,adminapi,webadmin' && await r.locator('.fli, .fst, .gren').count() === 0);
   check('2b grouped, it hangs off the agent above by the elbow', await r.evaluate(e => getComputedStyle(e, '::before').display !== 'none' && getComputedStyle(e, '::before').borderLeftStyle === 'solid'));
+  const wposts = []; await page.route('**/a/window', rt => { wposts.push(rt.request().postData()); rt.fulfill({ status: 204 }); });
+  await r.locator('.gwin', { hasText: 'adminapi' }).click(); await page.waitForTimeout(150);
+  check('2c a window tag posts /a/window for that window and opens the session as a tab', wposts.join() === 'name=cecqa&win=adminapi' && (await st(page)).tabs.length === 1, wposts);
   await r.click();
-  check('3 a click opens it as a tab named after the session', (await st(page)).tabs.length === 1 && (await page.locator('#gtabs').textContent()).includes('cecqa'));
+  check('3 a click on the row opens (here: keeps) it as one tab named after the session', (await st(page)).tabs.length === 1 && (await page.locator('#gtabs').textContent()).includes('cecqa'));
   await page.click('#ggroup');
   const flat = await page.$$eval('#gsb .glist > *', es => es.map(e => e.dataset.name || e.textContent.trim()));
   check('4 flat: the agents first, then a services heading, then the service', flat.slice(-3).join() === 'services,cecqa,cecdb' && flat.length === 10, flat);
