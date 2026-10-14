@@ -30,6 +30,9 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
     if (document.activeElement === t) { t.blur(); t.focus(); } // make the IME re-read the flags
   };
   fix(ta());
+  // xterm empties the field on every blur (app switch, keyboard hidden). Registered after xterm's own listener, so this runs right after it and
+  // puts the line back: an IME edit that lands while the field is empty would be diffed against '' and backspace the whole typed line in the pty.
+  ta()?.addEventListener('blur', () => { const t = ta(); if (t && t.value === '' && prev) t.value = prev; });
 
   for (const type of ['keydown', 'keyup', 'keypress']) document.addEventListener(type, (/** @type {any} */ e) => {
     if (!isTA(e)) return;

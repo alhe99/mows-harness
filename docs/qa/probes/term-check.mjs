@@ -212,6 +212,17 @@ async function ime() {
   const n4 = W.inputs().length;
   await W.page.keyboard.press('Backspace'); await sleep(100);
   check('Backspace on an empty shadow line still deletes (\\x7f)', W.inputs().slice(n4).join('') === '\x7f', W.inputs().slice(n4));
+  // leaving the app or hiding the keyboard blurs the textarea and xterm empties it: the shadow line must survive, or the IME's next edit is
+  // diffed against '' and the whole typed line is backspaced away in the pty (the "text cleared when I switch apps" bug)
+  await W.page.keyboard.type('fix the bug'); await sleep(100);
+  await W.page.evaluate(() => window.term.textarea.blur()); await sleep(50);
+  const kept = await W.page.evaluate(() => window.term.textarea.value);
+  check('a blur keeps the shadow line (xterm\u2019s blur clear is undone)', kept === 'fix the bug', kept);
+  const n4b = W.inputs().length;
+  await W.page.evaluate(() => window.term.focus()); await sleep(100);
+  await W.page.keyboard.type('s'); await sleep(100);
+  check('after blur + refocus a keystroke sends only itself, nothing is deleted', W.inputs().slice(n4b).join('') === 's', bytes(W.inputs().slice(n4b).join('')));
+  await W.page.keyboard.press('Enter'); await sleep(100);
   // a terminal key (Ctrl) falls through to xterm
   const n5 = W.inputs().length;
   await W.page.keyboard.press('Control+C'); await sleep(100);
