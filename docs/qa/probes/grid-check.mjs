@@ -475,8 +475,8 @@ async function killMode() {
 }
 async function svcMode() {
   // a tmux session with no claude in it (2026-10-14: links-cec's `cecqa` read as a second links-cec session)
-  const SVC = { ...fx('cecqa', 'cecqa', '', 'alpha', 'idle', 5), kind: 'service', wins: ['main', 'adminapi', 'webadmin'] };
-  const DB = { ...fx('cecdb', 'cecdb', '', 'alpha', 'idle', 50), kind: 'service', wins: ['mongo'] };
+  const SVC = { ...fx('cecqa', 'cecqa', '', 'alpha', 'idle', 5), kind: 'service', closeAt: 0, wins: [{ n: 'main', up: false }, { n: 'adminapi', up: true }, { n: 'webadmin', up: true }] };
+  const DB = { ...fx('cecdb', 'cecdb', '', 'alpha', 'idle', 50), kind: 'service', closeAt: T + 7 * 60_000 - 1000, wins: [{ n: 'mongo', up: false }] };
   const { ctx, page } = await open({ fleet: [...FLEET, SVC, DB] });
   const shot = async n => process.env.SHOT && page.locator('#gsb').screenshot({ path: `${process.env.SHOT}/svc-${n}.png` });
   await shot('grouped');
@@ -485,6 +485,12 @@ async function svcMode() {
   const r = row(page, 'cecqa');
   check('2 it reads as a service: its tmux name, one tag per window, no state glyph, no state word, no rename',
     (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.gwin').allTextContents()).join() === 'main,adminapi,webadmin' && await r.locator('.fli, .fst, .gren').count() === 0);
+  check('2a running windows carry the dot, a bare prompt is dashed; with something up the row says no status',
+    (await r.locator('.gwin[data-up="1"]').allTextContents()).join() === 'adminapi,webadmin' && (await r.locator('.gwin[data-up="0"]').allTextContents()).join() === 'main' && await r.locator('.gsst').count() === 0 && await r.getAttribute('data-up') === '1');
+  const d = row(page, 'cecdb');
+  check('2d nothing running anywhere: the row fades and counts down to the auto-close', await d.getAttribute('data-up') === '0' && (await d.locator('.gsst').textContent()) === 'closes in 7m' && await d.locator('.gsst[data-close]').count() === 1);
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => (f.name === 'cecdb' ? { ...f, closeAt: 0 } : f))));
+  check('2e stopped with no close planned (never seen running, attached, @keep) reads just "stopped"', (await d.locator('.gsst').textContent()) === 'stopped' && await d.locator('.gsst[data-close]').count() === 0);
   check('2b grouped, it hangs off the agent above by the elbow', await r.evaluate(e => getComputedStyle(e, '::before').display !== 'none' && getComputedStyle(e, '::before').borderLeftStyle === 'solid'));
   await r.click();
   check('3 not clickable: a click opens no tab, the row takes no focus', (await st(page)).tabs.length === 0 && await r.getAttribute('tabindex') === null);

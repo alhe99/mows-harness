@@ -184,9 +184,14 @@ function Row({ f, open }) {
 // (2026-10-14: its tab was an empty shell, nothing to open). The window names say what runs; kill keeps its confirm.
 function ServiceRow({ f }) {
   const [kill, setKill] = useState(false);
-  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', title: `servers in tmux session ${f.name}: ${(f.wins || []).join(', ')}` },
+  const wins = f.wins || [], up = wins.some(w => w.up);
+  // nothing running in any window: "stopped", and the countdown to the server's auto-close (core.mjs svcPlan) when one is set
+  const left = f.closeAt ? Math.max(1, Math.ceil((f.closeAt - Date.now()) / 60_000)) : 0;
+  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', 'data-up': up ? '1' : '0',
+      title: `tmux session ${f.name}: ${wins.map(w => `${w.n} ${w.up ? 'running' : 'stopped'}`).join(', ')}${left ? ` · closes on its own in ${left}m` : ''}` },
     h('span', { class: 'lb', 'data-f': 'label' }, f.name),
-    kill ? null : h('span', { class: 'gwins', 'data-f': 'meta' }, (f.wins || []).map(w => h('span', { class: 'gwin', key: w }, w))),
+    up || kill ? null : h('span', { class: 'gsst', 'data-f': 'status', 'data-close': left ? '1' : undefined }, left ? `closes in ${left}m` : 'stopped'),
+    kill ? null : h('span', { class: 'gwins', 'data-f': 'meta' }, wins.map(w => h('span', { class: 'gwin', key: w.n, 'data-up': w.up ? '1' : '0' }, w.n))),
     kill ? null : h('button', { class: 'gkill', type: 'button', title: 'kill session', 'aria-label': 'kill session', onClick: e => { e.stopPropagation(); setKill(true); } }, I.x12()),
     kill ? h('form', { class: 'gkc', method: 'post', action: '/a/kill', role: 'group', 'aria-label': 'confirm kill',
         onSubmit: e => { e.preventDefault(); const fm = e.currentTarget; fetch(fm.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(fm))), redirect: 'manual' }).catch(() => {}); setKill(false); go(closeName(f.name)); },

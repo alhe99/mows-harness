@@ -16,7 +16,8 @@ export interface FleetItem {
   rel: number;             // mtime, ms epoch (client renders relative time)
   snippet: string;         // last pane text, <=160 chars
   kind: 'claude' | 'service'; // service = a tmux session with no claude process (servers an agent parked there)
-  wins: string[];          // tmux window names, in order
+  wins: { n: string; up: boolean }[]; // tmux windows in order; up = a process runs under its shell
+  closeAt: number;         // service only: ms epoch it auto-closes at (nothing running for 10m), 0 = not closing
   born: number;            // tmux session_created, ms epoch: the grid sidebar's order (oldest first)
 }
 
