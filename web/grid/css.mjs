@@ -24,6 +24,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr .gren{min-height:0;padding:1px 5px;font:12px var(--mono);background:transparent;color:var(--mut);border:1px solid transparent;border-radius:5px;opacity:0}#gsb .gr:hover .gren,#gsb .gr:focus-within .gren{opacity:1}#gsb .gr .gren:hover{border-color:var(--bd);color:var(--fg)}
 #gsb .gr .gkill{display:inline-flex;align-items:center;min-height:0;padding:3px 5px;background:transparent;border:1px solid transparent;border-radius:5px;opacity:0;cursor:pointer}
 #gsb .gr:hover .gkill,#gsb .gr:focus-within .gkill{opacity:1}#gsb .gr .gkill:hover{border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.1)}#gsb .gr .gkill path{stroke:var(--mut)}#gsb .gr .gkill:hover path{stroke:var(--bad)}
+#gsb .gsvc{padding-top:4px;padding-bottom:4px}#gsb .gsvc .fli{color:var(--dim);font-size:12px}#gsb .gsvc .lb{font:12px var(--mono);color:var(--mut)}#gsb .gsvh{padding:10px 12px 4px;font:600 11px var(--mono);color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
 #gsb .gr .gkc{grid-column:2/5;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:6px;cursor:default}#gsb .gr .gkq{flex-basis:100%;font:11px/1.4 var(--sans);color:var(--mut)}
 #gsb .gr .gkc button{min-height:0;height:24px;padding:0 10px;border-radius:6px;font:500 11px var(--sans);cursor:pointer;border:1px solid var(--bd2);background:var(--card2);color:var(--fg2)}
 #gsb .gr .gkc .gkyes{color:var(--bad)}#gsb .gr .gkc .gkyes:hover{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.35)}

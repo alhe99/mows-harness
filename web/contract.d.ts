@@ -15,6 +15,8 @@ export interface FleetItem {
   state: FleetState;
   rel: number;             // mtime, ms epoch (client renders relative time)
   snippet: string;         // last pane text, <=160 chars
+  kind: 'claude' | 'service'; // service = a tmux session with no claude process (servers an agent parked there)
+  wins: string[];          // tmux window names, in order
 }
 
 export type AgentRunState = 'working' | 'done' | 'failed' | 'stalled' | 'budget_exceeded' | 'never';

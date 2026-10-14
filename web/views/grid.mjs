@@ -37,7 +37,7 @@ const tick = signal(0);
 const tabids = new Map();   // session name -> this pane's 8-hex tab id, minted once per mount (never persisted: a reload is a new client)
 let saveT = 0;
 const dispatch = f => { const next = f(st.value); if (next !== st.value) st.value = next; };
-const labelOf = (f, name) => (f ? f.label || f.proj || f.name : S.isPicker(name) ? 'new session' : name.replace(/^cc-[^-]+-/, ''));
+const labelOf = (f, name) => (f ? (f.kind === 'service' ? f.name : f.label || f.proj || f.name) : S.isPicker(name) ? 'new session' : name.replace(/^cc-[^-]+-/, ''));
 const fleetMap = () => new Map(store.fleet.value.map(f => [f.name, f]));
 // a drag: pointer capture on the handle, every iframe ignores the pointer meanwhile (#grid.drag); onMove gets the pointer's x, which becomes
 // the handle's left edge. It ends on pointerup, pointercancel or a lost capture (released off the window), whichever comes first.
@@ -180,19 +180,46 @@ function Row({ f, open }) {
     !kill && f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
 
+// a tmux session with no claude in it (servers an agent parked there): not an agent row — no state, no rename; opens as a tab,
+// kill keeps its confirm. The window names say what runs.
+function ServiceRow({ f, open }) {
+  const [kill, setKill] = useState(false);
+  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', 'data-open': open ? '1' : undefined, tabIndex: 0,
+      onPointerDown: e => rowDrag(e, f.name),
+      onClick: e => { if (!rowDragged) go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))); },
+      onKeyDown: e => { if (e.key === 'Enter') go(s => S.openTab(s, f.name)); } },
+    h('span', { class: 'fli', 'aria-hidden': 'true' }, '▤'),
+    h('span', { class: 'lb', 'data-f': 'label' }, f.name),
+    kill ? null : h('button', { class: 'gkill', type: 'button', title: 'kill session', 'aria-label': 'kill session', onClick: e => { e.stopPropagation(); setKill(true); } }, I.x12()),
+    kill ? h('form', { class: 'gkc', method: 'post', action: '/a/kill', role: 'group', 'aria-label': 'confirm kill',
+        onSubmit: e => { e.preventDefault(); const fm = e.currentTarget; fetch(fm.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(fm))), redirect: 'manual' }).catch(() => {}); setKill(false); go(closeName(f.name)); },
+        onClick: e => e.stopPropagation(), onKeyDown: e => { e.stopPropagation(); if (e.key === 'Escape') setKill(false); } },
+        hid('name', f.name), hid('back', base() + '/grid'),
+        h('span', { class: 'gkq' }, 'Kill it? Every server in it stops now.'),
+        h('button', { class: 'gkno', type: 'button', onClick: () => setKill(false), ref: el => el?.focus() }, 'Cancel'),
+        h('button', { class: 'gkyes', type: 'submit' }, 'Kill It'))
+      : h('span', { class: 'fst', 'data-f': 'meta' }, (f.wins || []).join(' · ')));
+}
+const rowOf = (f, isOpen) => h(f.kind === 'service' ? ServiceRow : Row, { key: f.name, f, open: isOpen(f.name) });
+
 function Sidebar() {
   tick.value;
   const s = st.value;
   const isOpen = name => !!S.find(s, name);
-  const sorted = [...store.fleet.value].sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.rel - a.rel);
+  const svc = f => (f.kind === 'service' ? 1 : 0); // service rows sink below the agents, in a group and in the flat list
+  const sorted = [...store.fleet.value].sort((a, b) => svc(a) - svc(b) || ORDER[a.state] - ORDER[b.state] || b.rel - a.rel);
   let list;
   if (s.grouped) {
     const groups = new Map();
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
     const gs = [...groups.entries()].sort((a, b) => ORDER[a[1][0].state] - ORDER[b[1][0].state] || a[0].localeCompare(b[0]));
     list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
-      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }))); });
-  } else list = sorted.map(f => h(Row, { key: f.name, f, open: isOpen(f.name) }));
+      return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => rowOf(f, isOpen))); });
+  } else {
+    const n = sorted.findIndex(svc);
+    list = sorted.map(f => rowOf(f, isOpen));
+    if (n >= 0) list.splice(n, 0, h('div', { class: 'gsvh', key: '§svc' }, 'services'));
+  }
   return h('aside', { id: 'gsb' },
     h('div', { class: 'ghd' },
       h('button', { id: 'ggroup', type: 'button', title: 'group by project', onClick: () => dispatch(s => S.setGrouped(s, !s.grouped)) }, s.grouped ? 'flat' : 'grouped')), // the chord modifier is set on /system (Shortcuts card); the sidebar is sessions only

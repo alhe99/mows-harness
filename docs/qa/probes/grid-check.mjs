@@ -1,5 +1,5 @@
 // Grid view probe (docs/superpowers/specs/2026-10-11-grid-view-design.md). Exit code is the verdict.
-// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|sidebar|deeplink|picker|kill|all>
+// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|sidebar|deeplink|picker|kill|svc|all>
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
 // Runs against the shell on the dev instance with a FIXTURE fleet (boot snapshot rewritten in flight, EventSource faked, every /term/*
 // answered with a stub page that speaks the grid-mod / grid-key messages), so nothing here reaches ttyd or a real session.
@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker', 'kill'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker', 'kill', 'svc'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
@@ -468,7 +468,23 @@ async function killMode() {
   check('9 a plain click after a drag still opens normally', (await tabs(page))[0].on);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode };
+async function svcMode() {
+  // a tmux session with no claude in it (2026-10-14: links-cec's `cecqa` read as a second links-cec session)
+  const SVC = { ...fx('cecqa', 'cecqa', '', 'alpha', 'idle', 5), kind: 'service', wins: ['main', 'adminapi', 'webadmin'] };
+  const { ctx, page } = await open({ fleet: [...FLEET, SVC] });
+  const g = await page.$$eval('#gsb details.gg', ds => ds.map(d => ({ proj: d.dataset.proj, rows: [...d.querySelectorAll('.gr')].map(r => r.dataset.name) })));
+  check('1 the service sits in its project group, below the agents', g[0].proj === 'alpha' && g[0].rows.join() === 'cc-alpha-web,cc-alpha-api,cecqa', g);
+  const r = row(page, 'cecqa');
+  check('2 it reads as a service: its tmux name, its windows, no state word, no rename, no state glyph class',
+    (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.fst').textContent()) === 'main · adminapi · webadmin' && await r.locator('.gren').count() === 0 && await r.locator('.fli-idle').count() === 0);
+  await r.click();
+  check('3 a click opens it as a tab named after the session', (await st(page)).tabs.length === 1 && (await page.locator('#gtabs').textContent()).includes('cecqa'));
+  await page.click('#ggroup');
+  const flat = await page.$$eval('#gsb .glist > *', es => es.map(e => e.dataset.name || e.textContent.trim()));
+  check('4 flat: the agents first, then a services heading, then the service', flat.slice(-2).join() === 'services,cecqa' && flat.length === 9, flat);
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode, svc: svcMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

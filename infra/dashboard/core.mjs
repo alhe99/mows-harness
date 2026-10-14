@@ -243,13 +243,34 @@ export async function tmuxLive() {
   return tmuxInflight;
 }
 
+// paused = the first pane leader's descendants (claude) are in state T; claude = a `claude` process runs in ANY pane of the
+// session (a pane leader or below it — sf-inventory's leader is bash with claude under it). A session without one is a
+// service stack an agent parked in tmux (2026-10-14: links-cec's `cecqa` = AdminApi + vite), drawn as a service row, not
+// as a second look-alike session. ps failing (empty output) leaves every session `claude: true`, never all-services.
+export function tagSessions(list, psOut) {
+  const rows = psOut.trim().split('\n').filter(Boolean).map(l => l.trim().split(/\s+/));
+  if (!rows.length) return list;
+  const kids = new Map(), stat = new Map(), comm = new Map(); // ppid -> [pid]
+  for (const [pid, ppid, s, c] of rows) { stat.set(+pid, s); comm.set(+pid, c); (kids.get(+ppid) || kids.set(+ppid, []).get(+ppid)).push(+pid); }
+  const below = root => { const acc = [], stack = [root]; while (stack.length) for (const c of kids.get(stack.pop()) || []) { acc.push(c); stack.push(c); } return acc; };
+  for (const x of list) {
+    x.paused = below(x.pid).some(c => /T/.test(stat.get(c) || ''));
+    x.claude = x.pids.some(p => comm.get(p) === 'claude' || below(p).some(c => comm.get(c) === 'claude'));
+  }
+  return list;
+}
+
 async function tmuxLiveCompute() {
   const out = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F',
-    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{@sid}\t#{@label}']));
+    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{window_name}\t#{@sid}\t#{@label}']));
   const list = [];
   for (const l of out.trim().split('\n').filter(Boolean)) {
-    const [name, att, created, activity, pid, cwd, paneId, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
-    if (list.some(x => x.name === name)) continue; // first pane per session
+    const [name, att, created, activity, pid, cwd, paneId, win, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
+    const seen = list.find(x => x.name === name);
+    if (seen) { // first pane per session; the others only add their pid (claude may run in any) and window name
+      seen.pids.push(+pid); if (!seen.wins.includes(win)) seen.wins.push(win);
+      continue;
+    }
     // paneId (%NN) is what fleetState()'s capture-pane needs — NEVER '=name' for
     // capture-pane/display-message/respawn-pane, only for session-target commands
     // (kill-session, has-session, attach) — see tasks/lessons.md, three prior burns.
@@ -257,23 +278,9 @@ async function tmuxLiveCompute() {
     // signal — session_created (bug 2026-08-28: showed "idle 24h" for a session opened
     // yesterday but active 9m ago) is when the tmux session was FIRST opened, unrelated
     // to recent activity, and stays wrong for the session's entire lifetime.
-    list.push({ name, sid, attached: att === '1', created: +created * 1000, activity: +activity * 1000, pid: +pid, cwd, paneId, label: rest.join(' ').trim(), paused: false });
+    list.push({ name, sid, attached: att === '1', created: +created * 1000, activity: +activity * 1000, pid: +pid, cwd, paneId, label: rest.join(' ').trim(), paused: false, pids: [+pid], wins: [win], claude: true });
   }
-  if (list.length) { // paused = the leader's descendants (claude) are in state T
-    const st = await sh('ps', ['-eo', 'pid=,ppid=,stat=']);
-    const rows = st.trim().split('\n').map(l => l.trim().split(/\s+/));
-    const kids = new Map(); // ppid -> [{pid,stat}]
-    const stat = new Map();
-    for (const [pid, ppid, s] of rows) { stat.set(+pid, s); (kids.get(+ppid) || kids.set(+ppid, []).get(+ppid)).push(+pid); }
-    for (const x of list) { // any descendant stopped => paused
-      const stack = [x.pid]; let paused = false;
-      while (stack.length && !paused) for (const c of kids.get(stack.pop()) || []) {
-        if (/T/.test(stat.get(c) || '')) { paused = true; break; }
-        stack.push(c);
-      }
-      x.paused = paused;
-    }
-  }
+  if (list.length) tagSessions(list, await sh('ps', ['-eo', 'pid=,ppid=,stat=,comm=']));
   tmuxCache = { t: Date.now(), list };
   return list;
 }
@@ -384,18 +391,19 @@ async function fleetStateCompute() {
       try { const st = await fsp.stat(row.path); mt = st.mtimeMs; sz = st.size; }
       catch { mt = row.mt; sz = row.sz; }
     }
-    const tail = l.paneId
+    // a service row has no agent to classify: never "waiting" (that would push a notification), no snippet
+    const tail = l.claude && l.paneId
       ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
     const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0 };
-    const state = classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn });
+    const state = l.claude ? classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn }) : 'idle';
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
     const snippet = tl.text;
     // display "seen X ago" prefers the transcript write, else tmux's own last-activity
     // timestamp, else (no tmux report at all, shouldn't happen) session creation — NOT
     // session_created as the primary fallback, see the tmuxLive() comment on why.
     return { name: l.name, sid8, a: row ? row.a : '', label: l.label || '', proj, row,
-             mt: mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, l };
+             mt: mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, kind: l.claude ? 'claude' : 'service', wins: l.wins, l };
   }));
   const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
   list.sort((x, y) => ORDER[x.state] - ORDER[y.state] || y.mt - x.mt);
