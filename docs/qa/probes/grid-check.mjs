@@ -482,7 +482,7 @@ async function svcMode() {
     (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.gwin').allTextContents()).join() === 'main,adminapi,webadmin' && await r.locator('.fli, .fst, .gren').count() === 0);
   check('2b grouped, it hangs off the agent above by the elbow', await r.evaluate(e => getComputedStyle(e, '::before').display !== 'none' && getComputedStyle(e, '::before').borderLeftStyle === 'solid'));
   await r.click();
-  check('3 a click opens it as a tab named after the session', (await st(page)).tabs.length === 1 && (await page.locator('#gtabs').textContent()).includes('cecqa'));
+  check('3 not clickable: a click opens no tab, the row takes no focus', (await st(page)).tabs.length === 0 && await r.getAttribute('tabindex') === null);
   await page.click('#ggroup');
   const flat = await page.$$eval('#gsb .glist > *', es => es.map(e => e.dataset.name || e.textContent.trim()));
   check('4 flat: the agents first, then a services heading, then the service', flat.slice(-3).join() === 'services,cecqa,cecdb' && flat.length === 10, flat);

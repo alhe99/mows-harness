@@ -180,14 +180,11 @@ function Row({ f, open }) {
     !kill && f.snippet ? h('span', { class: 'fsnip', 'data-f': 'snip' }, f.snippet) : null);
 }
 
-// a tmux session with no claude in it (servers an agent parked there): not an agent row — no state, no rename; opens as a tab,
-// kill keeps its confirm. The window names say what runs.
-function ServiceRow({ f, open }) {
+// a tmux session with no claude in it (servers an agent parked there): not an agent row — no state, no rename, and not clickable
+// (2026-10-14: its tab was an empty shell, nothing to open). The window names say what runs; kill keeps its confirm.
+function ServiceRow({ f }) {
   const [kill, setKill] = useState(false);
-  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', 'data-open': open ? '1' : undefined, tabIndex: 0, title: `servers in tmux session ${f.name}: ${(f.wins || []).join(', ')}`,
-      onPointerDown: e => rowDrag(e, f.name),
-      onClick: e => { if (!rowDragged) go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))); },
-      onKeyDown: e => { if (e.key === 'Enter') go(s => S.openTab(s, f.name)); } },
+  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', title: `servers in tmux session ${f.name}: ${(f.wins || []).join(', ')}` },
     h('span', { class: 'lb', 'data-f': 'label' }, f.name),
     kill ? null : h('span', { class: 'gwins', 'data-f': 'meta' }, (f.wins || []).map(w => h('span', { class: 'gwin', key: w }, w))),
     kill ? null : h('button', { class: 'gkill', type: 'button', title: 'kill session', 'aria-label': 'kill session', onClick: e => { e.stopPropagation(); setKill(true); } }, I.x12()),
