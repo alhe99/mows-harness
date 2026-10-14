@@ -17,6 +17,7 @@ export interface FleetItem {
   snippet: string;         // last pane text, <=160 chars
   kind: 'claude' | 'service'; // service = a tmux session with no claude process (servers an agent parked there)
   wins: string[];          // tmux window names, in order
+  born: number;            // tmux session_created, ms epoch: the grid sidebar's order (oldest first)
 }
 
 export type AgentRunState = 'working' | 'done' | 'failed' | 'stalled' | 'budget_exceeded' | 'never';

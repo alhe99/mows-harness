@@ -203,13 +203,16 @@ function Sidebar() {
   tick.value;
   const s = st.value;
   const isOpen = name => !!S.find(s, name);
-  const svc = f => (f.kind === 'service' ? 1 : 0); // service rows sink below the agents, in a group and in the flat list
-  const sorted = [...store.fleet.value].sort((a, b) => svc(a) - svc(b) || ORDER[a.state] - ORDER[b.state] || b.rel - a.rel);
+  // fixed order: oldest-opened first, a new session lands at the bottom (2026-10-14: sorting by state + last activity reshuffled
+  // the list every time a session went working <-> idle). State is read from the glyph, not the position. Services sink below the agents.
+  const svc = f => (f.kind === 'service' ? 1 : 0);
+  const sorted = [...store.fleet.value].sort((a, b) => svc(a) - svc(b) || (a.born || 0) - (b.born || 0) || a.name.localeCompare(b.name));
   let list;
   if (s.grouped) {
     const groups = new Map();
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
-    const gs = [...groups.entries()].sort((a, b) => ORDER[a[1][0].state] - ORDER[b[1][0].state] || a[0].localeCompare(b[0]));
+    const oldest = fs => Math.min(...fs.map(f => f.born || 0));
+    const gs = [...groups.entries()].sort((a, b) => oldest(a[1]) - oldest(b[1]) || a[0].localeCompare(b[0]));
     list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
       return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => rowOf(f, isOpen))); });
   } else {
