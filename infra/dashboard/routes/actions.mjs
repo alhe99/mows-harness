@@ -30,9 +30,6 @@ export async function action(req, res, url) {
     // through ccname, not tmux directly: it also writes ~/.local/state/cc-labels/<name>, which is
     // what brings the label back after the tmux server dies (2026-08-25: twice in one night)
     await runAs([], 'ccname', ['-t', name, ...(label ? [label] : [])], 10000);
-  } else if (act === 'window') { // a service session's window tag: make that window current, so the session's tab shows it
-    if (!t.wins.includes(b.win)) { res.writeHead(400); return res.end('bad window'); } // only a name tmux just listed for this session
-    await sh(...userCmd(['tmux', 'select-window', '-t', `=${name}:=${b.win}`]));
   } else { res.writeHead(404); return res.end(); }
   tmuxCache.t = 0;
   res.writeHead(303, { location: back }); res.end();
