@@ -184,12 +184,12 @@ function Row({ f, open }) {
 // kill keeps its confirm. The window names say what runs.
 function ServiceRow({ f, open }) {
   const [kill, setKill] = useState(false);
-  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', 'data-open': open ? '1' : undefined, tabIndex: 0,
+  return h('div', { class: 'gr gsvc', 'data-name': f.name, 'data-kind': 'service', 'data-open': open ? '1' : undefined, tabIndex: 0, title: `servers in tmux session ${f.name}: ${(f.wins || []).join(', ')}`,
       onPointerDown: e => rowDrag(e, f.name),
       onClick: e => { if (!rowDragged) go(s => (e.shiftKey ? S.split(s, f.name) : S.openTab(s, f.name))); },
       onKeyDown: e => { if (e.key === 'Enter') go(s => S.openTab(s, f.name)); } },
-    h('span', { class: 'fli', 'aria-hidden': 'true' }, '▤'),
     h('span', { class: 'lb', 'data-f': 'label' }, f.name),
+    kill ? null : h('span', { class: 'gwins', 'data-f': 'meta' }, (f.wins || []).map(w => h('span', { class: 'gwin', key: w }, w))),
     kill ? null : h('button', { class: 'gkill', type: 'button', title: 'kill session', 'aria-label': 'kill session', onClick: e => { e.stopPropagation(); setKill(true); } }, I.x12()),
     kill ? h('form', { class: 'gkc', method: 'post', action: '/a/kill', role: 'group', 'aria-label': 'confirm kill',
         onSubmit: e => { e.preventDefault(); const fm = e.currentTarget; fetch(fm.action, { method: 'POST', body: new URLSearchParams(/** @type {any} */ (new FormData(fm))), redirect: 'manual' }).catch(() => {}); setKill(false); go(closeName(f.name)); },
@@ -198,7 +198,7 @@ function ServiceRow({ f, open }) {
         h('span', { class: 'gkq' }, 'Kill it? Every server in it stops now.'),
         h('button', { class: 'gkno', type: 'button', onClick: () => setKill(false), ref: el => el?.focus() }, 'Cancel'),
         h('button', { class: 'gkyes', type: 'submit' }, 'Kill It'))
-      : h('span', { class: 'fst', 'data-f': 'meta' }, (f.wins || []).join(' · ')));
+      : null);
 }
 const rowOf = (f, isOpen) => h(f.kind === 'service' ? ServiceRow : Row, { key: f.name, f, open: isOpen(f.name) });
 

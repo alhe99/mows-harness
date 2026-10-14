@@ -471,17 +471,23 @@ async function killMode() {
 async function svcMode() {
   // a tmux session with no claude in it (2026-10-14: links-cec's `cecqa` read as a second links-cec session)
   const SVC = { ...fx('cecqa', 'cecqa', '', 'alpha', 'idle', 5), kind: 'service', wins: ['main', 'adminapi', 'webadmin'] };
-  const { ctx, page } = await open({ fleet: [...FLEET, SVC] });
+  const DB = { ...fx('cecdb', 'cecdb', '', 'alpha', 'idle', 50), kind: 'service', wins: ['mongo'] };
+  const { ctx, page } = await open({ fleet: [...FLEET, SVC, DB] });
+  const shot = async n => process.env.SHOT && page.locator('#gsb').screenshot({ path: `${process.env.SHOT}/svc-${n}.png` });
+  await shot('grouped');
   const g = await page.$$eval('#gsb details.gg', ds => ds.map(d => ({ proj: d.dataset.proj, rows: [...d.querySelectorAll('.gr')].map(r => r.dataset.name) })));
-  check('1 the service sits in its project group, below the agents', g[0].proj === 'alpha' && g[0].rows.join() === 'cc-alpha-web,cc-alpha-api,cecqa', g);
+  check('1 services sit in their project group, below the agents', g[0].proj === 'alpha' && g[0].rows.join() === 'cc-alpha-web,cc-alpha-api,cecqa,cecdb', g);
   const r = row(page, 'cecqa');
-  check('2 it reads as a service: its tmux name, its windows, no state word, no rename, no state glyph class',
-    (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.fst').textContent()) === 'main · adminapi · webadmin' && await r.locator('.gren').count() === 0 && await r.locator('.fli-idle').count() === 0);
+  check('2 it reads as a service: its tmux name, one tag per window, no state glyph, no state word, no rename',
+    (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.gwin').allTextContents()).join() === 'main,adminapi,webadmin' && await r.locator('.fli, .fst, .gren').count() === 0);
+  check('2b grouped, it hangs off the agent above by the elbow', await r.evaluate(e => getComputedStyle(e, '::before').display !== 'none' && getComputedStyle(e, '::before').borderLeftStyle === 'solid'));
   await r.click();
   check('3 a click opens it as a tab named after the session', (await st(page)).tabs.length === 1 && (await page.locator('#gtabs').textContent()).includes('cecqa'));
   await page.click('#ggroup');
   const flat = await page.$$eval('#gsb .glist > *', es => es.map(e => e.dataset.name || e.textContent.trim()));
-  check('4 flat: the agents first, then a services heading, then the service', flat.slice(-2).join() === 'services,cecqa' && flat.length === 9, flat);
+  check('4 flat: the agents first, then a services heading, then the service', flat.slice(-3).join() === 'services,cecqa,cecdb' && flat.length === 10, flat);
+  await shot('flat');
+  check('5 flat: no elbow, there is no agent row above to hang from', await row(page, 'cecqa').evaluate(e => getComputedStyle(e, '::before').display === 'none'));
   await ctx.close();
 }
 const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode, svc: svcMode };
