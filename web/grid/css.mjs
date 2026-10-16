@@ -2,12 +2,12 @@
 // governed by it). The geometry is the Figma "Mission Control Dashboard Redesign" frame (mows-control, node 52-2, 2026-10-12); the
 // colours are tokens.css (the frame's greys were a palette of their own, 2026-10-12). Panes are a CSS grid whose columns come from the state's fractions.
 export const CSS = `
-/* full bleed: the shell's body is a 1024 px column with 48 px padding (tokens.css); here it is the viewport, edge to edge, header and footer gone */
+${/* full bleed: the shell's body is a 1024 px column with 48 px padding (tokens.css); here it is the viewport, edge to edge, header and footer gone */''}
 body.gridv{max-width:none;padding:0;height:100dvh;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}
 body.gridv #app{flex:1;min-height:0;display:flex;flex-direction:column}
-/* the shell header's row goes to the panes: its nav lives at the right end of the tab strip (.gnav), its New Session is the strip's + */
+${/* the shell header's row goes to the panes: its nav lives at the right end of the tab strip (.gnav), its New Session is the strip's + */''}
 body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:none}
-/* sidebar (the card from before the 2026-10-12 facelift, kept at the owner's request) | 24 px gutter (the resize handle) | main */
+${/* sidebar (the card from before the 2026-10-12 facelift, kept at the owner's request) | 24 px gutter (the resize handle) | main */''}
 #grid{display:grid;grid-template-columns:var(--gsb,256px) 24px minmax(0,1fr);flex:1;min-height:0;gap:0;padding:8px 0 0 8px;box-sizing:border-box}
 #gsb{display:flex;flex-direction:column;min-width:0;overflow:hidden;margin-bottom:8px;background:var(--card);border:1px solid var(--bd);border-radius:12px}
 #gsb .ghd{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--hair);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
@@ -24,7 +24,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr .gren{min-height:0;padding:1px 5px;font:12px var(--mono);background:transparent;color:var(--mut);border:1px solid transparent;border-radius:5px;opacity:0}#gsb .gr:hover .gren,#gsb .gr:focus-within .gren{opacity:1}#gsb .gr .gren:hover{border-color:var(--bd);color:var(--fg)}
 #gsb .gr .gkill{display:inline-flex;align-items:center;min-height:0;padding:3px 5px;background:transparent;border:1px solid transparent;border-radius:5px;opacity:0;cursor:pointer}
 #gsb .gr:hover .gkill,#gsb .gr:focus-within .gkill{opacity:1}#gsb .gr .gkill:hover{border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.1)}#gsb .gr .gkill path{stroke:var(--mut)}#gsb .gr .gkill:hover path{stroke:var(--bad)}
-/* service row: one line hanging off the agent above by an elbow drawn from the dot column (left 12 + 16/2); flat mode drops the elbow */
+${/* service row: one line hanging off the agent above by an elbow drawn from the dot column (left 12 + 16/2); flat mode drops the elbow */''}
 #gsb .gr.gsvc{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;position:relative;padding:2px 12px 6px 34px;min-height:22px}
 #gsb .gr:has(+ .gsvc){position:relative}#gsb .gr:has(+ .gsvc)::after{content:'';position:absolute;left:19px;top:27px;bottom:0;border-left:1px solid var(--bd2)}
 #gsb .gsvc:has(+ .gsvc)::after{top:50%}
@@ -41,9 +41,9 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 #gsb .gr .gkc .gkyes{color:var(--bad)}#gsb .gr .gkc .gkyes:hover{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.35)}
 .gdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}.gh:hover,#grid.drag .gh{background:var(--pop)}
-#grid.nosb{grid-template-columns:minmax(0,1fr);padding-left:0}#grid.nosb #gsb,#grid.nosb #gh-sb{display:none} /* one column: the main is the only grid item then (a hidden item does not hold its column) */
+#grid.nosb{grid-template-columns:minmax(0,1fr);padding-left:0}#grid.nosb #gsb,#grid.nosb #gh-sb{display:none} ${/* one column: the main is the only grid item then (a hidden item does not hold its column) */''}
 #gmain{display:flex;flex-direction:column;min-width:0;min-height:0}
-/* tab strip: 38 px, each tab a 16 px cell with a right hairline, the active one lifted to the card; then +, the notice, the cockpit nav */
+${/* tab strip: 38 px, each tab a 16 px cell with a right hairline, the active one lifted to the card; then +, the notice, the cockpit nav */''}
 #gtabs{display:flex;align-items:center;height:38px;flex-shrink:0;border-bottom:1px solid var(--hair)}
 #gtabs .gts{display:flex;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}#gtabs .gts::-webkit-scrollbar{display:none}
 #gtabs .gt{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-right:1px solid var(--hair);color:var(--mut);font:400 13px/19.5px var(--mono);cursor:pointer;user-select:none;white-space:nowrap;touch-action:none;flex-shrink:0}
@@ -59,7 +59,7 @@ body.gridv .hdr,body.gridv .termfab,body.gridv .tabs,body.gridv footer{display:n
 .gw{flex:1;min-height:0;display:grid;grid-auto-rows:minmax(0,1fr);gap:0;overflow:hidden}
 .gw[hidden]{display:none}
 .gp{display:flex;flex-direction:column;min-width:0;min-height:0}
-/* pane header: name, state, then the own-tab / zoom / close icons; the focused pane's name is the bright one */
+${/* pane header: name, state, then the own-tab / zoom / close icons; the focused pane's name is the bright one */''}
 .gph{display:flex;align-items:center;gap:12px;padding:8px 16px 7px;background:var(--card);border-bottom:1px solid var(--bd);font:400 13px/19.5px var(--mono);color:var(--mut);cursor:default;user-select:none;flex-shrink:0}
 .gp.on .gph{background:var(--card2)}.gph b{font-weight:400;color:var(--mut)}.gp.on .gph b{color:var(--fg)}.gp.ended .gph{color:var(--warn)}
 .gph .gsp{flex:1}

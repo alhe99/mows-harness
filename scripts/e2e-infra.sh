@@ -255,11 +255,12 @@ for pair in /:Sessions /history:History /system:System /device:Device /agents:Ag
   chk "dashboard: / pill nav links to $href" \
     "grep -qE 'href=\"$href\">$label( <b[^>]*>[0-9]+</b>)?</a>' <<<\"\$UIDOC\""
 done
-# The grid view is desktop-only: it is in the pill nav (hidden below 701 px by .navdup) and deliberately NOT in the phone tab bar.
-chk "dashboard: / pill nav links to /grid, tab bar does not" \
-  "grep -qE 'href=\"/grid\">Grid</a>' <<<\"\$UIDOC\" && ! grep -qF 'class=\"tb\" href=\"/grid\"' <<<\"\$UIDOC\""
-chk "dashboard: /grid is a shell route (200, carries the boot snapshot, Grid tab on)" \
-  'D=$(curl -s http://127.0.0.1:3005/grid); grep -q "id=\"boot\"" <<<"$D" && grep -q "class=\"on\" href=\"/grid\">Grid" <<<"$D"'
+# The grid view is desktop-only and is not a pill: it is switched on with the `list | grid` switch beside the fleet filter on / (client-side),
+# so neither the pill nav nor the phone tab bar links to /grid.
+chk "dashboard: neither the pill nav nor the tab bar links to /grid (the home page's switch does)" \
+  "! grep -qF 'href=\"/grid\"' <<<\"\$UIDOC\""
+chk "dashboard: /grid is a shell route (200, carries the boot snapshot)" \
+  'D=$(curl -s http://127.0.0.1:3005/grid); grep -q "id=\"boot\"" <<<"$D"'
 chk "dashboard: no tab, link or asset in / points at /ui or /next (the retired mounts)" \
   '! grep -qE "(href|src)=\"/(ui|next)(/|\")" <<<"$UIDOC"'
 # Spec §2 asked the <noscript> block of /ui to link to "the server-rendered equivalent"; it was a constant pointing at / for the whole branch (final
