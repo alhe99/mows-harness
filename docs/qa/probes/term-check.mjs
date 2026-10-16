@@ -218,6 +218,14 @@ async function ime() {
   await sleep(100);
   const held = await W.page.evaluate(() => window.term.textarea.value);
   check('a held delete on an empty shadow line: one \\x7f per repeat, the field never empties', W.inputs().slice(n4h).join('') === '\x7f'.repeat(5) && held === ' ', [bytes(W.inputs().slice(n4h).join('')), held]);
+  // the caret before the sentinel (iOS can leave it at 0): the first letter lands in front of the space, which must not reach the pty ("s er", 2026-10-16)
+  const n4c = W.inputs().length;
+  await W.page.evaluate(() => window.term.textarea.setSelectionRange(0, 0));
+  await W.page.keyboard.type('ser'); await sleep(100);
+  const front = await W.page.evaluate(() => window.term.textarea.value);
+  check('typing with the caret before the sentinel sends only the letters', W.inputs().slice(n4c).join('') === 'ser' && front === ' ser', [bytes(W.inputs().slice(n4c).join('')), front]);
+  for (let i = 0; i < 3; i++) await W.page.keyboard.press('Backspace');
+  await sleep(100);
   if (engine === 'chromium') { // a trusted word delete (iOS speeds a held delete up to whole words), through CDP like the paste below
     const cdp = await W.ctx.newCDPSession(W.page);
     const n4w = W.inputs().length;

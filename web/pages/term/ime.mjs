@@ -23,6 +23,8 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
   const resync = () => { clearTimeout(rs); rs = setTimeout(() => { const t = ta(); if (t) { seed(t); prev = saved = t.value; } }, 50); };
   const submit = t => { t.value = S; prev = saved = S; enterKey(); };
   const diff = t => {
+    // the caret sat before S (iOS can leave it at 0): the text went in front of the line; move it behind, or S itself is sent ("s er")
+    if (prev && !t.value.startsWith(S) && t.value.length > prev.length && t.value.endsWith(prev)) t.value = prev + t.value.slice(0, -prev.length);
     const lost = !t.value.startsWith(S), a = Array.from(strip(prev)), b = Array.from(strip(t.value));
     let p = 0;
     while (p < a.length && p < b.length && a[p] === b[p]) p++;
