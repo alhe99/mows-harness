@@ -130,6 +130,15 @@ export async function switchAction(req, res) {
   res.statusCode = 500; return j({ err: 'switch failed' });
 }
 
+// GET /a/tab?tab=<tabid> -> { session }: the tmux session that tab's ttyd client is attached to ('' while it sits in the picker). The grid's
+// picker pane (web/views/grid.mjs) polls it to learn which session the picker ended up in, whichever way it got there (attach, resume, new).
+export async function tabAction(req, res, url) {
+  const tab = url.searchParams.get('tab') || '';
+  const j = o => { res.writeHead(res.statusCode, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); };
+  if (!/^[0-9a-f]{8}$/.test(tab)) { res.statusCode = 400; return j({ err: 'bad tab' }); }
+  const out = (await runAs([], WEBTERM_SH, ['tabsess', tab], 5000)).trim();
+  return j({ session: NAME_RE.test(out) ? out : '' });
+}
 
 // ---------- /settings: global terminal theme configuration + live preview ----------
 export async function termThemeAction(req, res) {

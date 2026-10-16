@@ -3,7 +3,7 @@
 // Nothing asserted the framing before the rebuild: the token fetch, the unprefixed first frame, the '0'/'1'/'2'/'3' prefixes, the flow-control
 // numbers, the prefs allowlist and the two reconnect paths were all inside ttyd's minified bundle. No browser, no server, no network.
 //   node scripts/term-proto-check.mjs
-import { ALLOW, FLOW, ttydClient } from '../web/pages/term/ttyd.mjs';
+import { ALLOW, FLOW, ttydClient, BACKOFF } from '../web/pages/term/ttyd.mjs';
 
 let bad = 0;
 const check = (name, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
@@ -103,7 +103,7 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   check('flow numbers are the documented 1e5 / 10 / 4', FLOW.limit === 1e5 && FLOW.high === 10 && FLOW.low === 4);
 }
 
-// ---- reconnect: 1000 -> press Enter; other -> fresh token, automatic; error -> no automatic ----
+// ---- reconnect: 1000 -> press Enter; other -> fresh token, automatic; error -> automatic with a backoff while visible, else press Enter ----
 {
   const { term, ev, client } = make();
   await client.start(); await tick();
@@ -128,12 +128,19 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   const { ev, client } = make();
   await client.start(); await tick();
   sockets[0].open();
-  sockets[0].onerror(); sockets[0].close(1006); await tick(); await tick();
-  check('a socket error switches the automatic reconnect off (press Enter instead)', sockets.length === 1 && ev.status.at(-1) === 'Press ⏎ to Reconnect', ev.status);
+  BACKOFF.base = 0; // the retry timer, without the wait
+  sockets[0].onerror(); sockets[0].close(1006); await tick(); await tick(); await tick();
+  check('a socket error on a visible page reconnects by itself after the backoff, with a fresh token', sockets.length === 2 && fetched.length === 2 && ev.status.includes('Reconnecting...'), [sockets.length, fetched.length, ev.status]);
+  sockets[1].open(); sockets[1].onerror(); sockets[1].close(1006); await tick(); await tick(); await tick();
+  check('again after the next error (the backoff doubles, the counter resets on open)', sockets.length === 3, sockets.length);
+  globalThis.document = { visibilityState: 'hidden' }; // a backgrounded phone
+  sockets[2].open(); sockets[2].onerror(); sockets[2].close(1006); await tick(); await tick(); await tick();
+  check('a socket error on a hidden page waits for Enter or kick()', sockets.length === 3 && ev.status.at(-1) === 'Press ⏎ to Reconnect', ev.status);
   client.kick(); await tick(); await tick();
-  check('kick() on a dead socket reconnects with a fresh token', sockets.length === 2 && fetched.length === 2, [sockets.length, fetched.length]);
+  delete globalThis.document;
+  check('kick() on a dead socket reconnects with a fresh token', sockets.length === 4 && fetched.length === 4, [sockets.length, fetched.length]);
   client.kick(); await tick();
-  check('kick() on a live or connecting socket is a no-op', sockets.length === 2);
+  check('kick() on a live or connecting socket is a no-op', sockets.length === 4);
 }
 {
   const { client } = make();

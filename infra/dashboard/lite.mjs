@@ -56,15 +56,19 @@
 // legacy.mjs and routes/documents.mjs only. See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
 import { assetView, swView } from './static.mjs';
-import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage } from './core.mjs';
+import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
 import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamView } from './sse.mjs';
 import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
 import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
-import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, termThemeAction } from './routes/actions.mjs';
+import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
 import { mdView } from './routes/md.mjs';
+import { cli as twofaCli, twofaView } from './routes/twofa.mjs';
+
+// `lite.mjs 2fa enroll|revoke|list`: the second factor's CLI (routes/twofa.mjs), run over SSH; never starts the server
+if (args[0] === '2fa') process.exit(twofaCli(args.slice(1)));
 
 // --ui=next|legacy (ARCHITECTURE section 10, K-21; the rollback is this flag, not a second mount): which document answers `/` and the
 // tab routes. `next` is the cockpit shell and the default since the cutover (phase 05); `legacy` is the old server-rendered dashboard
@@ -72,7 +76,7 @@ import { mdView } from './routes/md.mjs';
 const UI = (args.find(a => a.startsWith('--ui=')) || '').slice(5) || flag('--ui', 'next');
 if (UI !== 'legacy' && UI !== 'next') { console.error(`lite: --ui is legacy or next, not "${UI}"`); process.exit(2); }
 // the routes the shell owns when it answers at `/` (web/main.mjs routes, MAP 3.2)
-const SHELL_RE = /^\/(history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
+const SHELL_RE = /^\/(grid|history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
 
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
@@ -81,6 +85,7 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
+    if (p === '/2fa' || p.startsWith('/2fa/')) return await twofaView(req, res, url);
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
     if (UI === 'legacy' && p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
@@ -142,6 +147,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await restartAll(req, res);
     }
+    if (p === '/a/tab') return await tabAction(req, res, url);
     if (p === '/a/switch') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end('POST only'); }
       return await switchAction(req, res);
@@ -257,6 +263,7 @@ if (args.includes('--selftest')) {
     { name: 'paused wins over a pending dialog', tail: 'Do you want to proceed?', mt: now - 1000, paused: true, want: 'paused' },
     { name: 'idle: quiet pane, transcript over an hour cold', tail: '│ >                          │\n? for shortcuts', mt: now - 3600000, paused: false, want: 'idle' },
     { name: 'idle: no transcript match at all (pane signals only)', tail: '$ ', mt: 0, paused: false, want: 'idle' },
+    { name: 'idle: resumed just now (transcript touched by bookkeeping), last turn an hour cold', tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: now - 60000, turn: now - 3600000, paused: false, want: 'idle' },
     { name: 'working: background /workflows monitor overlay, no esc-to-interrupt text', tail: '✻ Waiting for 1 dynamic workflow to finish\n↑↓ select · x stop workflow · p pause · esc back · s save', mt: 0, paused: false, want: 'working' },
   ];
   let fleetFail = 0;
@@ -284,5 +291,6 @@ await loadUiAssets();
 
 setInterval(freshen, 30000).unref();
 startPushWatch();
+startServiceReaper();
 
 server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));

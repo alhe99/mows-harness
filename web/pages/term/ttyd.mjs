@@ -5,12 +5,16 @@
 //         '0' input · '1' resize (JSON {columns, rows}) · '2' pause · '3' resume.
 //   down: '0' output (written to the terminal) · '1' title · '2' JSON preferences, applied through ALLOW below and nothing else.
 // Flow control: after `limit` bytes written, one write callback is pending; more than `high` pending -> pause; fewer than `low` -> resume.
-// Reconnect: close code 1000 -> "Press ⏎ to Reconnect" (Enter on the terminal); any other code -> a fresh token, then connect, unless a
-// socket error already switched reconnecting off (a backgrounded phone lands here, which is what kick() is for).
+// Reconnect: close code 1000 -> "Press ⏎ to Reconnect" (Enter on the terminal); any other code -> a fresh token, then connect. After a
+// socket ERROR (the link dropped: a laptop's VPN, a deploy) the page on screen retries by itself too, backing off BACKOFF.base * 2^n up to
+// BACKOFF.max, so what is typed meanwhile is lost for a second, not until Enter (2026-10-12); a hidden page (a backgrounded phone) waits
+// for kick(), which the foreground brings.
 
 /** the only preferences the server may set; ttyd's other keys (rendererType, enableZmodem, ...) are ignored on purpose (D-08) */
 export const ALLOW = ['fontSize', 'disableLeaveAlert', 'disableResizeOverlay', 'disableReconnect', 'titleFixed'];
 export const FLOW = { limit: 1e5, high: 10, low: 4 };
+export const BACKOFF = { base: 1000, max: 15000 };
+const visible = () => globalThis.document?.visibilityState !== 'hidden';
 
 /**
  * @param {{ term: any, base?: string, search?: string, WS?: any, host?: { protocol: string, host: string }, fetchImpl?: any,
@@ -19,7 +23,7 @@ export const FLOW = { limit: 1e5, high: 10, low: 4 };
 export function ttydClient({ term, base = '/term', search = '', WS = globalThis.WebSocket, host = globalThis.location, fetchImpl = globalThis.fetch, on = {} }) {
   const enc = new TextEncoder(), dec = new TextDecoder();
   /** @type {any} */ let socket = null, keyOff = null;
-  let token = '', opened = false, doReconnect = true, reconnecting = false, written = 0, pending = 0;
+  let token = '', opened = false, doReconnect = true, reconnecting = false, written = 0, pending = 0, errs = 0;
   const say = s => on.status?.(s);
 
   const frame = (cmd, payload = '') => enc.encode(cmd + payload);
@@ -45,13 +49,14 @@ export function ttydClient({ term, base = '/term', search = '', WS = globalThis.
   function connect() {
     reconnecting = false;
     const ws = socket = new WS(`${host.protocol === 'https:' ? 'wss:' : 'ws:'}//${host.host}${base}/ws${search}`, ['tty']);
+    let errored = false;
     ws.binaryType = 'arraybuffer';
     on.socket?.('new', ws);
     ws.onopen = () => {
       if (socket !== ws) return;
       ws.send(enc.encode(JSON.stringify({ AuthToken: token, columns: term.cols, rows: term.rows })));
       if (opened) { term.reset(); say('Reconnected'); }
-      opened = true; doReconnect = true;
+      opened = true; errs = 0;
       on.socket?.('open', ws);
     };
     ws.onmessage = ev => {
@@ -66,12 +71,15 @@ export function ttydClient({ term, base = '/term', search = '', WS = globalThis.
         default: console.warn('[ttyd] unknown message type', buf[0]);
       }
     };
-    ws.onerror = () => { if (socket === ws) { doReconnect = false; on.socket?.('error', ws); } };
+    ws.onerror = () => { if (socket === ws) { errored = true; on.socket?.('error', ws); } };
     ws.onclose = ev => {
       if (socket !== ws) return;
       on.socket?.('close', ws, ev.code);
       say('Connection Closed');
-      if (ev.code !== 1000 && doReconnect) { say('Reconnecting...'); refreshToken().then(connect); return; }
+      if (ev.code !== 1000 && doReconnect) {
+        if (!errored) { say('Reconnecting...'); refreshToken().then(connect); return; }
+        if (visible()) { const wait = Math.min(BACKOFF.max, BACKOFF.base * 2 ** Math.min(errs++, 8)); say('Reconnecting...'); setTimeout(() => { if (socket === ws) reconnect(); }, wait); return; }
+      }
       keyOff?.dispose();
       keyOff = term.onKey((/** @type {any} */ e) => { if (e.domEvent.key === 'Enter') reconnect(); });
       say('Press ⏎ to Reconnect');

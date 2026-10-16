@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // budget.mjs — size gates in the unit phones receive: gzip-9 per file, summed (K-06; same unit as
 // preflight 5b / G-03). Exit-code decided: --max <kb> exits 1 over, --warn prints the overage and exits 0.
-//   node scripts/budget.mjs --route <entry|shell>   entry + every chunk it statically imports (metafile)
+//   node scripts/budget.mjs --route <entry|shell>   entry + every chunk it statically imports (metafile); for a lazy view (an entry under web/views/)
+//                                                   the chunks the shell's closure already holds are left out: ARCHITECTURE section 9 view_js_kb is
+//                                                   "each lazy route closure, excluding shared vendor chunks" (the view loads inside the shell, so they cost it nothing)
 //   node scripts/budget.mjs --chunk <name>          dist file(s) named <name>.<hash>.<ext>
 //   node scripts/budget.mjs --file <name>           dist file <name> or <stem>.<hash>.<ext>
 //   node scripts/budget.mjs --fonts                 identity bytes of the woff2 files
@@ -60,7 +62,13 @@ function closure(entry, dir, metaPath) {
   }
   // the entry's own css bundle (esbuild emits it next to the entry) belongs to the route
   const css = byBase[root].cssBundle ? [basename(byBase[root].cssBundle)] : [];
-  return [...seen, ...css].map(n => join(dir, n));
+  let names = [...seen, ...css];
+  // a lazy view runs inside the shell document: what the shell's closure already loaded is not the view's cost
+  if (want !== 'main' && /(^|\/)web\/views\//.test(byBase[root].entryPoint || '')) {
+    const shell = new Set(closure('shell', dir, metaPath).map(f => basename(f)));
+    names = names.filter(n => !shell.has(n));
+  }
+  return names.map(n => join(dir, n));
 }
 
 function measure() {
@@ -101,7 +109,7 @@ function report(label, bytes, files) {
   return has('--warn') ? 0 : 1;
 }
 
-// ARCHITECTURE section 9 / BUDGET in web/contract.d.ts, kB each; a view's budget is its route closure
+// ARCHITECTURE section 9 / BUDGET in web/contract.d.ts, kB each; a view's budget is its route closure minus the shell's (see --route)
 function all() {
   const views = existsSync('web/views') ? readdirSync('web/views').filter(f => f.endsWith('.mjs')).map(f => basename(f, '.mjs')).sort() : [];
   const runs = [['--route', 'shell', 30], ...views.map(v => ['--route', v, 15]), ['--chunk', 'marked', 25], ['--file', 'tokens.css', 12], ['--fonts', '', 80], ['--route', 'term', 130], ['--server', '', 140]];
@@ -124,18 +132,20 @@ function selfTest() {
   const ok = (name, c) => { console.log(`${c ? 'PASS' : 'FAIL'} ${name}`); if (!c) bad = 1; };
   try {
     const blob = n => Array.from({ length: n }, (_, i) => `x${(i * 2654435761) >>> 0};`).join('');
-    for (const f of ['main.AAAA1111.mjs', 'shared.BBBB2222.mjs', 'view.CCCC3333.mjs', 'later.DDDD4444.mjs', 'tokens.EEEE5555.css', 'marked.FFFF6666.mjs'])
+    for (const f of ['main.AAAA1111.mjs', 'shared.BBBB2222.mjs', 'view.CCCC3333.mjs', 'later.DDDD4444.mjs', 'tokens.EEEE5555.css', 'marked.FFFF6666.mjs', 'own.GGGG7777.mjs', 'page.HHHH8888.mjs'])
       writeFileSync(join(tmp, f), blob(f.startsWith('main') ? 800 : 400));
     writeFileSync(join(tmp, 'f1.woff2'), 'a'.repeat(1000));
     const out = (n, imports, entryPoint) => [`dist/${n}`, { imports: imports.map(([p, kind]) => ({ path: `dist/${p}`, kind })), ...(entryPoint ? { entryPoint } : {}) }];
     writeFileSync(join(tmp, 'metafile.json'), JSON.stringify({ outputs: Object.fromEntries([
       out('main.AAAA1111.mjs', [['shared.BBBB2222.mjs', 'import-statement'], ['later.DDDD4444.mjs', 'dynamic-import']], 'web/main.mjs'),
       out('shared.BBBB2222.mjs', []), out('later.DDDD4444.mjs', []),
-      out('view.CCCC3333.mjs', [['shared.BBBB2222.mjs', 'import-statement']], 'web/views/sessions.mjs')]) }));
+      out('view.CCCC3333.mjs', [['shared.BBBB2222.mjs', 'import-statement'], ['own.GGGG7777.mjs', 'import-statement']], 'web/views/sessions.mjs'),
+      out('own.GGGG7777.mjs', []), out('page.HHHH8888.mjs', [['shared.BBBB2222.mjs', 'import-statement']], 'web/pages/term/term.mjs')]) }));
     const size = n => gz(join(tmp, n));
     const shell = size('main.AAAA1111.mjs') + size('shared.BBBB2222.mjs');
     ok('--route shell = entry + static imports, not dynamic', run('--route', 'shell').stdout.includes(`${shell} B`));
-    ok('--route <view> resolves by entryPoint basename', run('--route', 'sessions').stdout.includes(`${size('view.CCCC3333.mjs') + size('shared.BBBB2222.mjs')} B`));
+    ok('--route <view> resolves by entryPoint basename, counts its own static imports, not the shell\'s', run('--route', 'sessions').stdout.includes(`${size('view.CCCC3333.mjs') + size('own.GGGG7777.mjs')} B`));
+    ok('--route <page> outside web/views/ keeps the shared chunks', run('--route', 'term').stdout.includes(`${size('page.HHHH8888.mjs') + size('shared.BBBB2222.mjs')} B`));
     ok('--chunk matches <name>.<hash>', run('--chunk', 'marked').stdout.includes(`${size('marked.FFFF6666.mjs')} B`));
     ok('--file matches a hashed name', run('--file', 'tokens.css').stdout.includes(`${size('tokens.EEEE5555.css')} B`));
     ok('--fonts counts identity bytes', run('--fonts').stdout.includes('1000 B'));

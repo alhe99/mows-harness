@@ -11,6 +11,10 @@ const LIGHT_BAR = /Android/.test(navigator.userAgent) && matchMedia('(prefers-co
 const KEYS = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow',
   'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite', 'background', 'foreground', 'cursor', 'selectionBackground'];
 const KEY = 'cctheme';
+// framed in the shell's /grid (same origin), the terminal's background is the shell's page black (tokens.css --bg): the pane, the strip
+// and the sidebar read as one surface instead of a themed box in a black frame
+const FRAMED = window.parent !== window, SHELL_BG = '#09090b';
+const dark = hex => { const n = parseInt(hex.slice(1, 7), 16); return (n >> 16 & 255) * .299 + (n >> 8 & 255) * .587 + (n & 255) * .114 < 128; };
 
 export function themes(/** @type {import('@xterm/xterm').Terminal} */ term) {
   if (param('theme') === 'off') return { select: null };
@@ -28,6 +32,7 @@ export function themes(/** @type {import('@xterm/xterm').Terminal} */ term) {
     const cs = getComputedStyle(root), t = {};
     for (const k of KEYS) t[k] = cs.getPropertyValue('--t-' + k).trim();
     if (t.selectionBackground.length === 7) t.selectionBackground += '80'; // the ports assume Windows Terminal's 50 % selection alpha
+    if (FRAMED && dark(t.background)) t.background = SHELL_BG; // a pane of /grid: one canvas with the shell; a light theme keeps its own paper (2026-10-12)
     term.options.theme = t;
     document.body.style.background = t.background; // the safe-area edges around the terminal
     if (!LIGHT_BAR) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t.background);

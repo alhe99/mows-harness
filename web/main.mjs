@@ -16,6 +16,7 @@ startPwa(store);
 // one lazy import() per view, so each view is its own chunk and budget (K-02)
 const routes = [
   ['/', lazy(() => import('./views/sessions.mjs'))],
+  ['/grid', lazy(() => import('./views/grid.mjs'))],
   ['/history', lazy(() => import('./views/history.mjs'))],
   ['/system', lazy(() => import('./views/system.mjs'))],
   ['/device', lazy(() => import('./views/device.mjs'))],
@@ -28,7 +29,7 @@ const NotFound = () => h('h1', { 'data-view': 'not-found' }, 'not found');
 
 // the path inside the shell, or null when it is outside it
 const inShell = p => (!base ? p : p === base || p.startsWith(base + '/') ? p.slice(base.length) || '/' : null);
-const tabOf = p => (p === '/' ? 'sessions' : /^\/(history|system|device|agents)(\/|$)/.exec(p)?.[1] ?? '');
+const tabOf = p => (p === '/' ? 'sessions' : /^\/(grid|history|system|device|agents)(\/|$)/.exec(p)?.[1] ?? '');
 function syncTabs() {
   const here = tabOf(inShell(location.pathname) ?? '');
   for (const a of document.querySelectorAll('.tb, .pnav a'))
@@ -69,23 +70,23 @@ function restore(y) { // the view swaps a few frames after popstate and the docu
 // The transition's callback settles when the Router reports the new route committed (lazy views suspend until loaded).
 let navigate = /** @type {(url: string) => void} */ (() => {});
 let settle = /** @type {null | (() => void)} */ (null);
-function go(url) {
+function go(url, replace = false) { // replace: the remembered grid view lands on /grid in place of /, so Back does not bounce
   store.scroll.set(here, scrollY);
   pushed = true;
   if (new URL(url, location.href).pathname === location.pathname) { // query-only: no route change event, land at the top (K-35)
-    navigate(url); const u = new URL(url, location.href); here = u.pathname + u.search; pushed = false; scrollTo(0, 0); return;
+    navigate(url, replace); const u = new URL(url, location.href); here = u.pathname + u.search; pushed = false; scrollTo(0, 0); return;
   }
-  if (!document.startViewTransition) return navigate(url);
+  if (!document.startViewTransition) return navigate(url, replace);
   document.startViewTransition(() => new Promise(done => {
     const t = setTimeout(done, 1000); // never hold the page behind a transition that cannot settle
     settle = () => { clearTimeout(t); settle = null; done(undefined); };
-    navigate(url);
+    navigate(url, replace);
   }));
 }
 
 // Our listener is registered before preact-iso's own window click router and stops the event, so only links we accept are routed.
 // Skipped, left to the browser: modified or non-primary clicks, targets, downloads, data-nw named windows, fragments, other
-// origins, anything outside the shell, and the separate documents /term*, /md, /oauth2/* and the device streams /droidview/* and /vnc/*.
+// origins, anything outside the shell, and the separate documents /term*, /md, /oauth2/*, /2fa/* (sign out) and the device streams /droidview/* and /vnc/*.
 addEventListener('click', e => {
   e.stopImmediatePropagation();
   if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -93,7 +94,7 @@ addEventListener('click', e => {
   if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download') || a.hasAttribute('data-nw')
     || a.origin !== location.origin || a.getAttribute('href')?.startsWith('#')) return;
   const rel = inShell(a.pathname);
-  if (rel == null || /^\/(term|md|oauth2|droidview|vnc)(\/|$)/.test(rel)) return;
+  if (rel == null || /^\/(term|md|oauth2|2fa|droidview|vnc)(\/|$)/.test(rel)) return;
   e.preventDefault();
   go(a.pathname + a.search);
 });

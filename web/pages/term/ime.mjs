@@ -13,14 +13,22 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
   const ta = () => /** @type {HTMLTextAreaElement | null} */ (term.textarea ?? null);
   const isTA = e => e.target === ta();
   const enterKey = () => ta()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-  let prev = '', saved = '', /** @type {any} */ rs = 0;
-  const resync = () => { clearTimeout(rs); rs = setTimeout(() => { const t = ta(); if (t) prev = saved = t.value; }, 50); };
-  const submit = t => { t.value = ''; prev = saved = ''; enterKey(); };
+  // The field always starts with the sentinel S: iOS repeats a held delete only while the field has text, so on an empty shadow line (after Enter,
+  // a paste, a bar key, text typed before the page) holding delete sent one \x7f and stopped. Deleting S is a delete into the older terminal text:
+  // one \x7f, or ^W once iOS has sped up to whole words; S goes straight back. ponytail: a plain space; the textarea is invisible.
+  const S = ' ';
+  const strip = v => (v.startsWith(S) ? v.slice(1) : v);
+  const seed = t => { if (t && !t.value.startsWith(S)) t.value = S + t.value; }; // setting value puts the caret at the end
+  let prev = '', saved = '', lastType = '', /** @type {any} */ rs = 0;
+  const resync = () => { clearTimeout(rs); rs = setTimeout(() => { const t = ta(); if (t) { seed(t); prev = saved = t.value; } }, 50); };
+  const submit = t => { t.value = S; prev = saved = S; enterKey(); };
   const diff = t => {
-    const a = Array.from(prev), b = Array.from(t.value);
+    const lost = !t.value.startsWith(S), a = Array.from(strip(prev)), b = Array.from(strip(t.value));
     let p = 0;
     while (p < a.length && p < b.length && a[p] === b[p]) p++;
-    const out = '\x7f'.repeat(a.length - p) + b.slice(p).join('');
+    let out = '\x7f'.repeat(a.length - p) + b.slice(p).join('');
+    if (lost && !out) out = lastType === 'deleteWordBackward' ? '\x17' : '\x7f';
+    seed(t);
     prev = saved = t.value;
     if (out) term.input(out);
   };
@@ -29,7 +37,10 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
     for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['spellcheck', 'true'], ['enterkeyhint', 'send']]) t.setAttribute(k, v);
     if (document.activeElement === t) { t.blur(); t.focus(); } // make the IME re-read the flags
   };
-  fix(ta());
+  fix(ta()); seed(ta());
+  // xterm empties the field on every blur (app switch, keyboard hidden). Registered after xterm's own listener, so this runs right after it and
+  // puts the line back: an IME edit that lands while the field is empty would be diffed against '' and backspace the whole typed line in the pty.
+  ta()?.addEventListener('blur', () => { const t = ta(); if (t && t.value === '' && prev) t.value = prev; });
 
   for (const type of ['keydown', 'keyup', 'keypress']) document.addEventListener(type, (/** @type {any} */ e) => {
     if (!isTA(e)) return;
@@ -48,6 +59,7 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
   document.addEventListener('paste', e => { if (isTA(e) && e.isTrusted) { e.preventDefault(); lastPaste = Date.now(); } resync(); }, true);
   document.addEventListener('beforeinput', (/** @type {any} */ e) => {
     if (!isTA(e) || !e.isTrusted) return;
+    lastType = e.inputType;
     if (e.inputType === 'insertLineBreak') { e.preventDefault(); e.stopPropagation(); submit(e.target); return; }
     if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); e.stopPropagation(); resync(); return; }
     if (e.inputType === 'insertFromPaste') {
@@ -68,7 +80,8 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
     if (!isTA(e)) return;
     const t = e.target;
     fix(t); client.kick();
-    if (t.value === '' && saved) { t.value = saved; t.setSelectionRange(saved.length, saved.length); } // xterm clears on blur; restore so the IME keeps its context
+    if (t.value === '' && saved) t.value = saved; // xterm clears on blur; restore so the IME keeps its context
+    seed(t);
     prev = t.value;
   }, true);
   for (const type of ['visibilitychange', 'pageshow', 'online']) (type === 'visibilitychange' ? document : window).addEventListener(type, () => {

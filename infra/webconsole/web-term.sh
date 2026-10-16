@@ -82,6 +82,9 @@ tab_sess() { [[ "${TABID-}" =~ ^[0-9a-f]{8}$ ]] || return 0; cat "$CLIENTS_DIR/$
 # reconnect re-runs this script under the same tabid with a new tty -> file is overwritten,
 # self-healing. Pruned on every write so a tab closed for good doesn't linger forever.
 CLIENTS_DIR="$HOME/.cache/webterm-clients"
+# the tmux session a tty's client is attached to, '' when that tty is no client at all. NOT `display-message -c <tty>`: tmux 3.4 does not
+# fail on an unknown client there, it silently answers for the most recent client (2026-10-12: every picker tab 'became' the newest session).
+client_session_of() { tmux list-clients -F $'#{client_tty}\t#{client_session}' 2>/dev/null | awk -F'\t' -v t="$1" '$1==t{print $2; exit}'; }
 register_tab() { # tabid (optional; non-matching/absent is a silent no-op, not an error)
   [[ "${1-}" =~ ^[0-9a-f]{8}$ ]] || return 0
   mkdir -p "$CLIENTS_DIR"
@@ -281,6 +284,12 @@ case "${1-}" in
     else
       printf ' no session matches "%s"\n' "${2-}"; sleep 2
     fi ;;
+  tabsess) # /a/tab backend: web-term.sh tabsess <tabid> -> the tmux session that tab's client is attached to, '' while it sits in the picker
+    tab="${2-}"
+    [[ "$tab" =~ ^[0-9a-f]{8}$ ]] || exit 2
+    tty=$(cat "$CLIENTS_DIR/$tab" 2>/dev/null) || exit 2
+    client_session_of "$tty"
+    exit 0 ;;
   switch) # /a/switch backend (design doc §2): web-term.sh switch <tabid> <to>
     tab="${2-}"; to="${3-}"
     [[ "$tab" =~ ^[0-9a-f]{8}$ ]] || exit 2
@@ -297,7 +306,7 @@ case "${1-}" in
     # already here? say so and stop. detach-client below takes over the TARGET session, which
     # when the target is where we already are means detaching ourselves: the client dies, the
     # switch fails, the browser gets a 409 and reloads for nothing (2026-08-26).
-    if [ "$(tmux display-message -p -c "$tty" '#{client_session}' 2>/dev/null)" = "$n" ]; then
+    if [ "$(client_session_of "$tty")" = "$n" ]; then
       mark "$n" >/dev/null; echo "$n"; exit 0
     fi
     tmux detach-client -s "=$n" 2>/dev/null || true   # take-over semantics, same as attach -d

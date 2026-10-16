@@ -260,6 +260,30 @@ else
   bad "scripts/fleet-classify-check.mjs is missing — the fleet classifier gate did NOT run"
 fi
 
+# 5c-ter. The grid view's pure state and chord logic (web/grid/), the half of the view a browser is not needed for.
+if [ -f scripts/grid-logic-check.mjs ]; then
+  GLOUT=$(node scripts/grid-logic-check.mjs 2>&1) && GLRC=0 || GLRC=$?
+  if [ "$GLRC" -ne 0 ]; then
+    printf '%s\n' "$GLOUT" | grep '^FAIL' || printf '%s\n' "$GLOUT" | tail -5
+    bad "grid-logic-check: a state or chord case fails (see above)"
+  else
+    note "grid-logic-check: $(printf '%s\n' "$GLOUT" | grep -c '^PASS' || true) assertions pass"
+  fi
+fi
+
+# 5c-quater. The second factor's logic (routes/twofa.mjs): RFC 6238/4648 vectors, cookie tamper/expiry/cross-email, replay, lockout, the rd allowlist.
+if [ -f scripts/twofa-logic-check.mjs ]; then
+  TFOUT=$(node scripts/twofa-logic-check.mjs 2>&1) && TFRC=0 || TFRC=$?
+  if [ "$TFRC" -ne 0 ]; then
+    printf '%s\n' "$TFOUT" | grep '^FAIL' || printf '%s\n' "$TFOUT" | tail -5
+    bad "twofa-logic-check: the second factor's logic is wrong (see above)"
+  else
+    note "twofa-logic-check: $(printf '%s\n' "$TFOUT" | grep -c '^PASS' || true) assertions pass"
+  fi
+else
+  bad "scripts/twofa-logic-check.mjs is missing — the second factor's gate did NOT run"
+fi
+
 # 5d. The capability panel's honesty gate (Task 8). Wired here for the same reason 5c is: ci.yml
 # runs this script and nothing else, so a gate that is not called from here is a gate that only
 # runs when a human remembers to type the command. It FAILS rather than skips when it cannot run —

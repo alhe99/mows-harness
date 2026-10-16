@@ -243,13 +243,72 @@ export async function tmuxLive() {
   return tmuxInflight;
 }
 
+// paused = the first pane leader's descendants (claude) are in state T; claude = a `claude` process runs in ANY pane of the
+// session (a pane leader or below it — sf-inventory's leader is bash with claude under it). A session without one is a
+// service stack an agent parked in tmux (2026-10-14: links-cec's `cecqa` = AdminApi + vite), drawn as a service row, not
+// as a second look-alike session. wins = [{n, up}] per window name: up = a live pane of it has a child process (a server
+// under its shell); a bare prompt or a dead pane is down. ps failing (empty output) changes nothing: every session stays
+// `claude: true` and every window `up`, so nothing is ever drawn stopped or auto-closed on a bad read.
+export function tagSessions(list, psOut) {
+  const rows = psOut.trim().split('\n').filter(Boolean).map(l => l.trim().split(/\s+/));
+  const kids = new Map(), stat = new Map(), comm = new Map(); // ppid -> [pid]
+  for (const [pid, ppid, s, c] of rows) { stat.set(+pid, s); comm.set(+pid, c); (kids.get(+ppid) || kids.set(+ppid, []).get(+ppid)).push(+pid); }
+  const below = root => { const acc = [], stack = [root]; while (stack.length) for (const c of kids.get(stack.pop()) || []) { acc.push(c); stack.push(c); } return acc; };
+  for (const x of list) {
+    const up = p => !rows.length || (!p.dead && !!kids.get(p.pid)?.length);
+    x.wins = [];
+    for (const p of x.panes) { const w = x.wins.find(w => w.n === p.win); if (w) w.up ||= up(p); else x.wins.push({ n: p.win, up: up(p) }); }
+    if (!rows.length) continue;
+    x.paused = below(x.pid).some(c => /T/.test(stat.get(c) || ''));
+    x.claude = x.panes.some(p => comm.get(p.pid) === 'claude' || below(p.pid).some(c => comm.get(c) === 'claude'));
+  }
+  return list;
+}
+
+// ---------- service auto-close: a service session with nothing running in any window for SVC_GRACE is killed ----------
+// Only a session this server SAW run something (so your own plain `tmux new` shells are never touched), never one a client is
+// attached to (a terminal or a grid tab is watching it), never one with `tmux set -t <name> @keep 1`, never a claude session.
+// Attached/@keep reset the clock. svcSeen is in memory: after a dashboard restart a stopped stack waits until it runs again
+// (conservative). closeAt (ms) is what the sidebar counts down; 0 = not closing.
+// ponytail: in-memory seen-map, persist it if restarts leave stopped stacks behind in practice.
+export const SVC_GRACE = 10 * 60_000;
+const svcSeen = new Map(); // `${name}@${created}` -> { ran, idleSince }
+export function svcPlan(list, seen, now, grace = SVC_GRACE) {
+  const live = new Set();
+  for (const x of list) {
+    x.closeAt = 0;
+    if (x.claude) continue;
+    const k = `${x.name}@${x.created}`, e = seen.get(k) || { ran: false, idleSince: 0 }, up = x.wins.some(w => w.up);
+    live.add(k);
+    if (up) e.ran = true;
+    if (up || x.attached || x.keep) e.idleSince = 0; else if (!e.idleSince) e.idleSince = now;
+    seen.set(k, e);
+    if (e.ran && e.idleSince) x.closeAt = e.idleSince + grace;
+  }
+  for (const k of seen.keys()) if (!live.has(k)) seen.delete(k);
+  return list.filter(x => x.closeAt && now >= x.closeAt).map(x => x.name);
+}
+export function startServiceReaper(every = 30_000) {
+  setInterval(async () => {
+    tmuxCache.t = 0; // decide on a fresh read, never a 3s-old one
+    const due = new Set((await tmuxLive()).filter(x => x.closeAt && Date.now() >= x.closeAt).map(x => x.name));
+    for (const name of due) {
+      await sh(...userCmd(['tmux', 'kill-session', '-t', '=' + name]));
+      console.log(`service auto-close: killed tmux session ${name} (nothing running in any window for ${SVC_GRACE / 60_000}m)`);
+    }
+    if (due.size) tmuxCache.t = 0;
+  }, every).unref();
+}
+
 async function tmuxLiveCompute() {
   const out = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F',
-    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{@sid}\t#{@label}']));
+    '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{window_name}\t#{pane_dead}\t#{@keep}\t#{@sid}\t#{@label}']));
   const list = [];
   for (const l of out.trim().split('\n').filter(Boolean)) {
-    const [name, att, created, activity, pid, cwd, paneId, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
-    if (list.some(x => x.name === name)) continue; // first pane per session
+    const [name, att, created, activity, pid, cwd, paneId, win, dead, keep, sid, ...rest] = l.split('\t'); // @label last: user text may hold tabs
+    const pane = { pid: +pid, win, dead: dead === '1' };
+    const seen = list.find(x => x.name === name);
+    if (seen) { seen.panes.push(pane); continue; } // first pane per session; the others only add to panes (claude may run in any)
     // paneId (%NN) is what fleetState()'s capture-pane needs — NEVER '=name' for
     // capture-pane/display-message/respawn-pane, only for session-target commands
     // (kill-session, has-session, attach) — see tasks/lessons.md, three prior burns.
@@ -257,23 +316,9 @@ async function tmuxLiveCompute() {
     // signal — session_created (bug 2026-08-28: showed "idle 24h" for a session opened
     // yesterday but active 9m ago) is when the tmux session was FIRST opened, unrelated
     // to recent activity, and stays wrong for the session's entire lifetime.
-    list.push({ name, sid, attached: att === '1', created: +created * 1000, activity: +activity * 1000, pid: +pid, cwd, paneId, label: rest.join(' ').trim(), paused: false });
+    list.push({ name, sid, attached: att === '1', created: +created * 1000, activity: +activity * 1000, pid: +pid, cwd, paneId, label: rest.join(' ').trim(), paused: false, panes: [pane], wins: [], keep: !!keep && keep !== '0', claude: true, closeAt: 0 });
   }
-  if (list.length) { // paused = the leader's descendants (claude) are in state T
-    const st = await sh('ps', ['-eo', 'pid=,ppid=,stat=']);
-    const rows = st.trim().split('\n').map(l => l.trim().split(/\s+/));
-    const kids = new Map(); // ppid -> [{pid,stat}]
-    const stat = new Map();
-    for (const [pid, ppid, s] of rows) { stat.set(+pid, s); (kids.get(+ppid) || kids.set(+ppid, []).get(+ppid)).push(+pid); }
-    for (const x of list) { // any descendant stopped => paused
-      const stack = [x.pid]; let paused = false;
-      while (stack.length && !paused) for (const c of kids.get(stack.pop()) || []) {
-        if (/T/.test(stat.get(c) || '')) { paused = true; break; }
-        stack.push(c);
-      }
-      x.paused = paused;
-    }
-  }
+  if (list.length) { tagSessions(list, await sh('ps', ['-eo', 'pid=,ppid=,stat=,comm='])); svcPlan(list, svcSeen, Date.now()); }
   tmuxCache = { t: Date.now(), list };
   return list;
 }
@@ -282,11 +327,11 @@ async function tmuxLiveCompute() {
 // ---------- fleet snippet: "what is it doing now" (last 16KB, newest message, mtime-cached) ----------
 // mirror of titleOf() above but reads the TAIL of the transcript, not the head — titleOf
 // stays the session's opening ask (history rows); this is the fleet card/row snippet.
-const tailCache = new Map(); // path -> {mt, text}
+const tailCache = new Map(); // path -> {mt, text, turn}: turn = when the newest assistant entry was written (0: none in the tail)
 async function tailOf(e) {
   const hit = tailCache.get(e.path);
   if (hit && hit.mt === e.mt) return hit;
-  let text = '';
+  let text = '', turn = 0;
   try {
     const fh = await fsp.open(e.path, 'r');
     const size = e.sz != null ? e.sz : (await fh.stat()).size;
@@ -302,6 +347,7 @@ async function tailOf(e) {
       if (!lines[i]) continue;
       let j; try { j = JSON.parse(lines[i]); } catch { continue; }
       if (j.type === 'assistant' && j.message) {
+        if (!turn) turn = Date.parse(j.timestamp) || 0;
         const c = j.message.content;
         const t = Array.isArray(c) ? (c.find(x => x.type === 'text') || {}).text : (typeof c === 'string' ? c : '');
         if (t) { text = t; break; } // newest assistant text wins outright
@@ -313,7 +359,7 @@ async function tailOf(e) {
     }
   } catch {}
   text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
-  const v = { mt: e.mt, text };
+  const v = { mt: e.mt, text, turn };
   if (tailCache.size > 4000) tailCache.clear();
   tailCache.set(e.path, v);
   return v;
@@ -344,13 +390,14 @@ const FLEET_RE = {
 // pure classifier — no I/O, no closures over live state — so it's unit-testable in
 // isolation (see the --selftest fixture block at the bottom of this file).
 // First match wins, exactly per the spec table: paused > needs-you > working > idle.
-export function classifyFleet({ paused, tail = '', mt = 0 }) {
+export function classifyFleet({ paused, tail = '', mt = 0, turn = mt }) {
   if (paused) return 'paused';
   if (FLEET_RE.dialog.test(tail)) return 'needs-you';
-  // idle prompt showing + the transcript's last turn finished < 10 min ago = work
-  // completed but not yet seen. mt=0 (no transcript match) can never satisfy this —
-  // sessions with no transcript row classify on pane signals alone, per spec.
-  if (mt && Date.now() - mt < 600000 && FLEET_RE.idlePrompt.test(tail) && !FLEET_RE.working.test(tail)) return 'needs-you';
+  // idle prompt showing + the transcript's last ASSISTANT turn written < 10 min ago = work completed but not yet seen. turn=0 (no
+  // transcript match, or no assistant entry in its tail) can never satisfy this: such sessions classify on pane signals alone, per spec.
+  // turn, not mt: a resume appends bookkeeping entries (cost-state, bridge-session) and bumps the mtime with no turn behind it, so a
+  // session just reopened idle read as needs-you (2026-10-12, two sessions attached from the grid).
+  if (turn && Date.now() - turn < 600000 && FLEET_RE.idlePrompt.test(tail) && !FLEET_RE.working.test(tail)) return 'needs-you';
   if (FLEET_RE.working.test(tail) || FLEET_RE.workflowMonitor.test(tail) || (mt && Date.now() - mt < 45000)) return 'working';
   return 'idle';
 }
@@ -382,17 +429,19 @@ async function fleetStateCompute() {
       try { const st = await fsp.stat(row.path); mt = st.mtimeMs; sz = st.size; }
       catch { mt = row.mt; sz = row.sz; }
     }
-    const tail = l.paneId
+    // a service row has no agent to classify: never "waiting" (that would push a notification), no snippet
+    const tail = l.claude && l.paneId
       ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
-    const state = classifyFleet({ paused: l.paused, tail, mt });
+    const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0 };
+    const state = l.claude ? classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn }) : 'idle';
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
-    const snippet = row ? (await tailOf({ path: row.path, mt, sz })).text : '';
+    const snippet = tl.text;
     // display "seen X ago" prefers the transcript write, else tmux's own last-activity
     // timestamp, else (no tmux report at all, shouldn't happen) session creation — NOT
     // session_created as the primary fallback, see the tmuxLive() comment on why.
     return { name: l.name, sid8, a: row ? row.a : '', label: l.label || '', proj, row,
-             mt: mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, l };
+             mt: mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, kind: l.claude ? 'claude' : 'service', wins: l.wins, closeAt: l.closeAt, l };
   }));
   const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
   list.sort((x, y) => ORDER[x.state] - ORDER[y.state] || y.mt - x.mt);
@@ -441,7 +490,9 @@ export async function readBody(req) {
 // One-step visibility of the box the harness runs on. Host numbers are sync reads
 // (/proc, statfs) cached 5s; usage numbers shell out (claude-quota, ccusage per
 // account) so they're collected in the background and cached
-// 5 min — a page load NEVER waits on them (first load shows "collecting…").
+// 10 min — a page load NEVER waits on them (first load shows "collecting…"). ccusage parses every transcript on the box (~1 GB of
+// JSONL, a 1 GB node process each): the eight calls run ONE at a time under nice/ionice idle, since eight at once every 5 min
+// put a 4-core box into 80 % I/O wait and 3 GB of swap, which the terminals felt as lag (2026-10-12).
 // Optional dependencies, each degrading gracefully when absent: claude-quota
 // (agy layer) -> limits render "?", ccusage (`sudo npm i -g ccusage`) -> spend
 // cards say so.
@@ -509,15 +560,14 @@ async function collectUsage(force) {
     quota[m[1]] = { h5: isNaN(parseFloat(m[2])) ? null : parseFloat(m[2]), wk: isNaN(parseFloat(m[3])) ? null : parseFloat(m[3]) };
   const thr = +(qline.match(/threshold (\d+)/) || [])[1] || 70;
   const accts = {};
-  await Promise.all(UACCTS.map(async a => {
+  const cc = (env, args, t) => runAs(env, 'nice', ['-n', '19', 'ionice', '-c', '3', 'ccusage', ...args], t).then(jp);
+  for (const a of UACCTS) {
     const env = ['CLAUDE_CONFIG_DIR=' + a.dir];
     // one daily call covers today AND the week: per-day rows since 7 days ago + totals
-    const [dj, mj, sj, bj] = await Promise.all([
-      runAs(env, 'ccusage', ['daily', '--json', '--since', ymd, '--breakdown']),
-      runAs(env, 'ccusage', ['monthly', '--json', '--since', ym1]),
-      runAs(env, 'ccusage', ['session', '--json'], 60000),
-      runAs(env, 'ccusage', ['blocks', '--json', '--active']),
-    ].map(p => p.then(jp)));
+    const dj = await cc(env, ['daily', '--json', '--since', ymd, '--breakdown']);
+    const mj = await cc(env, ['monthly', '--json', '--since', ym1]);
+    const sj = await cc(env, ['session', '--json'], 60000);
+    const bj = await cc(env, ['blocks', '--json', '--active']);
     const rows = (dj && dj.daily) || [];
     const d0 = rows.find(r => r.period === today) || null;
     const models = (d0 && d0.modelBreakdowns || []).map(m => ({ name: m.modelName, cost: m.cost || 0 }))
@@ -538,18 +588,18 @@ async function collectUsage(force) {
       days: rows.map(r => ({ d: r.period || '', cost: r.totalCost || 0, models: (r.modelsUsed || []).map(mshort) })).reverse(),
       sess,
       block: blk ? { cost: blk.costUSD || 0, rate: (blk.burnRate && blk.burnRate.costPerHour) || 0 } : null };
-  }));
+  }
   return { quota, thr, accts };
 }
 
 export let usageCache = { t: 0, d: null, busy: false, p: null };
 
 export function usage(force) {
-  if (!usageCache.busy && (force || Date.now() - usageCache.t > 300e3)) {
+  if (!usageCache.busy && (force || Date.now() - usageCache.t > 600e3)) {
     usageCache.busy = true;
     usageCache.p = collectUsage(force)
       .then(d => { usageCache = { t: Date.now(), d, busy: false, p: null }; })
-      .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 240e3; }); // retry in 1 min
+      .catch(() => { usageCache.busy = false; usageCache.t = Date.now() - 540e3; }); // retry in 1 min
   }
   return usageCache.d;
 }

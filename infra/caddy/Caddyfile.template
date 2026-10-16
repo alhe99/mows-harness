@@ -40,6 +40,8 @@
         Content-Security-Policy "frame-ancestors 'self'"
         Referrer-Policy "same-origin"
     }
+    # only Caddy may assert the signed-in email: drop whatever the client sent
+    request_header -X-Auth-Request-Email
     reverse_proxy /oauth2/* 127.0.0.1:4180
     forward_auth 127.0.0.1:4180 {
         uri /oauth2/auth
@@ -50,6 +52,22 @@
             # (https://{{DOMAIN}}/oauth2/callback), cookie on .{{DOMAIN}} covers every
             # subdomain below — see oauth2-proxy.cfg.template's own redirect_url note
             redir * https://{{DOMAIN}}/oauth2/start?rd={scheme}://{host}{uri}
+        }
+    }
+    # second factor (docs/superpowers/specs/2026-10-13-second-factor-design.md): the TOTP page is
+    # reachable with the Google cookie alone; everything else also needs the dashboard's mows_2fa
+    # cookie for the email above. Anchored on the apex like /oauth2/start; the cookie is on .{{DOMAIN}}.
+    handle /2fa/* {
+        reverse_proxy 127.0.0.1:3005
+    }
+    handle /2fa {
+        reverse_proxy 127.0.0.1:3005
+    }
+    forward_auth 127.0.0.1:3005 {
+        uri /2fa/auth
+        @bad status 401
+        handle_response @bad {
+            redir * https://{{DOMAIN}}/2fa?rd={scheme}://{host}{uri}
         }
     }
 }

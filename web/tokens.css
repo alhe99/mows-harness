@@ -340,6 +340,12 @@ summary:focus-visible{outline:2px solid var(--ok-bd);outline-offset:2px;border-r
 .segbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 0;border-radius:8px;font:500 12px var(--sans);color:var(--dim)}
 .segbtn.on{background:var(--pop);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .segbtn:hover{color:var(--fg2)}
+/* the list | grid view switch of the sessions page (and the grid's strip): the grid is a view of the fleet, remembered per browser */
+/* the fleet header: label, count, filter, then the view switch at the row's right edge; filter and switch share one control height, border and radius */
+.sect:has([data-f=filter]){display:flex;align-items:center;gap:8px;margin-right:0}
+.sect [data-f=filter]{width:160px;min-height:0;height:28px;padding:0 10px;border-radius:8px;font:400 12px var(--sans);letter-spacing:0;text-transform:none}
+.vsw{display:inline-flex;align-items:stretch;height:28px;box-sizing:border-box;margin-left:auto;border:1px solid var(--bd2);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04);font:400 12px var(--sans);letter-spacing:0;text-transform:none;vertical-align:middle}
+.vsw a{display:inline-flex;align-items:center;padding:0 12px;color:var(--mut);text-decoration:none}.vsw a+a{border-left:1px solid var(--bd2)}.vsw a:hover{color:var(--fg2)}.vsw a.on{background:var(--pop);color:var(--fg)}
 .ctlhead{font:700 10px var(--sans);color:var(--dimmer);letter-spacing:.1em;text-transform:uppercase;line-height:15px;margin:0 0 12px}
 .ctlgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .ctlgrid.icons4{grid-template-columns:repeat(4,1fr)}

@@ -72,6 +72,7 @@ const cases = [
   ['9 /term* is left to the browser', '/term/?arg=menu&arg=&arg=00000000&v=3', {}, false],
   ['10 /md is left to the browser', '/md?f=x', {}, false],
   ['11 /oauth2/* is left to the browser', '/oauth2/sign_out', {}, false],
+  ['11b /2fa/* (the sign out) is left to the browser', '/2fa/logout', {}, false],
   ['12 data-nw links are left to the browser', '/system', { attrs: { 'data-nw': 't-1' } }, false],
   ['13 a ctrl-click is left to the browser', '/system', { init: { ctrlKey: true } }, false],
   ['14 a middle click is left to the browser', '/system', { init: { button: 1 } }, false],
@@ -89,7 +90,7 @@ await dp.goto(base, { waitUntil: 'load' });
 await dp.waitForSelector('#app h1[data-view="sessions"]', { state: 'attached' });
 const d = await dp.evaluate(() => { const n = document.querySelector('.pnav'), r = n.getBoundingClientRect();
   return { nav: getComputedStyle(n).display !== 'none' && r.width > 0 && r.height > 0, tabs: getComputedStyle(document.querySelector('.tabs')).display, links: n.querySelectorAll('a').length }; });
-check('15 1280x800: header nav shows, tab bar hidden', d.nav && d.tabs === 'none' && d.links === 5, d);
+check('15 1280x800: header nav shows, tab bar hidden, five links (the grid is the sessions page\'s view switch, not a pill)', d.nav && d.tabs === 'none' && d.links === 5, d);
 check('16 zero console errors', errors.length === 0, errors);
 await browser.close();
 console.log(bad ? `shell-check ${engine}: ${bad} FAILED` : `shell-check ${engine}: all passed`);

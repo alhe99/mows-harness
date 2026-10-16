@@ -5,6 +5,7 @@ import { h, Fragment } from 'preact';
 import { useEffect, useLayoutEffect } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
+import { base } from '../shared.mjs';
 
 const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
 const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
@@ -15,6 +16,17 @@ const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now'
 export const termHref = (kind, name) => `/term/?arg=${kind}&arg=${encodeURIComponent(name)}&arg=${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')}&v=3`;
 // a named window per session, in a desktop BROWSER only: the installed app has no second window, and a touch device has nowhere to put one
 const namedWindows = () => matchMedia('(display-mode: browser)').matches && innerWidth >= 700 && matchMedia('(pointer:fine)').matches;
+// where the grid runs (views/grid.mjs desktop(): a mouse, >= 1024 px) a row opens its session as a pane of /grid, in this tab; a phone, a
+// narrow window or the installed app keep the terminal document of its own (2026-10-12)
+const gridDesk = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
+// the view switch (list | grid): the grid is the fleet's other view, not a page of its own (no pill in the header, 2026-10-12). The
+// choice is remembered per browser: landing on / with 'grid' goes to /grid in place; the grid's strip carries the same switch back.
+export const VIEW = 'mows.view';
+export const viewOf = () => { try { return localStorage.getItem(VIEW) === 'grid' ? 'grid' : 'list'; } catch { return 'list'; } };
+export const setView = v => { try { localStorage.setItem(VIEW, v); } catch { /* storage blocked: the switch still routes */ } };
+export const ViewSwitch = ({ on }) => h('span', { class: 'vsw', role: 'group', 'aria-label': 'view' },
+  h('a', { class: on === 'list' ? 'on' : '', 'data-v': 'list', href: base() + '/', onClick: () => setView('list') }, 'list'),
+  h('a', { class: on === 'grid' ? 'on' : '', 'data-v': 'grid', href: base() + '/grid', onClick: () => setView('grid') }, 'grid'));
 
 const filter = signal('');
 const now = signal(0); // bumped every 30 s: relative times re-render between snapshots
@@ -63,8 +75,10 @@ function Menu({ f, back }) {
 }
 
 const glyph = f => h('span', { class: `fli fli-${f.state}`, 'aria-hidden': 'true', 'data-f': 'glyph' }, GLYPH[f.state]);
-const attach = (f, cls, extra) => h('a', { class: cls, 'data-nw': 't-' + f.name, 'data-f': 'attach', href: termHref('attach', f.name),
-  title: 'attach', 'aria-label': 'attach ' + f.name, target: namedWindows() ? 't-' + f.name : undefined, ...extra }, '>_');
+const attach = (f, cls, extra) => (gridDesk()
+  ? h('a', { class: cls, 'data-f': 'attach', href: `${base()}/grid?open=${encodeURIComponent(f.name)}`, title: 'attach (in the grid)', 'aria-label': 'attach ' + f.name, ...extra }, '>_')
+  : h('a', { class: cls, 'data-nw': 't-' + f.name, 'data-f': 'attach', href: termHref('attach', f.name),
+    title: 'attach', 'aria-label': 'attach ' + f.name, target: namedWindows() ? 't-' + f.name : undefined, ...extra }, '>_'));
 const snip = (f, extra) => h('div', { class: 'fsnip', 'data-f': 'snip', style: f.snippet ? extra : (extra ? extra + ';' : '') + 'display:none' }, f.snippet);
 
 function Row({ f, i, back, show }) {
@@ -111,6 +125,7 @@ export default function Sessions() {
   const back = location.pathname + location.search;
   const show = f => !term || `${f.label || f.proj || f.name} ${f.proj} ${f.snippet}`.toLowerCase().includes(term);
 
+  useLayoutEffect(() => { if (gridDesk() && viewOf() === 'grid') store.go(base() + '/grid', true); }, []); // the remembered view, before the list paints
   useLayoutEffect(() => { // the Sessions badge lives in the server's header, outside this view
     const b = document.getElementById('pnav-live');
     if (b) { b.textContent = String(n); b.hidden = !n; }
@@ -128,8 +143,8 @@ export default function Sessions() {
     h('h1', { 'data-view': 'sessions' }, h('a', { href: (document.documentElement.dataset.base || '') + '/' }, 'mows')),
     h('div', { class: 'sect' }, 'fleet ', h('b', { id: 'fleet-count', hidden: !n }, n),
       h('input', { type: 'search', 'data-f': 'filter', placeholder: 'filter…', 'aria-label': 'filter fleet sessions', autocomplete: 'off', value: filter.value,
-        onInput: e => { filter.value = e.currentTarget.value; },
-        style: 'margin-left:8px;width:120px;min-height:0;padding:3px 8px;vertical-align:middle' })),
+        onInput: e => { filter.value = e.currentTarget.value; } }),
+      gridDesk() ? h(ViewSwitch, { on: 'list' }) : null),
     h('p', { class: 'muted', id: 'fleet-empty', hidden: !!n, style: 'padding:8px 4px 16px' }, 'no live sessions.'),
     h('div', { class: 'fleet-rows', id: 'fleet-rows' }, fleet.map((f, i) => h(Row, { key: f.sid8, f, i, back, show: show(f) }))),
     h('div', { class: 'fleet-cards', id: 'fleet-cards' }, fleet.map(f => h(Card, { key: f.sid8, f, back, show: show(f) }))),

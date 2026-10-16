@@ -184,7 +184,7 @@ export async function nextView(req, res, url, p, base = NEXT_BASE) {
   const route = p.slice(base.length).replace(/\/+$/, '') || '/';
   const boot = await nextBoot(req, url, route);
   const nonce = randomBytes(16).toString('base64url');
-  const tab = route === '/' ? 'sessions' : (/^\/(history|system|device|agents)(\/|$)/.exec(route) || [])[1] || '';
+  const tab = route === '/' ? 'sessions' : (/^\/(grid|history|system|device|agents)(\/|$)/.exec(route) || [])[1] || '';
   const { hdr, tabs, termFab } = pageChrome(tab, boot.live, boot.host, base + '/agents', base);
   const asset = (stem, ext) => assetUrl(stem, ext) || '/assets/missing-build';
   // '</' and U+2028/9 cannot end the JSON data block early, whatever a session label or snippet holds

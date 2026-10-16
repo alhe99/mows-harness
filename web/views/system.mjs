@@ -5,6 +5,7 @@ import { h, Fragment } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { store } from '../store.mjs';
 import { Icon, abs, act, base, relS, useApi, usePatched } from '../shared.mjs';
+import { detectMod, MODS } from '../grid/keys.mjs';
 
 // the glyphs this view draws (legacy ICO path data)
 const iRefresh = '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>';
@@ -54,6 +55,17 @@ function Account({ a, u, now }) {
           a.days.length ? a.days.map(r => h('div', { class: 'qrow', key: r.d }, h('span', null, r.d.slice(5)), h('b', null, money(r.cost)), sub(r.models.join(', ')))) : mlist('muted', 'no usage this week'),
           h('span', { class: 'sl', style: 'padding-top:8px' }, 'sessions · lifetime spend'),
           a.sess.length ? a.sess.map(t => h('div', { class: 'qrow', key: t.sid }, h('a', { class: 'sid8', href: `${base()}/s/${a.id}/${t.sid}` }, t.sid.slice(0, 8)), h('b', null, money(t.cost)), sub(t.models.join(', ')))) : mlist('muted', 'none this week')))));
+}
+
+// the grid view's chord modifier, kept in its layout record (web/grid/state.mjs reads it at mount); set here so the grid's sidebar is sessions only
+const GRID = 'grid.v1';
+function Shortcuts() {
+  const read = () => { try { const m = JSON.parse(localStorage.getItem(GRID) || '{}').mod; return m in MODS ? m : detectMod(); } catch { return detectMod(); } };
+  const [mod, set] = useState(read);
+  const save = v => { try { const s = JSON.parse(localStorage.getItem(GRID) || '{}'); s.mod = v; localStorage.setItem(GRID, JSON.stringify(s)); } catch { /* no storage: the grid detects it */ } set(v); };
+  return h('section', { class: 'sysright-item', 'data-card': 'shortcuts' }, section('Shortcuts', 'The modifier the grid view\u2019s chords use: Mod+1\u20139 tabs, Mod+arrows, Mod+Z zoom, Mod+X close, Mod+B sidebar.'),
+    h('div', { class: 'termcard set' }, h('label', { class: 'seclabel', for: 'gmod' }, 'Modifier'),
+      h('select', { id: 'gmod', class: 'chip', value: mod, onChange: e => save(e.currentTarget.value) }, Object.entries(MODS).map(([k, v]) => h('option', { value: k }, v)))));
 }
 
 // the Notifications card is its own chunk, loaded after the view paints: push is an enhancement, and the card is not part of this route's budget
@@ -112,7 +124,7 @@ export default function System() {
               : h('div', { class: 'dangerbtn off', 'aria-disabled': 'true' }, h(Icon, { d: iRefresh }), 'restart all sessions'),
             h('p', { class: 'dangercap' }, live ? 'Restarts every live terminal session on this host — including the one you’re reading this from. Transcripts stay on disk; nothing is deleted.' : 'No live sessions right now — nothing to restart.'),
             flash.rs ? h('span', { class: 'chip on' }, h('span', { class: 'dot', style: 'background:var(--ok)' }), 'restarted ' + flash.rs) : null)),
-        h(Notifications, null))),
+        h(Shortcuts, null), h(Notifications, null))),
     h('div', { class: 'sysextra' }, section('Usage & Reclaim', 'Claude account limits, daily spend, and disk reclaim.'),
       h('div', { class: 'bar' }, h('span', { class: 'chip' }, 'usage updated ', h('b', null, age), d.busy ? ' · refreshing…' : ''),
         h('a', { class: 'chip', href: base() + '/system?fresh=1', onClick: refresh }, h(Icon, { d: iRefresh }), 'Refresh'),

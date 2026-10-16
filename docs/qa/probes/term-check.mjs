@@ -1,5 +1,5 @@
 // Cockpit phase 04 terminal probe (specs/cockpit/04-heavy-pages.md tasks 3-8, 11). Exit code is the verdict.
-// usage: node docs/qa/probes/term-check.mjs <webkit|chromium> <proto|keybar|ime|clipboard|sheet|paint|theme|all>
+// usage: node docs/qa/probes/term-check.mjs <webkit|chromium> <proto|keybar|ime|clipboard|sheet|paint|theme|framed|all>
 // env: DASH (default http://127.0.0.1:3105; only /assets/ is fetched from it), PLAYWRIGHT (module path; default: the repo's)
 // The page under test is dist/term.html, served by the probe in place of /term/ on the DASH origin; /term/token, the /term/ws socket (a fake ttyd:
 // every frame the page sends is recorded and the probe answers with '0' output frames), /app/live.json, /a/switch, /shot, /z and
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('term-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'webkit';
 const mode = process.argv[3] || 'all';
-const MODES = ['proto', 'keybar', 'ime', 'clipboard', 'sheet', 'paint', 'theme'];
+const MODES = ['proto', 'keybar', 'ime', 'clipboard', 'sheet', 'paint', 'theme', 'framed'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`term-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const ROOT = join(import.meta.dirname, '../../..');
@@ -195,9 +195,9 @@ async function ime() {
   // what the pty's line holds after the bytes sent so far (\x7f deletes a character); an engine may rewrite a character it already typed (WebKit swaps
   // a space for a no-break space once a dash follows), which the diff answers with a backspace and the retyped tail
   const line = from => W.inputs().slice(from).join('').split('').reduce((l, c) => (c === '\x7f' ? l.slice(0, -1) : l + c), '');
-  const shadow = await W.page.evaluate(() => window.term.textarea.value);
+  const shadow = (await W.page.evaluate(() => window.term.textarea.value)).slice(1); // the field starts with the sentinel space
   check('typing replays the value diff through term.input: the pty line equals the shadow line', line(n0) === shadow.replace(/\u00a0/g, ' ') && shadow.replace(/\u00a0/g, ' ') === 'ls -l', [line(n0), shadow]);
-  check('the shadow line keeps the typed line in the textarea (the IME has context)', shadow.length === 5, shadow);
+  check('the shadow line keeps the typed line in the textarea (the IME has context)', shadow.length === 5 && (await W.page.evaluate(() => window.term.textarea.value))[0] === ' ', shadow);
   const n1 = W.inputs().length;
   await W.page.keyboard.press('Backspace'); await sleep(100);
   check('a backspace is one \\x7f', W.inputs().slice(n1).join('') === '\x7f', W.inputs().slice(n1));
@@ -207,11 +207,37 @@ async function ime() {
   check('replacing the line is \\x7f x old length + the new tail', W.inputs().slice(n2).join('') === '\x7f\x7f\x7f\x7fpwd', bytes(W.inputs().slice(n2).join('')));
   const n3 = W.inputs().length;
   await W.page.keyboard.press('Enter'); await sleep(100);
-  check('Enter is a synthetic keydown: one \\r, and the shadow line is cleared', W.inputs().slice(n3).join('') === '\r' && (await W.page.evaluate(() => window.term.textarea.value)) === '', W.inputs().slice(n3));
+  check('Enter is a synthetic keydown: one \\r, and the shadow line is cleared to the sentinel', W.inputs().slice(n3).join('') === '\r' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', W.inputs().slice(n3));
   // Backspace on an empty shadow line at caret 0 deletes into the older terminal text
   const n4 = W.inputs().length;
   await W.page.keyboard.press('Backspace'); await sleep(100);
   check('Backspace on an empty shadow line still deletes (\\x7f)', W.inputs().slice(n4).join('') === '\x7f', W.inputs().slice(n4));
+  // a held delete: iOS repeats only while the field has text, so the sentinel is back after every delete and each repeat is one more \x7f
+  const n4h = W.inputs().length;
+  for (let i = 0; i < 5; i++) await W.page.keyboard.press('Backspace');
+  await sleep(100);
+  const held = await W.page.evaluate(() => window.term.textarea.value);
+  check('a held delete on an empty shadow line: one \\x7f per repeat, the field never empties', W.inputs().slice(n4h).join('') === '\x7f'.repeat(5) && held === ' ', [bytes(W.inputs().slice(n4h).join('')), held]);
+  if (engine === 'chromium') { // a trusted word delete (iOS speeds a held delete up to whole words), through CDP like the paste below
+    const cdp = await W.ctx.newCDPSession(W.page);
+    const n4w = W.inputs().length;
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, commands: ['deleteWordBackward'] }); await sleep(100);
+    check('a word delete on an empty shadow line is ^W', W.inputs().slice(n4w).join('') === '\x17' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', bytes(W.inputs().slice(n4w).join('')));
+  } else note('word delete not asserted: this engine cannot raise a trusted deleteWordBackward');
+  // leaving the app or hiding the keyboard blurs the textarea and xterm empties it: the shadow line must survive, or the IME's next edit is
+  // diffed against '' and the whole typed line is backspaced away in the pty (the "text cleared when I switch apps" bug)
+  await W.page.keyboard.type('fix the bug'); await sleep(100);
+  await W.page.evaluate(() => window.term.textarea.blur()); await sleep(50);
+  const kept = await W.page.evaluate(() => window.term.textarea.value);
+  check('a blur keeps the shadow line (xterm\u2019s blur clear is undone)', kept === ' fix the bug', kept);
+  const n4b = W.inputs().length;
+  await W.page.evaluate(() => window.term.focus()); await sleep(100);
+  await W.page.keyboard.type('s'); await sleep(100);
+  check('after blur + refocus a keystroke sends only itself, nothing is deleted', W.inputs().slice(n4b).join('') === 's', bytes(W.inputs().slice(n4b).join('')));
+  await W.page.keyboard.press('Enter'); await sleep(100);
+  const n4s = W.inputs().length; // a hardware keyboard on a tablet: Shift+Enter is a line break, not a submit
+  await W.page.keyboard.press('Shift+Enter'); await sleep(100);
+  check('phone: Shift+Enter is a line break (\\n), not a submit', W.inputs().slice(n4s).join('') === '\n', bytes(W.inputs().slice(n4s).join('')));
   // a terminal key (Ctrl) falls through to xterm
   const n5 = W.inputs().length;
   await W.page.keyboard.press('Control+C'); await sleep(100);
@@ -233,7 +259,7 @@ async function ime() {
     await W.page.evaluate(() => navigator.clipboard.writeText('one line'));
     const n7 = W.inputs().length;
     await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, commands: ['paste'] }); await sleep(250);
-    check('a single-line paste is sent once (the shadow line does not echo it again)', W.inputs().slice(n7).join('') === '\x1b[200~one line\x1b[201~' && (await W.page.evaluate(() => window.term.textarea.value)) === '', [bytes(W.inputs().slice(n7).join('')), await W.page.evaluate(() => window.term.textarea.value)]);
+    check('a single-line paste is sent once (the shadow line does not echo it again)', W.inputs().slice(n7).join('') === '\x1b[200~one line\x1b[201~' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', [bytes(W.inputs().slice(n7).join('')), await W.page.evaluate(() => window.term.textarea.value)]);
   } else note('multiline paste not asserted: this engine cannot raise a trusted paste event');
   // reconnect kick on return to the foreground (let the focus and repaint timers of the steps above drain first: a resume kicks the reconnect too)
   await sleep(800);
@@ -501,7 +527,49 @@ async function theme() {
   check('no page errors', D.errors.length + U.errors.length + G.errors.length + O.errors.length === 0, [...D.errors, ...U.errors, ...G.errors, ...O.errors]);
 }
 
-const ALL = { proto, keybar, ime, clipboard, sheet, paint, theme };
+// ---- framed: inside an iframe the grid chords go to the parent as grid-key and never reach the pty; unframed, nothing is posted ----------
+async function framed() {
+  const W = await open(URL_A, { phone: false });
+  await W.page.evaluate(() => { window.__got = []; addEventListener('message', e => window.__got.push(e.data)); });
+  await W.page.locator('.xterm-helper-textarea').focus();
+  await W.page.keyboard.press('Control+Shift+Digit2');
+  await sleep(100);
+  check('unframed: Ctrl+Shift+2 posts nothing and reaches the pty as before (NUL)', (await W.page.evaluate(() => window.__got.length)) === 0 && W.inputs().at(-1) === '\x00', W.inputs());
+  const e0 = W.inputs().length;
+  await W.page.keyboard.press('Shift+Enter'); await sleep(100);
+  const e1 = W.inputs().length;
+  await W.page.keyboard.press('Enter'); await sleep(100);
+  check('Shift+Enter is a line break (\\n, as Ctrl+J), only once; Enter is still \\r', W.inputs().slice(e0, e1).join('') === '\n' && W.inputs().slice(e1).join('') === '\r', bytes(W.inputs().slice(e0).join('')));
+  await W.ctx.route('**/grid-host', r => r.fulfill({ contentType: 'text/html', body: `<!doctype html><title>host</title><script>window.__got = []; addEventListener('message', e => window.__got.push(e.data));</script><iframe id="f" src="${URL_A}" style="width:900px;height:600px"></iframe>` }));
+  const page = await W.ctx.newPage();
+  page.on('pageerror', e => W.errors.push(String(e)));
+  await page.goto(DASH + '/grid-host');
+  const frame = page.frames().find(f => f.url().includes('/term/'));
+  await frame.waitForFunction(() => /** @type {any} */ (window).term);
+  await frame.locator('.xterm-helper-textarea').focus();
+  await frame.evaluate(() => postMessage({ t: 'grid-mod', mod: 'win' }, location.origin)); // what the shell sends to a pane; same origin, so the frame can send it to itself
+  const n0 = W.inputs().length;
+  await page.keyboard.press('Control+Shift+Digit2');
+  await sleep(150);
+  const n1 = W.inputs().length;
+  await page.keyboard.press('Control+KeyC'); // not a chord: goes to the terminal as before (^C). Ctrl+Shift+<letter> would prove nothing: xterm sends no bytes for it
+  await sleep(150);
+  const got = await page.evaluate(() => window.__got.filter(m => m && m.t === 'grid-key'));
+  check('framed: Ctrl+Shift+2 reaches the parent as { t: grid-key, key: tab:2 }, once', got.length === 1 && got[0].key === 'tab:2', got);
+  const after = W.inputs().slice(n0);
+  check('framed: the chord did not reach the pty; Ctrl+C (not a chord) still does', n1 === n0 && after.join('') === '\x03', after);
+  await frame.evaluate(() => postMessage({ t: 'grid-mod', mod: 'alt' }, location.origin));
+  await page.keyboard.press('Alt+Digit3');
+  await sleep(100);
+  const e2 = W.inputs().length;
+  await page.keyboard.press('Shift+Enter'); await sleep(100);
+  check('framed: Shift+Enter is a line break too (\\n)', W.inputs().slice(e2).join('') === '\n', bytes(W.inputs().slice(e2).join('')));
+  check('framed: after grid-mod alt, Alt+3 is the chord', (await page.evaluate(() => window.__got.filter(m => m && m.t === 'grid-key').map(m => m.key).join())) === 'tab:2,tab:3');
+  check('no page errors', W.errors.length === 0, W.errors);
+  await shut(W);
+}
+
+const ALL = { proto, keybar, ime, clipboard, sheet, paint, theme, framed };
 for (const m of mode === 'all' ? MODES : [mode]) {
   cur = m;
   try { await ALL[m](); } catch (e) { bad++; console.log(`FAIL ${engine}/${m} threw ${String(e.stack || e).split('\n').slice(0, 4).join(' | ')}`); }
