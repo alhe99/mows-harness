@@ -289,6 +289,12 @@ export function svcPlan(list, seen, now, grace = SVC_GRACE) {
   for (const k of seen.keys()) if (!live.has(k)) seen.delete(k);
   return list.filter(x => x.closeAt && now >= x.closeAt).map(x => x.name);
 }
+// ---------- claude auto-close: a claude session with no transcript message for CLAUDE_IDLE is killed (2026-10-16, asked for) ----------
+// Its conversation stays resumable from History. Only an idle one whose age comes from its transcript (row: tmux's own activity moves
+// on every attach), never attached (a terminal or a grid tab is on it), paused, or `tmux set -t <name> @keep 1`.
+export const CLAUDE_IDLE = 24 * 3600_000;
+export const idleDue = (fleet, now, limit = CLAUDE_IDLE) => fleet
+  .filter(f => f.kind === 'claude' && f.state === 'idle' && f.row && !f.attached && !f.paused && !f.l?.keep && now - f.mt >= limit).map(f => f.name);
 export function startServiceReaper(every = 30_000) {
   setInterval(async () => {
     tmuxCache.t = 0; // decide on a fresh read, never a 3s-old one
@@ -298,6 +304,12 @@ export function startServiceReaper(every = 30_000) {
       console.log(`service auto-close: killed tmux session ${name} (nothing running in any window for ${SVC_GRACE / 60_000}m)`);
     }
     if (due.size) tmuxCache.t = 0;
+    fleetCache.t = 0;
+    for (const name of idleDue(await fleetState(), Date.now())) {
+      await sh(...userCmd(['tmux', 'kill-session', '-t', '=' + name]));
+      console.log(`claude auto-close: killed tmux session ${name} (no message for ${CLAUDE_IDLE / 3600_000}h; resume it from History)`);
+      tmuxCache.t = 0;
+    }
   }, every).unref();
 }
 
