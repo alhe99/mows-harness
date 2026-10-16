@@ -195,9 +195,9 @@ async function ime() {
   // what the pty's line holds after the bytes sent so far (\x7f deletes a character); an engine may rewrite a character it already typed (WebKit swaps
   // a space for a no-break space once a dash follows), which the diff answers with a backspace and the retyped tail
   const line = from => W.inputs().slice(from).join('').split('').reduce((l, c) => (c === '\x7f' ? l.slice(0, -1) : l + c), '');
-  const shadow = await W.page.evaluate(() => window.term.textarea.value);
+  const shadow = (await W.page.evaluate(() => window.term.textarea.value)).slice(1); // the field starts with the sentinel space
   check('typing replays the value diff through term.input: the pty line equals the shadow line', line(n0) === shadow.replace(/\u00a0/g, ' ') && shadow.replace(/\u00a0/g, ' ') === 'ls -l', [line(n0), shadow]);
-  check('the shadow line keeps the typed line in the textarea (the IME has context)', shadow.length === 5, shadow);
+  check('the shadow line keeps the typed line in the textarea (the IME has context)', shadow.length === 5 && (await W.page.evaluate(() => window.term.textarea.value))[0] === ' ', shadow);
   const n1 = W.inputs().length;
   await W.page.keyboard.press('Backspace'); await sleep(100);
   check('a backspace is one \\x7f', W.inputs().slice(n1).join('') === '\x7f', W.inputs().slice(n1));
@@ -207,17 +207,29 @@ async function ime() {
   check('replacing the line is \\x7f x old length + the new tail', W.inputs().slice(n2).join('') === '\x7f\x7f\x7f\x7fpwd', bytes(W.inputs().slice(n2).join('')));
   const n3 = W.inputs().length;
   await W.page.keyboard.press('Enter'); await sleep(100);
-  check('Enter is a synthetic keydown: one \\r, and the shadow line is cleared', W.inputs().slice(n3).join('') === '\r' && (await W.page.evaluate(() => window.term.textarea.value)) === '', W.inputs().slice(n3));
+  check('Enter is a synthetic keydown: one \\r, and the shadow line is cleared to the sentinel', W.inputs().slice(n3).join('') === '\r' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', W.inputs().slice(n3));
   // Backspace on an empty shadow line at caret 0 deletes into the older terminal text
   const n4 = W.inputs().length;
   await W.page.keyboard.press('Backspace'); await sleep(100);
   check('Backspace on an empty shadow line still deletes (\\x7f)', W.inputs().slice(n4).join('') === '\x7f', W.inputs().slice(n4));
+  // a held delete: iOS repeats only while the field has text, so the sentinel is back after every delete and each repeat is one more \x7f
+  const n4h = W.inputs().length;
+  for (let i = 0; i < 5; i++) await W.page.keyboard.press('Backspace');
+  await sleep(100);
+  const held = await W.page.evaluate(() => window.term.textarea.value);
+  check('a held delete on an empty shadow line: one \\x7f per repeat, the field never empties', W.inputs().slice(n4h).join('') === '\x7f'.repeat(5) && held === ' ', [bytes(W.inputs().slice(n4h).join('')), held]);
+  if (engine === 'chromium') { // a trusted word delete (iOS speeds a held delete up to whole words), through CDP like the paste below
+    const cdp = await W.ctx.newCDPSession(W.page);
+    const n4w = W.inputs().length;
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, commands: ['deleteWordBackward'] }); await sleep(100);
+    check('a word delete on an empty shadow line is ^W', W.inputs().slice(n4w).join('') === '\x17' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', bytes(W.inputs().slice(n4w).join('')));
+  } else note('word delete not asserted: this engine cannot raise a trusted deleteWordBackward');
   // leaving the app or hiding the keyboard blurs the textarea and xterm empties it: the shadow line must survive, or the IME's next edit is
   // diffed against '' and the whole typed line is backspaced away in the pty (the "text cleared when I switch apps" bug)
   await W.page.keyboard.type('fix the bug'); await sleep(100);
   await W.page.evaluate(() => window.term.textarea.blur()); await sleep(50);
   const kept = await W.page.evaluate(() => window.term.textarea.value);
-  check('a blur keeps the shadow line (xterm\u2019s blur clear is undone)', kept === 'fix the bug', kept);
+  check('a blur keeps the shadow line (xterm\u2019s blur clear is undone)', kept === ' fix the bug', kept);
   const n4b = W.inputs().length;
   await W.page.evaluate(() => window.term.focus()); await sleep(100);
   await W.page.keyboard.type('s'); await sleep(100);
@@ -244,7 +256,7 @@ async function ime() {
     await W.page.evaluate(() => navigator.clipboard.writeText('one line'));
     const n7 = W.inputs().length;
     await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, commands: ['paste'] }); await sleep(250);
-    check('a single-line paste is sent once (the shadow line does not echo it again)', W.inputs().slice(n7).join('') === '\x1b[200~one line\x1b[201~' && (await W.page.evaluate(() => window.term.textarea.value)) === '', [bytes(W.inputs().slice(n7).join('')), await W.page.evaluate(() => window.term.textarea.value)]);
+    check('a single-line paste is sent once (the shadow line does not echo it again)', W.inputs().slice(n7).join('') === '\x1b[200~one line\x1b[201~' && (await W.page.evaluate(() => window.term.textarea.value)) === ' ', [bytes(W.inputs().slice(n7).join('')), await W.page.evaluate(() => window.term.textarea.value)]);
   } else note('multiline paste not asserted: this engine cannot raise a trusted paste event');
   // reconnect kick on return to the foreground (let the focus and repaint timers of the steps above drain first: a resume kicks the reconnect too)
   await sleep(800);
