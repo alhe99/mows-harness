@@ -242,6 +242,12 @@ async function ime() {
   await W.page.evaluate(() => window.term.focus()); await sleep(100);
   await W.page.keyboard.type('s'); await sleep(100);
   check('after blur + refocus a keystroke sends only itself, nothing is deleted', W.inputs().slice(n4b).join('') === 's', bytes(W.inputs().slice(n4b).join('')));
+  // the bar's \⏎ is term.paste('\n'), and xterm's paste empties the field: the next letter must not backspace the typed line away (2026-10-16)
+  const n4n = W.inputs().length;
+  await W.page.click('#cckb > button[data-k="NL"]'); await sleep(100);
+  await W.page.keyboard.type('x'); await sleep(100);
+  const nl = W.inputs().slice(n4n).join('');
+  check('typing after the bar’s line break sends only the letter, no \\x7f', !nl.includes('\x7f') && nl.endsWith('x'), bytes(nl));
   await W.page.keyboard.press('Enter'); await sleep(100);
   const n4s = W.inputs().length; // a hardware keyboard on a tablet: Shift+Enter is a line break, not a submit
   await W.page.keyboard.press('Shift+Enter'); await sleep(100);
