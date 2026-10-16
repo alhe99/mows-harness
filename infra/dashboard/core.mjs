@@ -260,7 +260,8 @@ export function tagSessions(list, psOut) {
     for (const p of x.panes) { const w = x.wins.find(w => w.n === p.win); if (w) w.up ||= up(p); else x.wins.push({ n: p.win, up: up(p) }); }
     if (!rows.length) continue;
     x.paused = below(x.pid).some(c => /T/.test(stat.get(c) || ''));
-    x.claude = x.panes.some(p => comm.get(p.pid) === 'claude' || below(p.pid).some(c => comm.get(c) === 'claude'));
+    x.cpid = x.panes.map(p => (comm.get(p.pid) === 'claude' ? p.pid : below(p.pid).find(c => comm.get(c) === 'claude'))).find(Boolean) || 0;
+    x.claude = !!x.cpid;
   }
   return list;
 }
@@ -288,6 +289,12 @@ export function svcPlan(list, seen, now, grace = SVC_GRACE) {
   for (const k of seen.keys()) if (!live.has(k)) seen.delete(k);
   return list.filter(x => x.closeAt && now >= x.closeAt).map(x => x.name);
 }
+// ---------- claude auto-close: a claude session with no transcript message for CLAUDE_IDLE is killed (2026-10-16, asked for) ----------
+// Its conversation stays resumable from History. Only an idle one whose age comes from its transcript (row: tmux's own activity moves
+// on every attach), never attached (a terminal or a grid tab is on it), paused, or `tmux set -t <name> @keep 1`.
+export const CLAUDE_IDLE = 24 * 3600_000;
+export const idleDue = (fleet, now, limit = CLAUDE_IDLE) => fleet
+  .filter(f => f.kind === 'claude' && f.state === 'idle' && f.row && !f.attached && !f.paused && !f.l?.keep && now - f.mt >= limit).map(f => f.name);
 export function startServiceReaper(every = 30_000) {
   setInterval(async () => {
     tmuxCache.t = 0; // decide on a fresh read, never a 3s-old one
@@ -297,9 +304,31 @@ export function startServiceReaper(every = 30_000) {
       console.log(`service auto-close: killed tmux session ${name} (nothing running in any window for ${SVC_GRACE / 60_000}m)`);
     }
     if (due.size) tmuxCache.t = 0;
+    fleetCache.t = 0;
+    for (const name of idleDue(await fleetState(), Date.now())) {
+      await sh(...userCmd(['tmux', 'kill-session', '-t', '=' + name]));
+      console.log(`claude auto-close: killed tmux session ${name} (no message for ${CLAUDE_IDLE / 3600_000}h; resume it from History)`);
+      tmuxCache.t = 0;
+    }
   }, every).unref();
 }
 
+// a claude started by `cc` (not web-term.sh run) has no @sid; claude itself writes <home>/sessions/<pid>.json with its current sessionId
+// (it follows /clear). Without it the row had no transcript: no snippet, and "idle Xm" fell back to tmux's session_activity, which
+// every attach bumps (2026-10-16: sessions untouched for days read "idle 37m" after the grid re-attached its tabs).
+// Only TMUX_USER's own homes (an agent account must not name a sid for this user's claude), and only a uuid: respawn puts it in a
+// shell command line.
+function claudeSid(pid) {
+  for (const a of ACCTS) {
+    if (a.user !== TMUX_USER) continue;
+    try {
+      const j = JSON.parse(readFileSync(path.join(a.home, 'sessions', pid + '.json'), 'utf8'));
+      if (j.pid === pid && UUID_RE.test(j.sessionId)) return j.sessionId;
+    } catch {}
+  }
+  return '';
+}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 async function tmuxLiveCompute() {
   const out = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F',
     '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{window_name}\t#{pane_dead}\t#{@keep}\t#{@sid}\t#{@label}']));
@@ -318,7 +347,11 @@ async function tmuxLiveCompute() {
     // to recent activity, and stays wrong for the session's entire lifetime.
     list.push({ name, sid, attached: att === '1', created: +created * 1000, activity: +activity * 1000, pid: +pid, cwd, paneId, label: rest.join(' ').trim(), paused: false, panes: [pane], wins: [], keep: !!keep && keep !== '0', claude: true, closeAt: 0 });
   }
-  if (list.length) { tagSessions(list, await sh('ps', ['-eo', 'pid=,ppid=,stat=,comm='])); svcPlan(list, svcSeen, Date.now()); }
+  if (list.length) {
+    tagSessions(list, await sh('ps', ['-eo', 'pid=,ppid=,stat=,comm=']));
+    for (const x of list) if (x.cpid && !x.sid) x.fsid = claudeSid(x.cpid);
+    svcPlan(list, svcSeen, Date.now());
+  }
   tmuxCache = { t: Date.now(), list };
   return list;
 }
@@ -331,7 +364,7 @@ const tailCache = new Map(); // path -> {mt, text, turn}: turn = when the newest
 async function tailOf(e) {
   const hit = tailCache.get(e.path);
   if (hit && hit.mt === e.mt) return hit;
-  let text = '', turn = 0;
+  let text = '', turn = 0, last = 0;
   try {
     const fh = await fsp.open(e.path, 'r');
     const size = e.sz != null ? e.sz : (await fh.stat()).size;
@@ -346,6 +379,7 @@ async function tailOf(e) {
     for (let i = lines.length - 1; i >= 0; i--) { // newest line first
       if (!lines[i]) continue;
       let j; try { j = JSON.parse(lines[i]); } catch { continue; }
+      if (!last && j.timestamp) last = Date.parse(j.timestamp) || 0; // bookkeeping lines (bridge-session, mode, ai-title) carry none
       if (j.type === 'assistant' && j.message) {
         if (!turn) turn = Date.parse(j.timestamp) || 0;
         const c = j.message.content;
@@ -359,7 +393,7 @@ async function tailOf(e) {
     }
   } catch {}
   text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
-  const v = { mt: e.mt, text, turn };
+  const v = { mt: e.mt, text, turn, last };
   if (tailCache.size > 4000) tailCache.clear();
   tailCache.set(e.path, v);
   return v;
@@ -433,15 +467,16 @@ async function fleetStateCompute() {
     const tail = l.claude && l.paneId
       ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
-    const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0 };
+    const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0, last: 0 };
     const state = l.claude ? classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn }) : 'idle';
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
     const snippet = tl.text;
-    // display "seen X ago" prefers the transcript write, else tmux's own last-activity
+    // display "seen X ago" prefers the newest message in the transcript (its mtime moves on bookkeeping lines with no turn behind
+    // them), then the transcript write, else tmux's own last-activity
     // timestamp, else (no tmux report at all, shouldn't happen) session creation — NOT
     // session_created as the primary fallback, see the tmuxLive() comment on why.
     return { name: l.name, sid8, a: row ? row.a : '', label: l.label || '', proj, row,
-             mt: mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, kind: l.claude ? 'claude' : 'service', wins: l.wins, closeAt: l.closeAt, l };
+             mt: tl.last || mt || l.activity || l.created, state, paused: l.paused, attached: l.attached, snippet, kind: l.claude ? 'claude' : 'service', wins: l.wins, closeAt: l.closeAt, l };
   }));
   const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
   list.sort((x, y) => ORDER[x.state] - ORDER[y.state] || y.mt - x.mt);
@@ -464,7 +499,7 @@ export const NAME_RE = /^[\w.:@-]{1,64}$/;
 // which transcript a live session is: web-term.sh stamps @sid on the sessions it starts
 // (2026-08-25; names are cc-<profile>-<dir> now, shared with the cc CLI). Sessions from
 // before that are still named web-<sid8> — keep reading those until they are gone.
-export const liveSid8 = l => (l.sid || (l.name.startsWith('web-') ? l.name.slice(4) : '')).slice(0, 8);
+export const liveSid8 = l => (l.sid || l.fsid || (l.name.startsWith('web-') ? l.name.slice(4) : '')).slice(0, 8);
 
 export async function descendants(root) {
   const out = await sh('ps', ['-eo', 'pid=,ppid=']);

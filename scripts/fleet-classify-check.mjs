@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // fleet-classify-check.mjs — classifyFleet against real pane tails, incl. the phone-width ones (2026-10-11: the status
 // footer and the "esc to interrupt" hint are cut off on a 50-column pane, so ccw-alonso sat on idle and no push fired).
-import { classifyFleet, svcPlan, tagSessions } from '../infra/dashboard/core.mjs';
+import { classifyFleet, idleDue, svcPlan, tagSessions } from '../infra/dashboard/core.mjs';
 const now = Date.now(), recent = now - 60_000, old = now - 20 * 60_000;
 const cases = [
   ['phone working: spinner only', { tail: '✶ Wandering… (36s · ↓ 1.6k tokens)\n❯ \n  🤖 Fable 5.1 (high) | 💰 $133.64 session / $0.…\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 age…', mt: old }, 'working'],
@@ -41,6 +41,7 @@ const failed = tagSessions([ses('x', 1)], '')[0];
 const tcases = [
   ['claude under a bash leader', tagged['leader-bash'].claude, true],
   ['claude two levels below the leader', tagged.deep.claude, true],
+  ['the claude pid (its sessions/<pid>.json names the transcript)', `${tagged.deep.cpid} ${tagged['leader-claude'].cpid} ${tagged.svc.cpid}`, '202 400 0'],
   ['servers in every pane, no claude', tagged.svc.claude, false],
   ['claude is the pane leader', tagged['leader-claude'].claude, true],
   ['stopped claude: still claude, and paused', tagged.stopped.claude && tagged.stopped.paused, true],
@@ -73,4 +74,13 @@ for (const [name, got, want] of tcases) {
   console.log(`${got === want ? 'PASS' : 'FAIL'} tagSessions: ${name} -> ${got}`);
   if (got !== want) bad++;
 }
+// idleDue: which claude sessions auto-close (24h with no transcript message)
+{
+  const H = 3600_000, now = 100 * H, f = (name, o = {}) => ({ name, kind: 'claude', state: 'idle', row: {}, attached: false, paused: false, mt: now - 25 * H, l: {}, ...o });
+  const got = idleDue([f('old'), f('fresh', { mt: now - 23 * H }), f('attached', { attached: true }), f('keep', { l: { keep: true } }), f('paused', { paused: true }),
+    f('waiting', { state: 'needs-you' }), f('no-transcript', { row: null }), f('svc', { kind: 'service' })], now).join(' ');
+  console.log(`${got === 'old' ? 'PASS' : 'FAIL'} idleDue: only an idle, unattached, unkept claude with a transcript 24h quiet -> ${got}`);
+  if (got !== 'old') bad++;
+}
 process.exit(bad ? 1 : 0);
+
