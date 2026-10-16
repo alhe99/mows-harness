@@ -41,6 +41,7 @@ const failed = tagSessions([ses('x', 1)], '')[0];
 const tcases = [
   ['claude under a bash leader', tagged['leader-bash'].claude, true],
   ['claude two levels below the leader', tagged.deep.claude, true],
+  ['the claude pid (its sessions/<pid>.json names the transcript)', `${tagged.deep.cpid} ${tagged['leader-claude'].cpid} ${tagged.svc.cpid}`, '202 400 0'],
   ['servers in every pane, no claude', tagged.svc.claude, false],
   ['claude is the pane leader', tagged['leader-claude'].claude, true],
   ['stopped claude: still claude, and paused', tagged.stopped.claude && tagged.stopped.paused, true],

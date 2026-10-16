@@ -79,7 +79,7 @@ export async function restartAll(req, res) {
       const cfg = (/CLAUDE_CONFIG_DIR=(\S+)/.exec(cmd) || [])[1];
       const acct = ACCTS.find(a => a.home === cfg);
       const proj = (l.cwd || '').replace(/[/.]/g, '-');
-      const e = acct && index.filter(x => x.a === acct.id && x.proj === proj && x.mt >= l.created && !claimed.has(x.sid))
+      const e = l.fsid ? { sid: l.fsid } : acct && index.filter(x => x.a === acct.id && x.proj === proj && x.mt >= l.created && !claimed.has(x.sid))
         .reduce((a, x) => (!a || x.mt > a.mt ? x : a), null);
       if (e) { claimed.add(e.sid); arg = [cmd + ' --resume ' + e.sid]; }
     }
