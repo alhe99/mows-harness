@@ -56,7 +56,7 @@
 // legacy.mjs and routes/documents.mjs only. See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
 import { assetView, swView } from './static.mjs';
-import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage } from './core.mjs';
+import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
 import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamView } from './sse.mjs';
 import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
@@ -65,6 +65,10 @@ import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
 import { mdView } from './routes/md.mjs';
+import { cli as twofaCli, twofaView } from './routes/twofa.mjs';
+
+// `lite.mjs 2fa enroll|revoke|list`: the second factor's CLI (routes/twofa.mjs), run over SSH; never starts the server
+if (args[0] === '2fa') process.exit(twofaCli(args.slice(1)));
 
 // --ui=next|legacy (ARCHITECTURE section 10, K-21; the rollback is this flag, not a second mount): which document answers `/` and the
 // tab routes. `next` is the cockpit shell and the default since the cutover (phase 05); `legacy` is the old server-rendered dashboard
@@ -81,6 +85,7 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
       JSON.stringify({ ok: true, sessions: index.length, scannedAgo: Math.round((Date.now() - lastScan) / 1000), sseClients }), 'application/json');
+    if (p === '/2fa' || p.startsWith('/2fa/')) return await twofaView(req, res, url);
     if (p.startsWith('/api/')) return await apiView(req, res, p.slice(5));
     // /app (below) is the persistent terminal launcher and the PWA start_url — untouched.
     if (UI === 'legacy' && p.startsWith('/ui/assets/')) return await uiAssetView(req, res, p.slice(11));
@@ -286,5 +291,6 @@ await loadUiAssets();
 
 setInterval(freshen, 30000).unref();
 startPushWatch();
+startServiceReaper();
 
 server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));

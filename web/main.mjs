@@ -86,7 +86,7 @@ function go(url, replace = false) { // replace: the remembered grid view lands o
 
 // Our listener is registered before preact-iso's own window click router and stops the event, so only links we accept are routed.
 // Skipped, left to the browser: modified or non-primary clicks, targets, downloads, data-nw named windows, fragments, other
-// origins, anything outside the shell, and the separate documents /term*, /md, /oauth2/* and the device streams /droidview/* and /vnc/*.
+// origins, anything outside the shell, and the separate documents /term*, /md, /oauth2/*, /2fa/* (sign out) and the device streams /droidview/* and /vnc/*.
 addEventListener('click', e => {
   e.stopImmediatePropagation();
   if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -94,7 +94,7 @@ addEventListener('click', e => {
   if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download') || a.hasAttribute('data-nw')
     || a.origin !== location.origin || a.getAttribute('href')?.startsWith('#')) return;
   const rel = inShell(a.pathname);
-  if (rel == null || /^\/(term|md|oauth2|droidview|vnc)(\/|$)/.test(rel)) return;
+  if (rel == null || /^\/(term|md|oauth2|2fa|droidview|vnc)(\/|$)/.test(rel)) return;
   e.preventDefault();
   go(a.pathname + a.search);
 });

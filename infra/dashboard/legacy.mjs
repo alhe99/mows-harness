@@ -1499,7 +1499,7 @@ export const DOC_META = `<meta name="viewport" content="width=device-width,initi
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`;
 
-export const footerHtml = () => `<footer><a href="/oauth2/sign_out">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>`;
+export const footerHtml = () => `<footer><a href="/2fa/logout">sign out</a><span>lite · no-js · ${index.length} indexed</span><span id="envout"></span></footer>`;
 
 function page(title, body, head = '', bodyClass = '', tab = '', fleetJs = false, liveN = null, host = '') {
   const { hdr, tabs, termFab } = pageChrome(tab, liveN, host);

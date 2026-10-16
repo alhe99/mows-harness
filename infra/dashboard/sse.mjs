@@ -4,13 +4,13 @@ import { pushAll, subCount } from './routes/webpush.mjs';
 
 
 // ---------- /events: SSE fleet live-update stream (Fleet Redesign §3) ----------
-// shape sent over the wire: [{sid8,name,label,proj,state,rel,snippet}] per the spec —
+// shape sent over the wire: [{sid8,name,label,proj,state,rel,snippet,kind,wins,closeAt,born}] per the spec —
 // "rel" carries the raw mt (ms epoch), not a preformatted "3m" string: fleet.js needs the
 // epoch to tick the display every 30s on its own, without waiting on the next snapshot
 // (which only arrives when something actually changes, not on a fixed clock).
 export function fleetEventPayload(fleet) {
   return fleet.map(f => ({ sid8: fleetKey(f), name: f.name, label: f.label || '', proj: f.proj,
-                            state: f.state, rel: f.mt, snippet: f.snippet }));
+                            state: f.state, rel: f.mt, snippet: f.snippet, kind: f.kind, wins: f.wins, closeAt: f.closeAt, born: f.l.created }));
 }
 
 // The additive /stream topics (contract.d.ts UsageEvent, SystemEvent): projections of usage() and hostInfo(), nothing new is

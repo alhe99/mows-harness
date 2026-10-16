@@ -72,6 +72,7 @@ const cases = [
   ['9 /term* is left to the browser', '/term/?arg=menu&arg=&arg=00000000&v=3', {}, false],
   ['10 /md is left to the browser', '/md?f=x', {}, false],
   ['11 /oauth2/* is left to the browser', '/oauth2/sign_out', {}, false],
+  ['11b /2fa/* (the sign out) is left to the browser', '/2fa/logout', {}, false],
   ['12 data-nw links are left to the browser', '/system', { attrs: { 'data-nw': 't-1' } }, false],
   ['13 a ctrl-click is left to the browser', '/system', { init: { ctrlKey: true } }, false],
   ['14 a middle click is left to the browser', '/system', { init: { button: 1 } }, false],

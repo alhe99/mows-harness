@@ -185,6 +185,7 @@ docs/qa/probes/run.sh
 docs/qa/probes/sessions-check.mjs
 docs/qa/probes/shell-check.mjs
 docs/qa/probes/term-check.mjs
+docs/qa/probes/twofa-check.mjs
 docs/qa/probes/views-check.mjs
 docs/superpowers/plans/2026-08-10-agy-delegation.md
 docs/superpowers/plans/2026-09-15-agents-layer.md
@@ -201,6 +202,7 @@ docs/superpowers/specs/2026-09-17-agents-figma-redesign-design.md
 docs/superpowers/specs/2026-09-19-agent-memory-and-identity-design.md
 docs/superpowers/specs/2026-09-20-agent-souls-pr-reviewers-design.md
 docs/superpowers/specs/2026-10-11-grid-view-design.md
+docs/superpowers/specs/2026-10-13-second-factor-design.md
 fleet/SETUP.md
 fleet/add-agent.sh
 fleet/bin/cc
@@ -240,6 +242,7 @@ infra/dashboard/routes/device.mjs
 infra/dashboard/routes/documents.mjs
 infra/dashboard/routes/md.mjs
 infra/dashboard/routes/push.mjs
+infra/dashboard/routes/twofa.mjs
 infra/dashboard/routes/webpush.mjs
 infra/dashboard/sse.mjs
 infra/dashboard/static.mjs
@@ -317,6 +320,7 @@ scripts/sw-check.mjs
 scripts/term-proto-check.mjs
 scripts/theme-tokens-check.mjs
 scripts/tokens-check.mjs
+scripts/twofa-logic-check.mjs
 scripts/verify-spec.mjs
 specs/cockpit/00-baseline.md
 specs/cockpit/01-shell.md
