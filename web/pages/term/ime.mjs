@@ -40,6 +40,10 @@ export function ime(/** @type {import('@xterm/xterm').Terminal} */ term, client)
     if (document.activeElement === t) { t.blur(); t.focus(); } // make the IME re-read the flags
   };
   fix(ta()); seed(ta());
+  // xterm's paste() empties the field and raises no event (the bar's \⏎ and ␣␣ are term.paste): reset the shadow line with it, or the next
+  // letter is diffed against the old line and backspaces it all away in the pty (2026-10-16)
+  const paste = term.paste.bind(term);
+  term.paste = d => { paste(d); const t = ta(); if (t) { t.value = S; prev = saved = S; } };
   // xterm empties the field on every blur (app switch, keyboard hidden). Registered after xterm's own listener, so this runs right after it and
   // puts the line back: an IME edit that lands while the field is empty would be diffed against '' and backspace the whole typed line in the pty.
   ta()?.addEventListener('blur', () => { const t = ta(); if (t && t.value === '' && prev) t.value = prev; });
