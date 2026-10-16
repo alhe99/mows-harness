@@ -235,6 +235,9 @@ async function ime() {
   await W.page.keyboard.type('s'); await sleep(100);
   check('after blur + refocus a keystroke sends only itself, nothing is deleted', W.inputs().slice(n4b).join('') === 's', bytes(W.inputs().slice(n4b).join('')));
   await W.page.keyboard.press('Enter'); await sleep(100);
+  const n4s = W.inputs().length; // a hardware keyboard on a tablet: Shift+Enter is a line break, not a submit
+  await W.page.keyboard.press('Shift+Enter'); await sleep(100);
+  check('phone: Shift+Enter is a line break (\\n), not a submit', W.inputs().slice(n4s).join('') === '\n', bytes(W.inputs().slice(n4s).join('')));
   // a terminal key (Ctrl) falls through to xterm
   const n5 = W.inputs().length;
   await W.page.keyboard.press('Control+C'); await sleep(100);
@@ -531,7 +534,12 @@ async function framed() {
   await W.page.locator('.xterm-helper-textarea').focus();
   await W.page.keyboard.press('Control+Shift+Digit2');
   await sleep(100);
-  check('unframed: Ctrl+Shift+2 posts nothing and reaches the pty as before (NUL): no handler is installed', (await W.page.evaluate(() => window.__got.length)) === 0 && W.inputs().at(-1) === '\x00', W.inputs());
+  check('unframed: Ctrl+Shift+2 posts nothing and reaches the pty as before (NUL)', (await W.page.evaluate(() => window.__got.length)) === 0 && W.inputs().at(-1) === '\x00', W.inputs());
+  const e0 = W.inputs().length;
+  await W.page.keyboard.press('Shift+Enter'); await sleep(100);
+  const e1 = W.inputs().length;
+  await W.page.keyboard.press('Enter'); await sleep(100);
+  check('Shift+Enter is a line break (\\n, as Ctrl+J), only once; Enter is still \\r', W.inputs().slice(e0, e1).join('') === '\n' && W.inputs().slice(e1).join('') === '\r', bytes(W.inputs().slice(e0).join('')));
   await W.ctx.route('**/grid-host', r => r.fulfill({ contentType: 'text/html', body: `<!doctype html><title>host</title><script>window.__got = []; addEventListener('message', e => window.__got.push(e.data));</script><iframe id="f" src="${URL_A}" style="width:900px;height:600px"></iframe>` }));
   const page = await W.ctx.newPage();
   page.on('pageerror', e => W.errors.push(String(e)));
@@ -553,6 +561,9 @@ async function framed() {
   await frame.evaluate(() => postMessage({ t: 'grid-mod', mod: 'alt' }, location.origin));
   await page.keyboard.press('Alt+Digit3');
   await sleep(100);
+  const e2 = W.inputs().length;
+  await page.keyboard.press('Shift+Enter'); await sleep(100);
+  check('framed: Shift+Enter is a line break too (\\n)', W.inputs().slice(e2).join('') === '\n', bytes(W.inputs().slice(e2).join('')));
   check('framed: after grid-mod alt, Alt+3 is the chord', (await page.evaluate(() => window.__got.filter(m => m && m.t === 'grid-key').map(m => m.key).join())) === 'tab:2,tab:3');
   check('no page errors', W.errors.length === 0, W.errors);
   await shut(W);

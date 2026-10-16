@@ -1,6 +1,6 @@
 # Grid view — manual gate (2026-10-12)
 
-The one live check the spec (section 9) assigns to the owner, on mows.me, on sessions the owner runs; everything else is automated (`scripts/grid-logic-check.mjs` in preflight, `docs/qa/probes/grid-check.mjs` all modes in Chromium and WebKit, budgets, preflight, e2e-infra). Deployed from branch `feat/grid-view` before the merge.
+The one live check the spec (section 9) assigns to the owner, on the live dashboard, on sessions the owner runs; everything else is automated (`scripts/grid-logic-check.mjs` in preflight, `docs/qa/probes/grid-check.mjs` all modes in Chromium and WebKit, budgets, preflight, e2e-infra). Deployed from branch `feat/grid-view` before the merge.
 
 | item | result | evidence |
 |---|---|---|
