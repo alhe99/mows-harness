@@ -304,10 +304,19 @@ export function startServiceReaper(every = 30_000) {
 // a claude started by `cc` (not web-term.sh run) has no @sid; claude itself writes <home>/sessions/<pid>.json with its current sessionId
 // (it follows /clear). Without it the row had no transcript: no snippet, and "idle Xm" fell back to tmux's session_activity, which
 // every attach bumps (2026-10-16: sessions untouched for days read "idle 37m" after the grid re-attached its tabs).
+// Only TMUX_USER's own homes (an agent account must not name a sid for this user's claude), and only a uuid: respawn puts it in a
+// shell command line.
 function claudeSid(pid) {
-  for (const a of ACCTS) { try { return JSON.parse(readFileSync(path.join(a.home, 'sessions', pid + '.json'), 'utf8')).sessionId || ''; } catch {} }
+  for (const a of ACCTS) {
+    if (a.user !== TMUX_USER) continue;
+    try {
+      const j = JSON.parse(readFileSync(path.join(a.home, 'sessions', pid + '.json'), 'utf8'));
+      if (j.pid === pid && UUID_RE.test(j.sessionId)) return j.sessionId;
+    } catch {}
+  }
   return '';
 }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 async function tmuxLiveCompute() {
   const out = await sh(...userCmd(['tmux', 'list-panes', '-a', '-F',
     '#{session_name}\t#{?session_attached,1,0}\t#{session_created}\t#{session_activity}\t#{pane_pid}\t#{pane_current_path}\t#{pane_id}\t#{window_name}\t#{pane_dead}\t#{@keep}\t#{@sid}\t#{@label}']));
