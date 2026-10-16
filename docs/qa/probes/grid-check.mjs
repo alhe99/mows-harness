@@ -1,5 +1,5 @@
 // Grid view probe (docs/superpowers/specs/2026-10-11-grid-view-design.md). Exit code is the verdict.
-// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|sidebar|deeplink|picker|kill|all>
+// usage: node docs/qa/probes/grid-check.mjs <chromium|webkit> <open|groups|persist|ended|phone|drag|keys|tabs|park|leak|sidebar|deeplink|picker|kill|svc|all>
 // env: DASH (default http://127.0.0.1:3105), PLAYWRIGHT (module path; default: the repo's)
 // Runs against the shell on the dev instance with a FIXTURE fleet (boot snapshot rewritten in flight, EventSource faked, every /term/*
 // answered with a stub page that speaks the grid-mod / grid-key messages), so nothing here reaches ttyd or a real session.
@@ -8,14 +8,15 @@ import { join } from 'node:path';
 const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('grid-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
 const engine = process.argv[2] || 'chromium';
 const mode = process.argv[3] || 'all';
-const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker', 'kill'];
+const MODES = ['open', 'groups', 'persist', 'ended', 'phone', 'drag', 'keys', 'tabs', 'park', 'leak', 'sidebar', 'deeplink', 'picker', 'kill', 'svc'];
 if (mode !== 'all' && !MODES.includes(mode)) { console.error(`grid-check: mode is one of ${MODES.join(' ')} all`); process.exit(2); }
 const DASH = process.env.DASH || 'http://127.0.0.1:3105';
 const browser = await pw[engine].launch();
 let bad = 0, errors = [], cur = '', posted = []; // posted: bodies sent to /a/label (rename)
 const check = (id, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${mode === 'all' ? cur + ' ' : ''}${id}${detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
 const T = Date.now();
-const fx = (sid8, name, label, proj, state, age, snippet = '') => ({ sid8, name, label, proj, state, rel: T - age * 1000, snippet });
+let nborn = 0; // born: opened in fixture order, one second apart — the sidebar's order
+const fx = (sid8, name, label, proj, state, age, snippet = '') => ({ sid8, name, label, proj, state, rel: T - age * 1000, snippet, born: T - 1e6 + 1000 * nborn++ });
 const FLEET = [
   fx('aaaa1111', 'cc-alpha-api', 'api', 'alpha', 'working', 20, 'building'),
   fx('bbbb2222', 'cc-alpha-web', 'web', 'alpha', 'needs-you', 300, 'approve? [y/n]'),
@@ -136,8 +137,12 @@ async function groupsMode() {
   check('0c Escape cancels without a post', !(await page.$('#gsb .grn')) && posted.length === 1);
   const groups = () => page.$$eval('#gsb details.gg', ds => ds.map(d => ({ proj: d.dataset.proj, open: d.open, sum: d.querySelector('summary').textContent.trim(), rows: [...d.querySelectorAll('.gr')].map(r => r.dataset.name) })));
   let g = await groups();
-  check('1 grouped by proj, most urgent group first, open, needs count in the summary', g.map(x => x.proj).join() === 'alpha,beta,gamma' && g[0].sum === 'alpha · 1' && g[1].sum === 'beta' && g.every(x => x.open), g);
-  check('2 rows inside a group follow needs-you < working < paused < idle', g[0].rows.join() === 'cc-alpha-web,cc-alpha-api' && g[1].rows.join() === 'cc-beta-infra,cc-beta-data');
+  check('1 grouped by proj, groups in the order their oldest session opened, open, needs count in the summary', g.map(x => x.proj).join() === 'alpha,beta,gamma' && g[0].sum === 'alpha · 1' && g[1].sum === 'beta' && g.every(x => x.open), g);
+  check('2 rows inside a group in the order they opened, whatever their state', g[0].rows.join() === 'cc-alpha-api,cc-alpha-web' && g[1].rows.join() === 'cc-beta-data,cc-beta-infra');
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => (f.name === 'cc-alpha-web' ? { ...f, state: 'idle', rel: Date.now() } : f.name === 'cc-gamma-z' ? { ...f, state: 'needs-you' } : f))));
+  g = await groups();
+  check('2b a state change or fresh activity moves nothing', g.map(x => x.proj).join() === 'alpha,beta,gamma' && g[0].rows.join() === 'cc-alpha-api,cc-alpha-web' && g[2].rows.join() === 'cc-gamma-x,cc-gamma-y,cc-gamma-z', g);
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => (f.name === 'cc-alpha-web' ? { ...f, state: 'needs-you' } : f.name === 'cc-gamma-z' ? { ...f, state: 'idle' } : f))));
   await page.click('#ggroup');
   check('3 flat: no groups, rows in fleet order, button reads grouped', await page.evaluate(() => document.querySelectorAll('#gsb details.gg').length === 0 && document.querySelectorAll('#gsb .gr').length === 7) && (await page.locator('#ggroup').textContent()) === 'grouped');
   check('4 the sidebar head is the group toggle only: no filter box, no modifier select (that lives on /system)', await page.evaluate(() => !document.querySelector('#gsb input') && !document.querySelector('#gmod') && !!document.querySelector('#ggroup')));
@@ -258,9 +263,9 @@ async function keysMode() {
   await press('Control+Shift+KeyS');
   check('9 Mod+S is not a chord (the filter box is gone): the state is unchanged', JSON.stringify(await st(page)) === JSON.stringify(s9));
   await page.keyboard.press('Escape'); await page.click('#gtabs');
-  await page.keyboard.press('Digit2'); // grouped order: alpha · web, api — row 2 is cc-alpha-api, already open in tab 1
+  await page.keyboard.press('Digit2'); // opened order: alpha · api, web — row 2 is cc-alpha-web
   const s11 = await st(page);
-  check('11 plain 2 outside a terminal acts on the second sidebar row (as on /): its tab becomes active', s11.tabs.find(t => t.id === s11.active).panes.includes('cc-alpha-api'));
+  check('11 plain 2 outside a terminal acts on the second sidebar row (as on /): its tab becomes active', s11.tabs.find(t => t.id === s11.active).panes.includes('cc-alpha-web'));
   // dispatched straight at the shell's window: a real cross-origin postMessage to self would be dropped by the browser before onMsg ran
   const other = s11.tabs.findIndex(t => t.id !== s11.active), key = `tab:${other + 1}`;
   const sendAs = (origin, k) => page.evaluate(([o, k]) => dispatchEvent(new MessageEvent('message', { data: { t: 'grid-key', key: k }, origin: o })), [origin, key]);
@@ -468,7 +473,35 @@ async function killMode() {
   check('9 a plain click after a drag still opens normally', (await tabs(page))[0].on);
   await ctx.close();
 }
-const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode };
+async function svcMode() {
+  // a tmux session with no claude in it (2026-10-14: links-cec's `cecqa` read as a second links-cec session)
+  const SVC = { ...fx('cecqa', 'cecqa', '', 'alpha', 'idle', 5), kind: 'service', closeAt: 0, wins: [{ n: 'main', up: false }, { n: 'adminapi', up: true }, { n: 'webadmin', up: true }] };
+  const DB = { ...fx('cecdb', 'cecdb', '', 'alpha', 'idle', 50), kind: 'service', closeAt: T + 7 * 60_000 - 1000, wins: [{ n: 'mongo', up: false }] };
+  const { ctx, page } = await open({ fleet: [...FLEET, SVC, DB] });
+  const shot = async n => process.env.SHOT && page.locator('#gsb').screenshot({ path: `${process.env.SHOT}/svc-${n}.png` });
+  await shot('grouped');
+  const g = await page.$$eval('#gsb details.gg', ds => ds.map(d => ({ proj: d.dataset.proj, rows: [...d.querySelectorAll('.gr')].map(r => r.dataset.name) })));
+  check('1 services sit in their project group, below the agents', g[0].proj === 'alpha' && g[0].rows.join() === 'cc-alpha-api,cc-alpha-web,cecqa,cecdb', g);
+  const r = row(page, 'cecqa');
+  check('2 it reads as a service: its tmux name, one tag per window, no state glyph, no state word, no rename',
+    (await r.locator('.lb').textContent()) === 'cecqa' && (await r.locator('.gwin').allTextContents()).join() === 'main,adminapi,webadmin' && await r.locator('.fli, .fst, .gren').count() === 0);
+  check('2a running windows carry the dot, a bare prompt is dashed; with something up the row says no status',
+    (await r.locator('.gwin[data-up="1"]').allTextContents()).join() === 'adminapi,webadmin' && (await r.locator('.gwin[data-up="0"]').allTextContents()).join() === 'main' && await r.locator('.gsst').count() === 0 && await r.getAttribute('data-up') === '1');
+  const d = row(page, 'cecdb');
+  check('2d nothing running anywhere: the row fades and counts down to the auto-close', await d.getAttribute('data-up') === '0' && (await d.locator('.gsst').textContent()) === 'closes in 7m' && await d.locator('.gsst[data-close]').count() === 1);
+  await page.evaluate(() => window.__emit('fleet', window.__grid.fleet().map(f => (f.name === 'cecdb' ? { ...f, closeAt: 0 } : f))));
+  check('2e stopped with no close planned (never seen running, attached, @keep) reads just "stopped"', (await d.locator('.gsst').textContent()) === 'stopped' && await d.locator('.gsst[data-close]').count() === 0);
+  check('2b grouped, it hangs off the agent above by the elbow', await r.evaluate(e => getComputedStyle(e, '::before').display !== 'none' && getComputedStyle(e, '::before').borderLeftStyle === 'solid'));
+  await r.click();
+  check('3 not clickable: a click opens no tab, the row takes no focus', (await st(page)).tabs.length === 0 && await r.getAttribute('tabindex') === null);
+  await page.click('#ggroup');
+  const flat = await page.$$eval('#gsb .glist > *', es => es.map(e => e.dataset.name || e.textContent.trim()));
+  check('4 flat: the agents first, then a services heading, then the service', flat.slice(-3).join() === 'services,cecqa,cecdb' && flat[0] === 'cc-alpha-api' && flat.length === 10, flat);
+  await shot('flat');
+  check('5 flat: no elbow, there is no agent row above to hang from', await row(page, 'cecqa').evaluate(e => getComputedStyle(e, '::before').display === 'none'));
+  await ctx.close();
+}
+const RUN = { open: openMode, groups: groupsMode, persist: persistMode, ended: endedMode, phone: phoneMode, drag: dragMode, keys: keysMode, tabs: tabsMode, park: parkMode, leak: leakMode, sidebar: sidebarMode, deeplink: deeplinkMode, picker: pickerMode, kill: killMode, svc: svcMode };
 for (const m of mode === 'all' ? Object.keys(RUN) : [mode]) { cur = m; if (RUN[m]) await RUN[m](); else console.log(`SKIP ${m} (added by a later task)`); }
 await browser.close();
 console.log(bad ? `grid-check: ${bad} FAIL` : 'grid-check: all pass');

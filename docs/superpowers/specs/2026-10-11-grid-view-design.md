@@ -14,7 +14,7 @@ In the operator's words: "by default sidebar left and session right side, and if
 a single right side of the opened one, or in a single tab apart". Panes beyond two, tab drag-reorder and grouping
 by project are in scope (asked for explicitly).
 
-Success: on mows.me, open four live sessions in one browser tab, two tabs of two panes each, resize the split
+Success: on the live dashboard, open four live sessions in one browser tab, two tabs of two panes each, resize the split
 and the sidebar, reload, and everything is where it was. Keys move between tabs and panes without the mouse.
 
 ## 2. Scope
@@ -205,7 +205,7 @@ Rules that keep it bounded, each one a task and a probe assertion:
 - **Leak gate:** `grid-check.mjs leak` opens six panes against the stub, cycles focus / zoom / reorder / park /
   unmount 20 times and asserts the iframe count, listener count (via `getEventListeners` over CDP) and the DOM node
   count (`Memory.getDOMCounters`) return to their post-mount values. The manual gate repeats the 3-minute RSS watch on
-  mows.me with real sessions (`ps` on the box, the browser's task manager on the laptop) before merge.
+  the live dashboard with real sessions (`ps` on the box, the browser's task manager on the laptop) before merge.
 
 ## 9. Verification
 
@@ -217,7 +217,7 @@ dropped names reported), `ended` (fleet snapshot without a pane's session → `e
 emulation → the link back). Listed in `scripts/manifest.txt`, run by `docs/qa/probes/run.sh grid` and in CI with
 the other `--ui next` probes. `node scripts/budget.mjs --all`, preflight and `node build.mjs` as always.
 
-Manual gate (desktop Chrome and Safari, mows.me): four real sessions, two tabs × two panes, resize both edges,
+Manual gate (desktop Chrome and Safari, the live dashboard): four real sessions, two tabs × two panes, resize both edges,
 chords from inside a terminal, reload, phone attaches one of the sessions and the pane shows the takeover.
 Recorded in `docs/qa/` like the mobile gates.
 
