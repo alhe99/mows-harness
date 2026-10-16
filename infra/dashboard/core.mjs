@@ -318,15 +318,16 @@ export function startServiceReaper(every = 30_000) {
 // every attach bumps (2026-10-16: sessions untouched for days read "idle 37m" after the grid re-attached its tabs).
 // Only TMUX_USER's own homes (an agent account must not name a sid for this user's claude), and only a uuid: respawn puts it in a
 // shell command line.
-function claudeSid(pid) {
+// The same file's status ('busy' through a whole turn, hooks and tools included) is the working signal fleetState trusts over the pane.
+function claudeFile(pid) {
   for (const a of ACCTS) {
     if (a.user !== TMUX_USER) continue;
     try {
       const j = JSON.parse(readFileSync(path.join(a.home, 'sessions', pid + '.json'), 'utf8'));
-      if (j.pid === pid && UUID_RE.test(j.sessionId)) return j.sessionId;
+      if (j.pid === pid) return { sid: UUID_RE.test(j.sessionId) ? j.sessionId : '', status: String(j.status || '') };
     } catch {}
   }
-  return '';
+  return { sid: '', status: '' };
 }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 async function tmuxLiveCompute() {
@@ -349,7 +350,7 @@ async function tmuxLiveCompute() {
   }
   if (list.length) {
     tagSessions(list, await sh('ps', ['-eo', 'pid=,ppid=,stat=,comm=']));
-    for (const x of list) if (x.cpid && !x.sid) x.fsid = claudeSid(x.cpid);
+    for (const x of list) if (x.cpid && !x.sid) x.fsid = claudeFile(x.cpid).sid;
     svcPlan(list, svcSeen, Date.now());
   }
   tmuxCache = { t: Date.now(), list };
@@ -413,7 +414,8 @@ const FLEET_RE = {
   idlePrompt: /\?\s*for shortcuts|shift\+tab to cycle|auto mode on/,
   // actively streaming a reply or running a tool: the hint, or the spinner line "✶ Wandering… (36s · ↓ 1.6k tokens)", later "(5m 16s · …)" —
   // on a phone-width pane the hint is cut off and only the spinner survives (2026-10-11: ccw-alonso never left idle, no push)
-  working: /esc to interrupt|…\s*\((?:\d+h\s*)?(?:\d+m\s*)?\d+s\b/i,
+  // the timer may come after other text: "Moseying… (running PreToolUse hooks… 1/2 · 1m 56s" (2026-10-16, a push while busy)
+  working: /esc to interrupt|…\s*\([^)\n]*?\b\d+s\b/i,
   // a background Workflow-tool monitor screen (superpowers workflow-authoring) replaces
   // the normal prompt entirely while agents run — no "esc to interrupt" ever appears here,
   // but its own footer/banner are just as stable a busy-signal. Bug 2026-08-28: a live
@@ -424,9 +426,10 @@ const FLEET_RE = {
 // pure classifier — no I/O, no closures over live state — so it's unit-testable in
 // isolation (see the --selftest fixture block at the bottom of this file).
 // First match wins, exactly per the spec table: paused > needs-you > working > idle.
-export function classifyFleet({ paused, tail = '', mt = 0, turn = mt }) {
+export function classifyFleet({ paused, tail = '', mt = 0, turn = mt, busy = false }) {
   if (paused) return 'paused';
   if (FLEET_RE.dialog.test(tail)) return 'needs-you';
+  if (busy) return 'working'; // claude's own sessions/<pid>.json says a turn is running: no pane heuristic can beat that
   // idle prompt showing + the transcript's last ASSISTANT turn written < 10 min ago = work completed but not yet seen. turn=0 (no
   // transcript match, or no assistant entry in its tail) can never satisfy this: such sessions classify on pane signals alone, per spec.
   // turn, not mt: a resume appends bookkeeping entries (cost-state, bridge-session) and bumps the mtime with no turn behind it, so a
@@ -468,7 +471,7 @@ async function fleetStateCompute() {
       ? await sh(...userCmd(['tmux', 'capture-pane', '-p', '-S', '-12', '-t', l.paneId]))
       : '';
     const tl = row ? await tailOf({ path: row.path, mt, sz }) : { text: '', turn: 0, last: 0 };
-    const state = l.claude ? classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn }) : 'idle';
+    const state = l.claude ? classifyFleet({ paused: l.paused, tail, mt, turn: tl.turn, busy: !!l.cpid && claudeFile(l.cpid).status === 'busy' }) : 'idle';
     const proj = row ? projName(row.proj) : (l.cwd || '').split('/').filter(Boolean).slice(-1)[0] || '';
     const snippet = tl.text;
     // display "seen X ago" prefers the newest message in the transcript (its mtime moves on bookkeeping lines with no turn behind
