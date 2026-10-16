@@ -14,6 +14,9 @@ const cases = [
   ['paused beats dialog', { paused: true, tail: 'Do you want to proceed?', mt: recent }, 'paused'],
   ['no transcript, no signals', { tail: '$ ', mt: 0 }, 'idle'],
   ['resumed from the grid: bookkeeping touched the transcript, last turn long ago (2026-10-12)', { tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent', mt: recent, turn: old }, 'idle'],
+  ['hooks running: the timer after other text (2026-10-16: a push while busy)', { tail: '✶ Moseying… (running PreToolUse hooks… 1/2 · 1m 56s\n · thinking with high effort)\n❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: recent, turn: recent }, 'working'],
+  ['claude says busy: working whatever the pane shows', { busy: true, tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: recent, turn: recent }, 'working'],
+  ['busy does not hide a permission dialog', { busy: true, tail: 'Do you want to proceed?\n❯ 1. Yes', mt: recent }, 'needs-you'],
   ['resumed, no assistant entry in the tail at all', { tail: '❯ \n  ⏵⏵ auto mode on (shift+tab to cycle)', mt: recent, turn: 0 }, 'idle'],
 ];
 let bad = 0;
