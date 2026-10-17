@@ -144,7 +144,7 @@ async function keybar() {
     Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
   } });
   const order = await W.page.evaluate(() => [...document.querySelectorAll('#cckb > *')].map(e => e.dataset.k || e.id || e.tagName.toLowerCase() + ':' + e.textContent));
-  const want = ['ccback', 'ccsess-pill', 'button:\ud83d\udcf8', 'button:\u29c9', 'button:\ud83d\udccb', 'button:\u27f3', 'Esc', 'NL', 'IND', 'Tab', 'S-Tab', 'UP', 'DN', 'LT', 'RT', 'PgUp', 'PgDn', '^C', '^Bd', 'KB', 'button:A\u2212', 'span:14', 'button:A+', 'ccthemesel'];
+  const want = ['ccback', 'ccsess-pill', 'button:\ud83d\udcf8', 'button:\u29c9', 'button:\ud83d\udccb', 'Esc', 'S-Tab', 'NL', 'IND', 'Tab', 'UP', 'DN', 'LT', 'RT', 'PgUp', 'PgDn', '^C', '^Bd', 'KB', 'button:\u27f3', 'button:A\u2212', 'span:14', 'button:A+', 'ccthemesel'];
   check('the key bar has the same keys in the same order', JSON.stringify(order) === JSON.stringify(want), order);
   const g = await W.page.evaluate(() => { const kb = document.getElementById('cckb').getBoundingClientRect(), tc = document.getElementById('terminal-container').getBoundingClientRect(), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), t = /** @type {any} */ (window.term);
     return { kbH: kb.height, kbBottom: Math.round(kb.bottom), ih: innerHeight, iw: innerWidth, tcBottom: Math.round(tc.bottom), kbTop: Math.round(kb.top), scRight: sc.right, cell: t._core._renderService.dimensions.css.cell.width, u: t.unicode.activeVersion, first: document.querySelector('#cckb > button').textContent }; });
