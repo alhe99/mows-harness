@@ -80,7 +80,7 @@ const restart = off('rst') ? null : key('⟳', () => {
 }, 'pointerup');
 const theme = themes(term);
 const clip = clipboard(term);
-const bar = el('div', { id: 'cckb' }, back, sessions(), attach(term), ...clip.keys, restart, ...baseKeys(term), fonts.down, fonts.span, fonts.up, theme.select);
+const bar = el('div', { id: 'cckb' }, back, sessions(), attach(term), ...clip.keys, ...baseKeys(term), restart, fonts.down, fonts.span, fonts.up, theme.select);
 document.body.append(bar);
 touchScroll();
 viewportFit(bar, fit);

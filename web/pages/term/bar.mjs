@@ -3,7 +3,8 @@
 // (back, pill, attach, copy, paste, restart, theme) are made by their own modules; term.mjs lays them out in the final child order.
 import { key, store } from './dom.mjs';
 
-const L = { Esc: 'Esc', NL: '\\⏎', IND: '␣␣', Tab: 'Tab', 'S-Tab': '⇧⇥', UP: '↑', DN: '↓', LT: '←', RT: '→',
+// S-Tab sits next to Esc, on the first screen of the bar: it cycles Claude's permission mode (2026-10-17)
+const L = { Esc: 'Esc', 'S-Tab': '⇧⇥', NL: '\\⏎', IND: '␣␣', Tab: 'Tab', UP: '↑', DN: '↓', LT: '←', RT: '→',
   PgUp: '⇞', PgDn: '⇟', '^C': '^C', '^Bd': '^Q d', KB: '⌨' };
 const ARROW = { UP: 'A', DN: 'B', RT: 'C', LT: 'D' };
 const SEQ = { Esc: '\x1b', Tab: '\t', 'S-Tab': '\x1b[Z', '^C': '\x03' };
@@ -14,7 +15,7 @@ const wheel = (dir, n = 1) => {
   if (s) for (let i = 0; i < n; i++) s.dispatchEvent(new WheelEvent('wheel', { deltaY: dir * 57, deltaMode: 0, bubbles: true, cancelable: true }));
 };
 
-/** Esc NL IND Tab S-Tab UP DN LT RT PgUp PgDn ^C ^Bd KB, in that order */
+/** Esc S-Tab NL IND Tab UP DN LT RT PgUp PgDn ^C ^Bd KB, in that order */
 export function baseKeys(/** @type {import('@xterm/xterm').Terminal} */ term) {
   const act = {
     NL: () => term.paste('\n'), IND: () => term.paste('  '), PgUp: () => wheel(-1, 6), PgDn: () => wheel(1, 6),
