@@ -140,8 +140,12 @@ if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
    | grep -vE $'^noreply@github\\.com\t(Merge [0-9a-f]{40} into [0-9a-f]{40}|Merge pull request #[0-9]+ from [^\t]+|[^\t]* \\(#[0-9]+\\))\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
-# commit messages get the same forbidden-string treatment the tree gets
-if git log --all --format='%s%n%b' | grep -nIE "$PAT" | grep -v 'preflight-allow'; then
+# commit messages get the same forbidden-string treatment the tree gets. Two messages already on public origin
+# (2026-09-20) carry a private literal from the local pattern file; un-publishing them would take a force-push of
+# main, and the operator chose not to rewrite history (2026-10-19). They alone are skipped, by full SHA: every
+# other commit, new or old, is still checked.
+MSG_ALLOW='69f77ada30ae02901630909f7bb656b4585f400d|40bef8a54a6c02a3de9811c2763e5062501637e2'
+if git rev-list --all | grep -vxE "$MSG_ALLOW" | git log --no-walk --stdin --format='%s%n%b' | grep -nIE "$PAT" | grep -v 'preflight-allow'; then
   bad "forbidden strings in commit messages"
 fi
 

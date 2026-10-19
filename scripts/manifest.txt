@@ -12,7 +12,6 @@ agents/bin/mows-agent-meta
 agents/config.example
 agents/examples/harness-reviewer.md
 agents/examples/pr-reviewer-ffwd.md
-agents/examples/pr-reviewer-h4b.md
 agents/examples/pr-reviewer-paytix.md
 agents/souls/pr-reviewer.md
 agy/SETUP.md

@@ -131,8 +131,8 @@ only where it works. Lint refuses a soul that is missing, empty, not a regular f
 `install.sh --agents` installs every soul in `agents/souls/` (always — a soul is code) and seeds the
 example instances only when absent (their budgets are yours to tune).
 
-The first soul is `pr-reviewer`, with three instances: `pr-reviewer-h4b`, `pr-reviewer-ffwd`,
-`pr-reviewer-paytix`. Each verdict is posted to the PR as one GitHub review under the operator's
+The first soul is `pr-reviewer`, with two example instances: `pr-reviewer-ffwd`, `pr-reviewer-paytix`
+(the operator's third, for a private org, lives only on the box). Each verdict is posted to the PR as one GitHub review under the operator's
 `gh` identity: request changes for blocking and should-fix, approve for nits and clean, a plain
 comment on the operator's own PRs and on drafts (GitHub forbids self-approval). `gh pr review` is
 the reviewer's only write; memory marks a head `posted` so no head is reviewed twice. Run them from
