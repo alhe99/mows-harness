@@ -313,6 +313,7 @@ scripts/parity-capture.mjs
 scripts/parity-diff.mjs
 scripts/preflight.sh
 scripts/push-check.mjs
+scripts/shot-name-check.mjs
 scripts/store-check.mjs
 scripts/stream-cap-check.mjs
 scripts/stream-replay-check.mjs

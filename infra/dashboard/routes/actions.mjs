@@ -190,6 +190,18 @@ export async function reclaimAction(req, res) {
   res.writeHead(303, { location: u.pathname + u.search }); res.end();
 }
 
+// The stored name of an upload. ccimg-v2 sends the real filename (URL-encoded) in x-name so a .md/.pdf keeps its name and extension;
+// reduced to [A-Za-z0-9._-], no leading dot: nothing from the client can steer the path out of the shots dir. With no name the extension
+// comes from the content type and is never guessed: the old "anything else is .jpg" fallback stored every nameless .md/.docx as .jpg
+// (2026-09-17..10-11, while the deployed server had lost its x-name handler) and claude then read text as a broken image.
+const SHOT_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic', 'application/pdf': 'pdf',
+  'text/markdown': 'md', 'text/plain': 'txt', 'text/csv': 'csv', 'text/html': 'html', 'application/json': 'json' };
+export function shotName(ct, xname, ms) {
+  let xn = ''; try { xn = decodeURIComponent(xname || ''); } catch {}
+  xn = xn.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(-80);
+  return `shot-${ms}${xn ? '-' + xn : '.' + (SHOT_EXT[String(ct || '').split(';')[0].trim().toLowerCase()] || 'bin')}`;
+}
+
 // POST /shot: image and file uploads from the terminal's camera key, stored so claude can look at them; answers { ok, path }.
 export async function shotUpload(req, res) {
   const chunks = []; let n = 0;
@@ -201,13 +213,7 @@ export async function shotUpload(req, res) {
   try { for (const f of await fsp.readdir(dir)) {
     if (Date.now() - (await fsp.stat(`${dir}/${f}`)).mtimeMs > 7 * 864e5) await fsp.unlink(`${dir}/${f}`);
   } } catch {}
-  const ct = req.headers['content-type'] || '';
-  const ext = { 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[ct] || (ct.includes('png') ? 'png' : 'jpg');
-  // ccimg-v2 sends the real filename (URL-encoded) in x-name so a .md/.pdf keeps its name and extension.
-  // Reduced to [A-Za-z0-9._-], no leading dot: nothing from the client can steer the path out of `dir`.
-  let xn = ''; try { xn = decodeURIComponent(req.headers['x-name'] || ''); } catch {}
-  xn = xn.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(-80);
-  const path = `${dir}/shot-${Date.now()}${xn ? '-' + xn : '.' + ext}`;
+  const path = `${dir}/${shotName(req.headers['content-type'], req.headers['x-name'], Date.now())}`;
   await fsp.writeFile(path, Buffer.concat(chunks));
   // path goes back to the caller: the terminal's 📸 key pastes it into the prompt
   res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, path }));

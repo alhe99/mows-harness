@@ -204,7 +204,7 @@ if [ -f scripts/budget.mjs ] && [ -d dist ]; then
 else
   bad "scripts/budget.mjs or dist/ missing — the per-route size budgets did not run"
 fi
-for t in sw-check push-check; do
+for t in sw-check push-check shot-name-check; do
   if [ -f "scripts/$t.mjs" ]; then
     TOUT=$(node "scripts/$t.mjs" 2>&1) && TRC=0 || TRC=$?
     if [ "$TRC" -ne 0 ]; then printf '%s\n' "$TOUT" | grep '^FAIL' || printf '%s\n' "$TOUT" | tail -3; bad "$t: failed (see above)"; fi
