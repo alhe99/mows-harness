@@ -133,9 +133,11 @@ BADIDENT='@gmail\.|@outlook\.|@yahoo\.|@hotmail\.|@icloud\.|@proton'
 # skipped by that exact shape; every real commit, merge or not, is still checked. The same holds for the merge
 # commit GitHub writes when a PR is merged in the web UI ("Merge pull request #N from ...", committer GitHub
 # <noreply>): its author is the merging account's public email, it is already on origin, and no rewrite of ours
-# can remove it. Only that shape, only with GitHub as committer.
+# can remove it. Only that shape, only with GitHub as committer. A web-UI SQUASH merge is the same thing in another
+# shape ("<PR title> (#N)", committer GitHub <noreply>, author the account's public email — #22, ace9d84, red CI on
+# main from 2026-10-17): skipped the same way, by its "(#N)" suffix with GitHub as committer and nothing looser.
 if git log --all --format='%ce%x09%s%x09%an <%ae>%n%ce%x09%s%x09%cn <%ce>' \
-   | grep -vE $'^noreply@github\\.com\t(Merge [0-9a-f]{40} into [0-9a-f]{40}|Merge pull request #[0-9]+ from [^\t]+)\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
+   | grep -vE $'^noreply@github\\.com\t(Merge [0-9a-f]{40} into [0-9a-f]{40}|Merge pull request #[0-9]+ from [^\t]+|[^\t]* \\(#[0-9]+\\))\t' | cut -f3 | sort -u | grep -nE "$BADIDENT"; then
   bad "personal identity in commit author/committer (rewrite before publishing)"
 fi
 # commit messages get the same forbidden-string treatment the tree gets
