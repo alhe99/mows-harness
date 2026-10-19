@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One shared soul file referenced by several thin, scoped agent instances — injected on every run and chat turn — and three read-only PR reviewers (h4b-dev, ffwd-org, Paytix) built on it, runnable from the dashboard.
+**Goal:** One shared soul file referenced by several thin, scoped agent instances — injected on every run and chat turn — and three read-only PR reviewers (payments-org, ffwd-org, Paytix) built on it, runnable from the dashboard.
 
 **Architecture:** `mows.soul: <path>` in an instance's frontmatter; `mows-agent-meta` validates it; `mows-agent` appends the file as `## Your role` in both `run_context()` and `chat_context()`, before memory. `mows.budget.chat_usd/chat_turns` override the global chat caps per agent. The soul and instances are files under `agents/souls/` and `agents/examples/`, installed by `install.sh --agents`. The dashboard shows the soul's name. The `mows-agent@.service` template is installed on the box so Run now works.
 

@@ -628,7 +628,7 @@ chk "escalate: BLOCKING elsewhere in the reply does not post" '! grep -q "BLOCKI
 
 # The live h4b run opened with "## Summary", a blank line, then the finding: line 3, not line 1.
 : > "$CURL_LOG"
-escrun $'## Summary\n\n**BLOCKING:** two plaintext-secret exposures — h4b-dev/sms#17\n- details\n'
+escrun $'## Summary\n\n**BLOCKING:** two plaintext-secret exposures — payments-org/sms#17\n- details\n'
 chk "escalate: BLOCKING on line 3 under a heading still posts" 'grep -q "BLOCKING:\*\* two plaintext" "$CURL_LOG"'
 : > "$CURL_LOG"
 escrun $'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nBLOCKING: line eleven is too deep\n'

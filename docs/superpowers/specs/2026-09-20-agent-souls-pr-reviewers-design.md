@@ -21,7 +21,7 @@ written once; each instance says only where it works, keeps its own memory, spen
 budget, and can be added or removed without touching the others.
 
 The first soul is a **PR reviewer**, and the three scopes are the GitHub orgs this box's `gh`
-belongs to and that hold work: `h4b-dev` (22 PRs authored by the operator, 15 review-requested,
+belongs to and that hold work: `payments-org` (22 PRs authored by the operator, 15 review-requested,
 today), `ffwd-org` (3 authored), `Paytix` (0 today). Decided 2026-09-20 with the operator:
 
 | | Decision |
@@ -38,7 +38,7 @@ today), `ffwd-org` (3 authored), `Paytix` (0 today). Decided 2026-09-20 with the
 | **D2** | **The instance body is scope only.** | If the body says anything a second instance would also need to say, it belongs in the soul. The test of a good instance file is that it fits on one screen. |
 | **D3** | **Lint refuses a `mows.soul` that does not resolve to a non-empty regular file under 16 KB.** | A missing soul must fail the run before it starts, not produce an agent that quietly has no idea what it is. 16 KB bounds the injection — a soul is a role, not a manual. |
 | **D4** | **The reviewer is read-only against GitHub, by instruction AND by measurement.** | The token has `repo` scope, so `gh pr review` would work. The soul forbids every write; the first live run records whether the unattended permission regime would even allow the reads. Output goes to the run result, memory and Discord. |
-| **D5** | **A run reviews at most 5 PRs, most recently updated first, skipping any whose head SHA memory already holds.** | h4b-dev has 37 candidate PRs today. Unbounded, a first run would cost tens of dollars and blow the budget mid-review. Bounded, every run costs about the same, and memory carries the rest to the next. |
+| **D5** | **A run reviews at most 5 PRs, most recently updated first, skipping any whose head SHA memory already holds.** | payments-org has 37 candidate PRs today. Unbounded, a first run would cost tens of dollars and blow the budget mid-review. Bounded, every run costs about the same, and memory carries the rest to the next. |
 | **D6** | **Memory is one line per open PR: `owner/repo#n @sha7 verdict`.** Merged and closed PRs are dropped each run. | 37 lines fit the 60-line cap with room for a header and a few concerns. Anything wordier does not. |
 | **D7** | **Chat gets a per-agent budget: `mows.budget.chat_usd` / `chat_turns`, defaulting to today's `$0.25 / 6`.** | "Look at #519" is a review, not a question; the global chat cap was sized for questions. The default is unchanged so no existing agent's chat changes. |
 | **D8** | **`profile: work`.** | Company orgs on the company account (34% weekly at time of writing), not the operator's personal subscription. |
@@ -134,7 +134,7 @@ verbatim; the other two differ only in `name`, `description`, and the org named 
 ```markdown
 ---
 name: pr-reviewer-h4b
-description: Reviews the operator's open PRs in the h4b-dev GitHub org — read-only, on demand
+description: Reviews the operator's open PRs in the payments-org GitHub org — read-only, on demand
 model: sonnet
 effort: high
 tools: [Bash, Read, Glob, Grep]
@@ -147,7 +147,7 @@ mows:
   workdir: ~/Documents/Projects
   soul: ~/.claude/agents/souls/pr-reviewer.md
   task: >-
-    Review my open pull requests in the h4b-dev organisation that are not yet in your memory,
+    Review my open pull requests in the payments-org organisation that are not yet in your memory,
     newest-updated first, at most five. Report findings and a verdict per PR, then update your
     memory.
   budget:
@@ -161,7 +161,7 @@ mows:
     via: discord
   retention_days: 30
 ---
-Your organisation is **h4b-dev**. Its repositories are payment processors, ledgers, issuing and
+Your organisation is **payments-org**. Its repositories are payment processors, ledgers, issuing and
 merchant systems; treat every diff as PCI-relevant until you have read it. Local checkouts of many
 of its repositories are under the working directory, in `payments/` and `n1/`.
 ```
@@ -312,7 +312,7 @@ Unattended `gh pr review` is allowed by the regime with zero denials. Each of th
 carries exactly one review by the operator afterwards. A grep of the posted bodies, the result and
 the memory for secret-shaped strings (connection strings with credentials, Twilio SIDs and keys,
 bearer tokens) found nothing, although run #2 surfaced two pre-existing plaintext-secret exposures
-in `h4b-dev/payments-backend` and `h4b-dev/sms` and named them by file only.
+in `payments-org/payments-backend` and `payments-org/sms` and named them by file only.
 
 **Three gaps found, two fixed the same day:**
 1. After posting one review in chat, the reviewer marked all seven memory lines `posted`. Soul
