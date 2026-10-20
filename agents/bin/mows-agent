@@ -433,15 +433,20 @@ run_kit(){
   local f=$1; shift
   command -v "$KIT_BIN" >/dev/null 2>&1 || { escalate "$AGENT" "$VIA" "refused: $AGENT is kit-managed but the kit CLI ($KIT_BIN) is not installed"; exit 6; }
   [ -n "$MCP_CONFIG" ] && echo "WARN: MCP_CONFIG is not passed to kit-managed agents" >&2
-  local errf rc rd st why; errf=$(mktemp)
+  local errf rc rd st why before; errf=$(mktemp)
+  rd="$STATE_ROOT/$AGENT/last"; before=$(readlink "$rd" 2>/dev/null)
   CLAUDE_CONFIG_DIR="$CFGDIR" KIT_STATE_ROOT="$STATE_ROOT" KIT_HOST=mowa KIT_CLAUDE="$CLAUDE_BIN" STALL_SEC="$STALL_SEC" \
     "$KIT_BIN" run "$f" "$@" 2>"$errf"; rc=$?
   cat "$errf" >&2
-  rd="$STATE_ROOT/$AGENT/last"; RUN_ID=$(basename "$(readlink "$rd" 2>/dev/null)")
-  st=$(jq -r '.state // "unknown"' "$rd/status.json" 2>/dev/null)
-  # the kit's own reason: its refusal line on stderr, else its newest event for this run
+  # The kit can stop before it creates a run (a missing requirement, a usage error): `last` then
+  # still names the PREVIOUS run, whose id and state must not be reported as this one's.
+  if [ "$(readlink "$rd" 2>/dev/null)" != "$before" ]; then
+    RUN_ID=$(basename "$(readlink "$rd")"); st=$(jq -r '.state // "unknown"' "$rd/status.json" 2>/dev/null)
+  else RUN_ID="(no run)"; st=none; fi
+  # the kit's own reason: its refusal line on stderr, else this run's newest event, else its last stderr line
   why=$(sed -n 's/.*refused — //p' "$errf" | head -1)
-  [ -n "$why" ] || why=$(grep -F " $RUN_ID " "$STATE_ROOT/$AGENT/events.log" 2>/dev/null | grep -vE ' (started|result:) ' | tail -1 | cut -d' ' -f3- | cut -c1-200)
+  [ -n "$why" ] || [ "$st" = none ] || why=$(grep -F " $RUN_ID " "$STATE_ROOT/$AGENT/events.log" 2>/dev/null | grep -vE ' (started|result:) ' | tail -1 | cut -d' ' -f3- | cut -c1-200)
+  [ -n "$why" ] || why=$(grep -v '^\s*$' "$errf" | tail -1 | cut -c1-200)
   rm -f "$errf"
   case $rc in
     0) if [ "$st" = awaiting_gate ]; then escalate "$AGENT" "$VIA" "$RUN_ID awaiting_gate: kit gate $AGENT pass|reject --by <id>"
@@ -453,6 +458,7 @@ run_kit(){
     4) escalate "$AGENT" "$VIA" "$RUN_ID budget_exceeded (cap \$$USD_RUN)";;
     5) escalate "$AGENT" "$VIA" "$RUN_ID stalled: no stream event for ${STALL_SEC}s, killed";;
     6) escalate "$AGENT" "$VIA" "refused: ${why:-see kit logs $AGENT}";;
+    *) escalate "$AGENT" "$VIA" "$RUN_ID kit run exited $rc: ${why:-no reason printed}";;
   esac
   exit "$rc"
 }

@@ -14,7 +14,7 @@ watchdog rationale, and the operational caveats worth knowing before you rely on
 | 3. infra | `--infra` | `infra/{caddy,oauth2-proxy,dashboard,webconsole,qa-watch,droid,systemd,os}/` | Templates for the public web surface — staged into `./rendered/` for review, never installed/enabled/started by `install.sh` itself |
 | 4. fleet | `--fleet` | `fleet/bin/{cc,ccname,ccswap,ccwt,claude-rc,claude-status,reset-claude-env}`, `fleet/add-agent.sh` | Multi-identity tooling: the profile model (one admin account, N config dirs) and the agent model (N Linux-user accounts), plus per-session helpers — `ccname` (label a session), `ccswap` (continue a quota-blocked session on the other account), `ccwt` (per-session git worktrees, created by `cc -w`) |
 | 5. agy | `--agy` | `agy/bin/{ag,agy-run,claude-quota,agy-notify}`, `agy/config.example` | Antigravity (agy): `agy-run` sync wrapper (used by the Discord bridge to compose messages), `agy-notify` webhook poster, `ag` launcher; `claude-quota` is the per-account usage signal (SessionStart line, `mows-agent` quota floor) |
-| 6. agents | `--agents` | `agents/bin/{mows-agent,mows-agent-meta}`, `agents/examples/`, `agents/config.example` | Purpose-scoped agents that run unattended: `mows-agent` owns policy (lint, per-run/per-day/account-quota budget, refusal, run records, escalation, pruning) over a plain Claude Code agent file with a `mows:` block; systemd timers/path units and HMAC-signed webhooks trigger a run, an `/agents` dashboard tab lists/controls them |
+| 6. agents | `--agents` | `agents/bin/{mows-agent,mows-agent-meta}`, `agents/examples/`, `agents/config.example` | Purpose-scoped agents that run unattended: `mows-agent` owns policy (lint, per-run/per-day/account-quota budget, refusal, run records, escalation, pruning) over a plain Claude Code agent file with a `mows:` block (a mowa-kit `kit:` stage manifest instead is run by `kit run`, with `mows-agent` as its host); systemd timers/path units and HMAC-signed webhooks trigger a run, an `/agents` dashboard tab lists/controls them |
 
 ## Port map
 
@@ -36,7 +36,7 @@ The agents layer's whole design rests on a handful of boundaries that are easy t
 of once lint, budgets, triggers, and the dashboard are all layered on top. Stated plainly:
 
 - **The agent file is the manifest.** There is no separate agents.yaml or database row — a
-  plain Claude Code agent file (`~/.claude/agents/<name>.md`) with a `mows:` block on top of
+  plain Claude Code agent file (`~/.claude/agents/<name>.md`) with a `mows:` block (or a mowa-kit `kit:` block, run by `kit run`) on top of
   its ordinary frontmatter *is* the whole configuration: model, tools, budget, triggers,
   merge policy, escalation, all in one file, one source of truth, one thing to lint.
 - **`mows-agent` owns policy; the Claude daemon owns processes.** `mows-agent` never manages

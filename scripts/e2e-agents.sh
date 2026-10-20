@@ -866,9 +866,19 @@ K
   mows-agent run kt >/dev/null 2>&1; rc=$?
   chk "kit: a kit refusal (missing input) → exit 6, posted with the kit's reason" '[ "$rc" = 6 ] && grep -q "required input missing" "$CURL_LOG"'
   mkkit kt
-  chk "kit: kit-managed without kit.host.mowa is a lint error" 'mkkit kn && sed -i "/^  host:/,/^---/{/^---/!d}" "$A/kn.md" && ! mows-agent lint kn && mows-agent lint kn 2>&1 | grep -q "kit.host.mowa: block is required"'
+  mkkit kn; sed -i "/^  host:/,/^---/{/^---/!d}" "$A/kn.md"
+  chk "kit: kit-managed without kit.host.mowa is a lint error" '! mows-agent lint kn && mows-agent lint kn 2>&1 | grep -q "kit.host.mowa: block is required"'
+  mkkit kb; MB="$MOWS_BLOCK_OK" awk '/^kit:/{print ENVIRON["MB"]} {print}' "$A/kb.md" > "$A/kb.tmp" && mv "$A/kb.tmp" "$A/kb.md"
+  chk "kit: a file with both mows: and kit: is a lint error" '! mows-agent lint kb && mows-agent lint kb 2>&1 | grep -q "both a mows: and a kit: block"'
   chk "kit: kit not installed → lint refuses, run exits 6"   '! KIT_BIN=/nonexistent mows-agent lint kt >/dev/null 2>&1 && { KIT_BIN=/nonexistent mows-agent run kt >/dev/null 2>&1; [ $? = 6 ]; }'
-  rm -f "$A/kt.md" "$A/kn.md"
+  # a kit that stops before creating a run (usage error): the exit is escalated, and the PREVIOUS
+  # run's id is not reported as this one's
+  printf '#!/usr/bin/env bash\n[ "$1" = run ] || exec "%s" "$@"\necho "kit: something unexpected" >&2; exit 64\n' "$KIT" > "$T/kit64"; chmod +x "$T/kit64"
+  prev=$(basename "$(readlink "$MOWS_AGENTS_STATE/kt/last")"); : > "$CURL_LOG"
+  KIT_BIN="$T/kit64" mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: an unexpected kit exit is escalated with the kit's reason" '[ "$rc" = 64 ] && grep -q "kit run exited 64: kit: something unexpected" "$CURL_LOG"'
+  chk "kit: no run created → the previous run is not named"   '! grep -q "$prev" "$CURL_LOG" && grep -q "(no run)" "$CURL_LOG"'
+  rm -f "$A/kt.md" "$A/kn.md" "$A/kb.md"
 fi
 
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
