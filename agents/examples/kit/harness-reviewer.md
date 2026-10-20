@@ -20,8 +20,8 @@ kit:
     unquoted expansions, missing set -u, tmux calls without an explicit socket; any identifying
     literal that scripts/preflight.sh would flag; README.md and docs/architecture.md claims the
     diff makes false. Print findings as a list in which every item carries a file:line citation or
-    the literal words "not verified", then a one-paragraph verdict. Conclusions and summaries
-    belong in the verdict paragraph, not in list items. End with a kit-memory block holding the
+    the literal words "not verified", then a one-paragraph verdict. List items are findings only:
+    a check that found nothing, a conclusion or a summary belongs in the verdict paragraph. End with a kit-memory block holding the
     newest commit hash you reviewed and at most five open concerns.
   inputs:
     - { kind: repo, path: ./, required: true }
