@@ -7,10 +7,10 @@ import { signal } from '@preact/signals';
 import { store } from '../store.mjs';
 import { base } from '../shared.mjs';
 
-const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
-const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
-const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
-const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now' : s < 5400 ? (s / 60 | 0) + 'm' : s < 129600 ? (s / 3600 | 0) + 'h' : (s / 86400 | 0) + 'd'; };
+export const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' };
+export const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
+export const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
+export const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now' : s < 5400 ? (s / 60 | 0) + 'm' : s < 129600 ? (s / 3600 | 0) + 'h' : (s / 86400 | 0) + 'd'; };
 
 /** The terminal document's URL; every render mints a fresh 8-hex tab id, the key web-term.sh uses to find this browser tab's tmux client. */
 export const termHref = (kind, name) => `/term/?arg=${kind}&arg=${encodeURIComponent(name)}&arg=${[...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')}&v=3`;
@@ -18,7 +18,7 @@ export const termHref = (kind, name) => `/term/?arg=${kind}&arg=${encodeURICompo
 const namedWindows = () => matchMedia('(display-mode: browser)').matches && innerWidth >= 700 && matchMedia('(pointer:fine)').matches;
 // where the grid runs (views/grid.mjs desktop(): a mouse, >= 1024 px) a row opens its session as a pane of /grid, in this tab; a phone, a
 // narrow window or the installed app keep the terminal document of its own (2026-10-12)
-const gridDesk = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
+export const gridDesk = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
 // the view switch (list | grid): the grid is the fleet's other view, not a page of its own (no pill in the header, 2026-10-12). The
 // choice is remembered per browser: landing on / with 'grid' goes to /grid in place; the grid's strip carries the same switch back.
 export const VIEW = 'mows.view';

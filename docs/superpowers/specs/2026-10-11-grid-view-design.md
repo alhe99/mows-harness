@@ -74,6 +74,7 @@ choice is remembered per browser (`localStorage.mows.view`): landing on / with `
 navigation, so Back does not bounce); the grid's `list` stores `list` and comes back to /. Probes: sessions-check `links` 0c-0f,
 grid-check `deeplink` 5, shell-check 15 (five pills).
   A "grouped / flat" toggle in the sidebar head; flat is the sessions view order. No filter box (removed 2026-10-12 at the owner's request: the sidebar is sessions only).
+  Rows reorder by drag (2026-10-20): a row dropped on another takes its place (dragged down it lands after it, up before it); dropped in another project group, its whole group moves past that group. The order is stored (`order`, §6); a session not in it sorts after the dragged ones, oldest-opened first, so a new session still lands at the bottom. Service rows are not dragged.
 - **Tab strip**: one tab per open "layout tab"; title is the focused pane's label (two panes: `api | web`); a state
   dot that is the most urgent state of its panes; × on hover; `+` opens the picker (`termHref('menu','')`) in a new
   pane of a new tab. Tabs reorder by drag (pointer events on the tab; drop before or after another tab). A tab dropped onto the panes merges: its panes join the tab on screen (at most 6, else a notice), the dragged tab closes, and those panes reload once (their iframes change parent; 2026-10-12). The way back is the pane header's ⧉ button (shown while the tab holds more than one pane): the pane moves to a new tab right after its old one.
@@ -140,7 +141,7 @@ session comes back, as on the phone).
 `localStorage['grid.v1']`:
 
 ```json
-{ "sidebar": 260, "grouped": true, "mod": "mac", "active": "t1",
+{ "sidebar": 260, "grouped": true, "order": ["cc-work-web", "cc-work-api"], "mod": "mac", "active": "t1",
   "tabs": [ { "id": "t1", "panes": ["cc-work-api", "cc-work-web"], "cols": [0.5, 0.5], "focus": 0, "zoom": null } ] }
 ```
 

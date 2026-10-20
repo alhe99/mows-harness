@@ -11,7 +11,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const tabAt = (s, id) => s.tabs.findIndex(t => t.id === id);
 const upd = (s, id, f) => ({ ...s, notice: '', tabs: s.tabs.map(t => (t.id === id ? fit(f(t)) : t)) });
 
-export const empty = mod => ({ sidebar: 256, sb: true, grouped: true, mod, active: '', n: 0, notice: '', tabs: [] }); // sb: the sidebar is shown
+export const empty = mod => ({ sidebar: 256, sb: true, grouped: true, order: [], mod, active: '', n: 0, notice: '', tabs: [] }); // sb: the sidebar is shown; order: see placeRow
 
 export function find(s, name) {
   for (const t of s.tabs) { const i = t.panes.indexOf(name); if (i >= 0) return { tab: t.id, i }; }
@@ -82,6 +82,18 @@ export const setSidebar = (s, px) => ({ ...s, sidebar: clamp(Math.round(px), CAP
 export const setMod = (s, mod) => ({ ...s, mod });
 export const setGrouped = (s, grouped) => ({ ...s, grouped });
 export const toggleSidebar = s => ({ ...s, sb: !s.sb });
+export const setOrder = (s, order) => ({ ...s, order });
+// the sidebar's own order: `order` holds the agent rows' names as last dragged; a name not in it ranks after them (Infinity), in the
+// default order, so a new session still lands at the bottom. rankOf(order)(name) is the sort key.
+export const rankOf = order => { const m = new Map(order.map((n, i) => [n, i])); return n => m.get(n) ?? Infinity; };
+// a sidebar row dropped on another: `list` is the rows top to bottom (names, or the row elements), grp(row) its project group (flat: the row itself). It takes
+// the target's place: dragged down it lands after the target, up before it. Dropped in another group, its whole group moves past that group.
+export function placeRow(list, from, to, grp = n => n) {
+  const i = list.indexOf(from), j = list.indexOf(to); if (i < 0 || j < 0 || i === j) return list;
+  const same = grp(to) === grp(from), of = x => list.filter(n => (same ? n === x : grp(n) === grp(x))), block = of(from), tg = of(to), rest = list.filter(n => !block.includes(n));
+  rest.splice(rest.indexOf(j > i ? tg.at(-1) : tg[0]) + (j > i), 0, ...block);
+  return rest;
+}
 
 export function load(storage, live, mod) {
   let raw = null;
@@ -94,7 +106,7 @@ export function load(storage, live, mod) {
   }).filter(t => t.panes.length && /^t\d+$/.test(t.id));
   const n = Math.max(Number(raw.n) || 0, ...tabs.map(t => +t.id.slice(1)));
   const active = tabs.some(t => t.id === raw.active) ? raw.active : (tabs[0]?.id || '');
-  const state = { sidebar: clamp(Number(raw.sidebar) || 256, CAPS.sidebar[0], CAPS.sidebar[1]), sb: raw.sb !== false, grouped: raw.grouped !== false, mod: ['mac', 'win', 'alt'].includes(raw.mod) ? raw.mod : mod, active, n, notice: '', tabs };
+  const state = { sidebar: clamp(Number(raw.sidebar) || 256, CAPS.sidebar[0], CAPS.sidebar[1]), sb: raw.sb !== false, grouped: raw.grouped !== false, order: Array.isArray(raw.order) ? raw.order.filter(n => typeof n === 'string') : [], mod: ['mac', 'win', 'alt'].includes(raw.mod) ? raw.mod : mod, active, n, notice: '', tabs };
   return { state, dropped };
 }
 export function save(storage, s) {

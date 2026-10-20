@@ -87,5 +87,16 @@ check('D1 detaching a pane gives it a tab of its own right after, active; the so
 check('D2 a single pane, a bad index or the tab cap leave the state alone (cap: with a notice)', S.detachPane(d1, d1.tabs[1].id, 0) === d1 && S.detachPane(m1, 't2', 7) === m1 && (() => { let x = m1; for (let j = 0; j < 8; j++) x = S.openTab(x, 'cc-x' + j); const y = S.detachPane(x, 't2', 0); return y.tabs.length === 9 && y.notice.includes('9'); })());
 check('M3 a merge past six panes is refused with a notice and changes nothing else', m4.tabs.length === 2 && m4.tabs[1].panes.join() === 'cc-g' && m4.notice.includes('6'));
 
+// sidebar order (placeRow / rankOf / setOrder): drag a row onto another, across groups the group moves as a block
+const L = ['a1', 'a2', 'b1', 'c1'], G = n => n[0];
+check('O1 flat: dragged down lands after the target, up before it', S.placeRow(L, 'a1', 'b1').join() === 'a2,b1,a1,c1' && S.placeRow(L, 'c1', 'a2').join() === 'a1,c1,a2,b1');
+check('O2 grouped, same group: only the row moves', S.placeRow(L, 'a2', 'a1', G).join() === 'a2,a1,b1,c1');
+check('O3 grouped, another group: the whole group moves past it', S.placeRow(L, 'a2', 'b1', G).join() === 'b1,a1,a2,c1' && S.placeRow(L, 'c1', 'a2', G).join() === 'c1,a1,a2,b1');
+check('O4 onto itself or an unknown name: the same list', S.placeRow(L, 'a1', 'a1') === L && S.placeRow(L, 'zz', 'a1') === L);
+const rk = S.rankOf(['b1', 'a1']);
+check('O5 rankOf: dragged names by position, the rest Infinity', rk('b1') === 0 && rk('a1') === 1 && rk('c1') === Infinity);
+const om = mem(); S.save(om, S.setOrder(S.empty('win'), ['b1', 'a1']));
+check('O6 order round-trips save/load; missing or junk is []', S.load(om, live, 'win').state.order.join() === 'b1,a1' && S.empty('win').order.length === 0 && S.load({ getItem: () => JSON.stringify({ tabs: [], order: [1, 'x'] }) }, live, 'win').state.order.join() === 'x');
+
 console.log(bad ? `grid-logic-check: ${bad} FAIL` : 'grid-logic-check: all pass');
 process.exit(bad ? 1 : 0);

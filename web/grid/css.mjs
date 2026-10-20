@@ -15,7 +15,7 @@ ${/* sidebar (the card from before the 2026-10-12 facelift, kept at the owner's 
 #gsb .glist{flex:1;overflow-y:auto;padding:4px 0}
 #gsb details.gg>summary{cursor:pointer;list-style:none;padding:6px 12px;font:600 12px var(--mono);color:var(--mut)}
 #gsb details.gg>summary::before{content:'▸ ';}#gsb details.gg[open]>summary::before{content:'▾ '}
-#gsb .gr{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto;grid-template-rows:auto auto;column-gap:8px;padding:7px 12px;cursor:pointer;border-left:2px solid transparent}
+#gsb .gr{display:grid;grid-template-columns:16px minmax(0,1fr) auto auto;grid-template-rows:auto auto;column-gap:8px;padding:7px 12px;cursor:pointer;border-left:2px solid transparent;user-select:none}
 #gsb .gr:hover{background:var(--card2)}#gsb .gr[data-open="1"]{border-left-color:var(--ok)}
 #gsb .gr .fli{grid-row:1/3;align-self:start;margin-top:2px}
 #gsb .gr .lb{font:500 13px var(--sans);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -69,6 +69,7 @@ ${/* pane header: name, state, then the own-tab / zoom / close icons; the focuse
 .gfr{flex:1;width:100%;border:0;background:var(--bg);min-height:0}
 #grid.drag iframe{pointer-events:none}
 #grid.tabdrag .gw:not([hidden]),#grid.tabdrag .gempty{outline:2px dashed var(--mut);outline-offset:-3px;cursor:copy}#gsb .gr.dragging{opacity:.5}
+#gsb .gdb{box-shadow:inset 0 2px 0 var(--ring)}#gsb .gda{box-shadow:inset 0 -2px 0 var(--ring)}
 .gpark,.gempty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font:13px var(--mono)}
 [data-view=grid-phone]{padding:24px 8px;color:var(--mut);font:15px var(--sans)}
 @media(prefers-reduced-motion:reduce){.gp.needs .gph{animation:none;background:rgba(255,185,0,.14)}}

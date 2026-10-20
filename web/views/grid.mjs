@@ -10,13 +10,12 @@ import * as S from '../grid/state.mjs';
 import { chordOf, detectMod, MODS } from '../grid/keys.mjs';
 import { CSS } from '../grid/css.mjs';
 import { base } from '../shared.mjs';
-import { ViewSwitch } from './sessions.mjs';
+import { ViewSwitch, GLYPH, WORD, ORDER, relStr, gridDesk as desktop } from './sessions.mjs'; // the sidebar rows share the list view's glyphs, words and times (tokens.css .fli-*)
 // the shell's header is hidden on /grid (its row goes to the panes); these links at the strip's right end are the pill nav's, minus Grid
 const NAV = [['History', '/history'], ['System', '/system'], ['Device', '/device'], ['Agents', '/agents']]; // Sessions is the view switch's `list`
 
 // the Figma frame's icons (lucide strokes at 12/14 px), stroke colours as designed; hover brightens them in css.mjs
 const svg = (sz, stroke, ds) => h('svg', { width: sz, height: sz, viewBox: `0 0 ${sz} ${sz}`, fill: 'none', 'aria-hidden': 'true' }, ds.map(d => h('path', { d, stroke, 'stroke-width': sz === 12 ? 1 : 1.16667, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })));
-const GLYPH = { 'needs-you': '◉', working: '●', paused: '⏸', idle: '○' }; // the sidebar rows (tokens.css .fli-*)
 const I = {
   x12: () => svg(12, '#52525C', ['M9 3L3 9', 'M3 3L9 9']),
   plus: () => svg(14, '#52525C', ['M2.91667 7H11.0833', 'M7 2.91667V11.0833']),
@@ -25,11 +24,7 @@ const I = {
   x14: () => svg(14, '#858585', ['M10.5 3.5L3.5 10.5', 'M3.5 3.5L10.5 10.5']),
   panel: () => svg(14, '#858585', ['M2.917 2.333h8.166a1.167 1.167 0 0 1 1.167 1.167v7a1.167 1.167 0 0 1-1.167 1.167H2.917A1.167 1.167 0 0 1 1.75 10.5v-7a1.167 1.167 0 0 1 1.167-1.167z', 'M5.25 2.333v9.334']),
 };
-const WORD = { 'needs-you': 'waiting', working: 'working', paused: 'paused', idle: 'idle' };
-const ORDER = { 'needs-you': 0, working: 1, paused: 2, idle: 3 };
-const relStr = ms => { const s = (Date.now() - ms) / 1000; return s < 90 ? 'now' : s < 5400 ? (s / 60 | 0) + 'm' : s < 129600 ? (s / 3600 | 0) + 'h' : (s / 86400 | 0) + 'd'; };
 const mint = () => [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('');
-const desktop = () => matchMedia('(pointer:fine)').matches && innerWidth >= 1024;
 
 const st = signal(/** @type {S.State|null} */ (null));
 const parked = signal(/** @type {Set<string>} */ (new Set()));
@@ -138,21 +133,38 @@ const closeName = name => s => { const at = S.find(s, name); return at ? S.close
 // drag a row (a press that travels > 6 px, as a tab's): released over the panes it splits beside them, over the strip it opens as a tab.
 // The click that follows a drag is swallowed (rowDragged)
 let rowDragged = false;
+// a sidebar row under the pointer that a dragged row can take the place of (not itself, not a service row)
+const rowTarget = (ev, el) => { const r = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY)?.closest('#gsb .gr:not(.gsvc)')); return r !== el && r; }; // null, false (itself) or the row
+const sideRows = () => /** @type {HTMLElement[]} */ ([...document.querySelectorAll('#gsb .gr:not(.gsvc)')]);
+// a press that travels more than 6 px is a drag: the element dims, iframes ignore the pointer and the panes show the drop target (#grid.drag,
+// .tabdrag); over(ev) runs on each move of it, up(ev) on its release, done() whichever way it ends. A press that never moved is a click.
+function press(e, up, over, done) {
+  const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX, y0 = e.clientY, grid = document.getElementById('grid'); let moved = false;
+  el.setPointerCapture(e.pointerId);
+  const move = ev => { if (!moved && (Math.abs(ev.clientX - x0) > 6 || Math.abs(ev.clientY - y0) > 6)) { moved = true; el.classList.add('dragging'); grid?.classList.add('drag', 'tabdrag'); } if (moved) over?.(ev); };
+  const end = () => { done?.(); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', fin); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); grid?.classList.remove('drag', 'tabdrag'); };
+  const fin = ev => { end(); if (moved) up(ev); };
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', fin); el.addEventListener('pointercancel', end);
+}
 function rowDrag(e, name) {
   if (e.button || /** @type {HTMLElement} */ (e.target).closest('button, form')) return;
-  const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX, y0 = e.clientY, grid = document.getElementById('grid'); let moved = false;
+  const el = /** @type {HTMLElement} */ (e.currentTarget);
   rowDragged = false;
-  el.setPointerCapture(e.pointerId);
-  const move = ev => { if (!moved && (Math.abs(ev.clientX - x0) > 6 || Math.abs(ev.clientY - y0) > 6)) { moved = true; el.classList.add('dragging'); grid?.classList.add('drag', 'tabdrag'); } };
-  const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); grid?.classList.remove('drag', 'tabdrag'); };
-  const up = ev => {
-    end(); if (!moved) return;
+  // over another row: a line where it would land, under the target (dragged down) or above it; across groups the line marks the whole group
+  let mark = null;
+  const unmark = () => { mark?.classList.remove('gdb', 'gda'); mark = null; };
+  press(e, ev => {
     rowDragged = true; setTimeout(() => { rowDragged = false; }, 0);
+    const r = rowTarget(ev, el);
+    if (r) { dispatch(s => S.setOrder(s, S.placeRow(sideRows(), el, r, x => x.closest('.gg') || x).map(x => x.dataset.name))); return; } // the rows themselves: a row's group is its <details>
     const at = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY));
     if (at?.closest('.gw, .gempty')) go(s => S.split(s, name));
     else if (at?.closest('#gtabs')) go(s => S.openTab(s, name));
-  };
-  el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', end);
+  }, ev => {
+    unmark(); const r = rowTarget(ev, el); if (!r) return;
+    const rows = sideRows(), g = r.closest('.gg');
+    mark = g && g !== el.closest('.gg') ? g : r; mark.classList.add(rows.indexOf(r) > rows.indexOf(el) ? 'gda' : 'gdb');
+  }, unmark);
 }
 function Row({ f, open }) {
   const [ren, setRen] = useState(false); // rename: the pencil (shown on hover, like kill) turns the label into an input; Enter posts /a/label, the fleet stream brings the new label; Escape or blur cancels
@@ -208,16 +220,18 @@ function Sidebar() {
   tick.value;
   const s = st.value;
   const isOpen = name => !!S.find(s, name);
-  // fixed order: oldest-opened first, a new session lands at the bottom (2026-10-14: sorting by state + last activity reshuffled
-  // the list every time a session went working <-> idle). State is read from the glyph, not the position. Services sink below the agents.
-  const svc = f => (f.kind === 'service' ? 1 : 0);
-  const sorted = [...store.fleet.value].sort((a, b) => svc(a) - svc(b) || (a.born || 0) - (b.born || 0) || a.name.localeCompare(b.name));
+  // fixed order: the rows as dragged (S.placeRow), then oldest-opened first, so a new session lands at the bottom (2026-10-14: sorting by
+  // state + last activity reshuffled the list every time a session went working <-> idle). State is read from the glyph, not the position.
+  // Services sink below the agents. A group sits where its highest dragged row does (Infinity - Infinity is NaN: falls to the next key).
+  const svc = f => (f.kind === 'service' ? 1 : 0), rank = S.rankOf(s.order);
+  const sorted = [...store.fleet.value].sort((a, b) => svc(a) - svc(b) || rank(a.name) - rank(b.name) || (a.born || 0) - (b.born || 0) || a.name.localeCompare(b.name));
   let list;
   if (s.grouped) {
     const groups = new Map();
     for (const f of sorted) { const k = f.proj || 'other'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
     const oldest = fs => Math.min(...fs.map(f => f.born || 0));
-    const gs = [...groups.entries()].sort((a, b) => oldest(a[1]) - oldest(b[1]) || a[0].localeCompare(b[0]));
+    const top = fs => Math.min(...fs.map(f => rank(f.name)));
+    const gs = [...groups.entries()].sort((a, b) => top(a[1]) - top(b[1]) || oldest(a[1]) - oldest(b[1]) || a[0].localeCompare(b[0]));
     list = gs.map(([proj, fs]) => { const vis = fs; if (!vis.length) return null; const needs = fs.filter(f => f.state === 'needs-you').length;
       return h('details', { class: 'gg', 'data-proj': proj, open: true, key: proj }, h('summary', null, needs ? `${proj} · ${needs}` : proj), vis.map(f => rowOf(f, isOpen))); });
   } else {
@@ -273,14 +287,10 @@ function Strip({ fm }) {
       // released over). Only the strip reorders; the pane wrappers keep creation order (Grid), so no iframe moves
       onPointerDown: e => {
         if (e.button || /** @type {HTMLElement} */ (e.target).closest('.gx')) return; // pointer capture would retarget the close button's click to the tab
-        const el = /** @type {HTMLElement} */ (e.currentTarget), x0 = e.clientX; let moved = false;
-        el.setPointerCapture(e.pointerId);
-        const grid = document.getElementById('grid');
-        const move = ev => { if (Math.abs(ev.clientX - x0) > 6 || Math.abs(ev.clientY - e.clientY) > 6) { moved = true; el.classList.add('dragging'); grid?.classList.add('drag', 'tabdrag'); } }; // drag: iframes ignore the pointer, the panes show the drop target
-        const end = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', end); el.classList.remove('dragging'); grid?.classList.remove('drag', 'tabdrag'); };
-        const up = ev => {
-          end();
-          if (!moved) return;
+        // released over another tab, this one lands before or after it (by the half it is released over). Only the strip reorders; the pane
+        // wrappers keep creation order (Grid), so no iframe moves
+        const el = /** @type {HTMLElement} */ (e.currentTarget);
+        press(e, ev => {
           const at = /** @type {HTMLElement|null} */ (document.elementFromPoint(ev.clientX, ev.clientY));
           if (at?.closest('.gw')) { dispatch(s => S.mergeTab(s, t.id, s.active)); return; } // dropped onto the panes: this tab's panes join the tab on screen
           const over = at?.closest('.gt');
@@ -288,8 +298,7 @@ function Strip({ fm }) {
           const r = over.getBoundingClientRect(), ids = st.value.tabs.map(t => t.id), from = ids.indexOf(t.id);
           let to = ids.indexOf(over.dataset.id); if (ev.clientX > r.left + r.width / 2) to++; if (to > from) to--;
           dispatch(s => S.moveTab(s, from, to));
-        };
-        el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', end);
+        });
       } },
       h('span', { class: 'gdot', 'data-state': worst(t) }), h('span', { class: 'gtl' }, t.panes.map(n => labelOf(fm.get(n), n)).join(' | ')),
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
