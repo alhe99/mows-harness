@@ -7,6 +7,11 @@ maxTurns: "abc" and memory: nonsense both load silently), so both namespaces are
   mows-agent-meta json <agent.md>   frontmatter as JSON on stdout (exit 2 if none)
   mows-agent-meta lint <agent.md>   ERROR:/WARN: lines on stdout; exit 1 iff any ERROR
 
+A KIT-MANAGED agent has a top-level `kit:` block (mowa-kit's stage manifest) and no `mows:` block.
+Its host keys live in `kit.host.mowa`. Both subcommands present it in the mows shape every other
+reader here expects (json adds "kit_managed": true), so render, list, prune, chat and the dashboard
+need no second code path; lint additionally runs `kit lint` (KIT_BIN, else kit on PATH).
+
 Env: MOWS_PROFILES_JSON = {"default":"<HOME>/.claude","work":"<HOME>/.claude-work"}
 """
 import json
@@ -51,6 +56,60 @@ def frontmatter(path):
     except yaml.YAMLError as e:
         return {"__yaml_error__": str(e).splitlines()[0]}
     return data if isinstance(data, dict) else None
+
+
+KIT_HOST = "mowa"  # the overlay this host reads: kit.host.mowa
+
+
+def is_kit_managed(fm):
+    return isinstance(fm, dict) and isinstance(fm.get("kit"), dict) and "mows" not in fm
+
+
+def from_kit(fm, path):
+    """A kit-managed agent seen through the mows shape. kit.host.mowa carries the host keys
+    (profile, triggers, escalate, retention_days, budget.quota_floor/chat_*); workdir and task
+    there override kit's for this host, exactly as `kit run` applies them with KIT_HOST=mowa.
+    A relative workdir resolves against the manifest's git toplevel, as the kit resolves it."""
+    if not is_kit_managed(fm):
+        return fm
+    kit = fm["kit"]
+    hosts = kit.get("host") if isinstance(kit.get("host"), dict) else {}
+    host = hosts.get(KIT_HOST) if isinstance(hosts.get(KIT_HOST), dict) else {}
+    kb = kit.get("budget") if isinstance(kit.get("budget"), dict) else {}
+    hb = host.get("budget") if isinstance(host.get("budget"), dict) else {}
+    budget = {k: v for k, v in kb.items() if k in ("usd_per_run", "max_turns", "usd_per_day")}
+    budget.update({k: v for k, v in hb.items() if k in ("quota_floor", "chat_usd", "chat_turns")})
+    here = os.path.dirname(os.path.abspath(path))
+    wd = host.get("workdir", kit.get("workdir"))
+    if isinstance(wd, str) and not os.path.isabs(os.path.expanduser(wd)):
+        top = subprocess.run(["git", "-C", here, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        wd = os.path.normpath(os.path.join(top.stdout.strip() if top.returncode == 0 else here, wd))
+    m = {"profile": host.get("profile"), "workdir": wd, "task": host.get("task", kit.get("task")),
+         "budget": budget, "triggers": host.get("triggers", []),
+         "escalate": host.get("escalate", {"via": "none"}), "retention_days": host.get("retention_days", 30)}
+    if isinstance(kit.get("soul"), str) and kit["soul"]:
+        sp = os.path.expanduser(kit["soul"])
+        m["soul"] = sp if os.path.isabs(sp) else os.path.join(here, sp)
+    if isinstance(kit.get("merge"), dict):
+        m["merge"] = kit["merge"]
+    out = dict(fm)
+    out["mows"] = m
+    out["kit_managed"] = True
+    return out
+
+
+def kit_lint(path):
+    """`kit lint` on a kit-managed file: its ERROR/WARN lines, prefixed `kit:`. Fails closed."""
+    kit = os.environ.get("KIT_BIN") or shutil.which("kit")
+    if not kit or not shutil.which(kit):
+        return ["kit-managed agent (top-level kit: block) but the kit CLI is not installed "
+                "(set KIT_BIN or put kit on PATH)"], []
+    r = subprocess.run([kit, "lint", path], capture_output=True, text=True)
+    E = ["kit: " + l[7:] for l in r.stdout.splitlines() if l.startswith("ERROR: ")]
+    W = ["kit: " + l[6:] for l in r.stdout.splitlines() if l.startswith("WARN: ")]
+    if r.returncode not in (0, 1) or (r.returncode == 1 and not E):
+        E.append(f"kit lint did not run cleanly (exit {r.returncode}): {(r.stdout + r.stderr).strip()[:200]}")
+    return E, W
 
 
 def as_list(v):
@@ -106,6 +165,16 @@ def lint(path):
     if "__yaml_error__" in fm:
         return ["frontmatter is not valid YAML: " + fm["__yaml_error__"]], []
     stem = os.path.splitext(os.path.basename(path))[0]
+    kit_managed = is_kit_managed(fm)
+    if kit_managed:
+        KE, KW = kit_lint(path)
+        E += KE
+        W += KW
+        hosts = fm["kit"].get("host")
+        if not (isinstance(hosts, dict) and isinstance(hosts.get(KIT_HOST), dict)):
+            E.append(f"kit.host.{KIT_HOST}: block is required for this harness to run a kit-managed agent "
+                     "(profile, triggers, escalate live there)")
+        fm = from_kit(fm, path)
 
     # ---- Claude Code namespace ----
     if fm.get("name") != stem:
@@ -258,7 +327,8 @@ def lint(path):
                 has_webhook = True
                 if set(t) - {"type"}:
                     E.append(f"mows.triggers[{i}]: webhook takes no keys besides type (the secret lives in config)")
-    mg = mows.get("merge", {})
+    # a kit-managed agent's merge is the kit's (none|branch|pr, run by `kit run`); kit lint checked it
+    mg = {} if kit_managed else mows.get("merge", {})
     if not isinstance(mg, dict):
         E.append("merge: must be a map")
     else:
@@ -299,7 +369,7 @@ def main():
         if fm is None or "__yaml_error__" in fm:
             print(f"mows-agent-meta: no usable frontmatter in {path}", file=sys.stderr)
             sys.exit(2)
-        json.dump(fm, sys.stdout, default=str)
+        json.dump(from_kit(fm, path), sys.stdout, default=str)
         print()
         return
     errors, warns = lint(path)
