@@ -165,6 +165,8 @@ def lint(path):
     if "__yaml_error__" in fm:
         return ["frontmatter is not valid YAML: " + fm["__yaml_error__"]], []
     stem = os.path.splitext(os.path.basename(path))[0]
+    if isinstance(fm.get("kit"), dict) and "mows" in fm:
+        E.append("both a mows: and a kit: block: the runner would read mows: and silently ignore kit:; keep one")
     kit_managed = is_kit_managed(fm)
     if kit_managed:
         KE, KW = kit_lint(path)

@@ -42,7 +42,7 @@ you leave running, `--all` for the full web cockpit.
 - **agy** — antigravity: `ag` launcher, `agy-run` (composes Discord messages),
   `claude-quota`, `agy-notify` → `~/.local/bin`
 - **agents** — purpose-scoped agents that run unattended: one Claude Code agent file + a
-  `mows:` policy block, budgets per run/day/account, systemd timers and HMAC webhooks as
+  `mows:` policy block (or a mowa-kit `kit:` stage manifest, run by `kit run`), budgets per run/day/account, systemd timers and HMAC webhooks as
   triggers, Discord escalation, an `/agents` dashboard tab
 
 ## Why you'd want this
@@ -417,7 +417,7 @@ flowchart TB
     end
 
     subgraph Layer6["Layer 6: agents (purpose-scoped, unattended)"]
-        MAGENT["mows-agent: lint / run / list / prune / render / residents<br/>agents/*.md + mows: policy block"]
+        MAGENT["mows-agent: lint / run / list / prune / render / residents<br/>agents/*.md + mows: policy block or kit: stage manifest"]
     end
 
     subgraph RCUNITS["systemd: claude-remote@profile / claude-remote-control@profile"]
@@ -498,7 +498,8 @@ flowchart TB
   [`agy/SETUP.md`](agy/SETUP.md).
 - **`agents/`** — purpose-scoped agents that run unattended: `mows-agent` owns policy (lint,
   budget, refusal, run records, escalation, pruning) while the Claude daemon owns the process
-  itself; systemd timers/path units and HMAC-signed webhooks trigger a run, staged into
+  itself; an agent with a mowa-kit `kit:` block is handed to `kit run`, and `mows-agent` stays
+  its host (quota floor, profile, escalation); systemd timers/path units and HMAC-signed webhooks trigger a run, staged into
   `./rendered/` and never installed or enabled by `install.sh`. `mows-agent chat <name>
   [--stream]` resumes an agent's last completed run for a follow-up question; `--stream`
   (first argument only) streams the reply token-by-token to the dashboard instead of
