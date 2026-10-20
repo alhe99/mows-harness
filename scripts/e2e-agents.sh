@@ -790,5 +790,86 @@ for shape in mowsy nested quotedval; do
 done
 rm -f "$A"/fm-*.md
 
+echo "### kit-managed agents (P2b): run delegates to mowa-kit's kit run, this runner is the host overlay"
+# The kit is a separate (private) repo, so on a box or CI runner without it these cases SKIP loudly
+# rather than pass: KIT_BIN, else kit on PATH. Every case below runs the REAL kit against the stub claude.
+KIT=${KIT_BIN:-$(command -v kit || true)}
+if [ -z "$KIT" ] || ! "$KIT" version >/dev/null 2>&1; then
+  echo "SKIP: kit-managed cases (kit CLI not installed; set KIT_BIN=<path to mowa-kit>/bin/kit)"
+else
+  export KIT_BIN=$KIT
+  mkkit(){ # mkkit <name> [extra host-overlay lines]: a kit-managed agent in the default profile
+    local n=$1; shift
+    cat > "$A/$n.md" <<K
+---
+name: $n
+description: kit-managed test agent
+model: sonnet
+tools: [Read, Grep]
+disallowedTools: [Write, Edit, WebFetch]
+maxTurns: 40
+kit:
+  stage: standing
+  workdir: ./
+  task: do the thing
+  inputs:
+    - { kind: repo, path: ./, required: true }
+  outputs:
+    - { kind: report, path: ".kit/artifacts/$n-{run_id}.md" }
+  evidence_required:
+    - { kind: file, path: ".kit/artifacts/$n-{run_id}.md" }
+  gate: { mode: auto }
+  budget: { usd_per_run: 1.5, max_turns: 40 }
+  merge: { policy: none }
+  memory: agent
+  ledger: none
+  host:
+    mowa:
+      profile: default
+      workdir: $T/work
+      triggers: [ { type: cron, spec: "*-*-* 06:00:00" } ]
+      escalate: { via: discord }
+      budget: { quota_floor: 30 }
+$(for l in "$@"; do echo "      $l"; done)
+---
+You are a kit-managed test agent.
+K
+  }
+  mkkit kt
+  echo '{}' > "$QUOTA_FILE"; : > "$CURL_LOG"; echo ok > "$CLAUDE_MODE_FILE"
+  chk "kit: lint passes (kit lint + host overlay checks)"   'mows-agent lint kt'
+  chk "kit: meta json presents the mows shape"               'mows-agent-meta json "$A/kt.md" | jq -e ".kit_managed == true and .mows.profile == \"default\" and .mows.workdir == \"$T/work\" and .mows.budget.quota_floor == 30"'
+  chk "kit: discovered by list"                              'mows-agent list | grep -qE "^kt "'
+  chk "kit: render emits its timer from kit.host.mowa"       'RENDER_DIR="$T/render" mows-agent render kt >/dev/null && grep -q "OnCalendar=\*-\*-\* 06:00:00" "$T/render/mows-agent-kt.timer"'
+  mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: run ok exits 0"                                  '[ "$rc" = 0 ]'
+  KS="$MOWS_AGENTS_STATE/kt/last"
+  chk "kit: record in the harness state dir, host: mowa"    'jq -e ".host == \"mowa\" and .state == \"done\" and .stage == \"standing\" and (.kit_version|length>0)" "$KS/status.json"'
+  chk "kit: the seven record files"                          'for x in manifest.snapshot.md status.json result.json stream.jsonl stderr.log evidence.json gate.json; do [ -f "$KS/$x" ] || exit 1; done'
+  chk "kit: profile reaches claude as CLAUDE_CONFIG_DIR"     'grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude" "$CLAUDE_ARGS_FILE"'
+  chk "kit: launched in the overlay workdir"                 'grep -qx "PWD=$T/work" "$CLAUDE_ARGS_FILE"'
+  chk "kit: no discord post on success"                      '[ ! -s "$CURL_LOG" ]'
+  printf '%s' $'done\n\n```kit-memory\nnewest: abc123\n```\n' > "$CLAUDE_RESULT_FILE"; echo memblock > "$CLAUDE_MODE_FILE"
+  mows-agent run kt >/dev/null 2>&1
+  chk "kit: kit-memory block stored as the harness memory.md" 'grep -qx "newest: abc123" "$MOWS_AGENTS_STATE/kt/memory.md"'
+  echo budget > "$CLAUDE_MODE_FILE"; : > "$CURL_LOG"; mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: budget → exit 4 and one discord post"            '[ "$rc" = 4 ] && grep -q budget_exceeded "$CURL_LOG" && [ "$(wc -l < "$CURL_LOG")" = 1 ]'
+  echo hang > "$CLAUDE_MODE_FILE"; : > "$CURL_LOG"; mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: stall → exit 5, posted"                          '[ "$rc" = 5 ] && grep -q stalled "$CURL_LOG"'
+  echo error > "$CLAUDE_MODE_FILE"; : > "$CURL_LOG"; mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: error → exit 3, posted with the reason"          '[ "$rc" = 3 ] && grep -q "failed" "$CURL_LOG"'
+  echo ok > "$CLAUDE_MODE_FILE"; echo '{"personal":{"five_hour_pct":90,"weekly_pct":5}}' > "$QUOTA_FILE"; : > "$CURL_LOG"
+  mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: quota floor is the host's refusal, before the kit" '[ "$rc" = 6 ] && grep -q quota "$CURL_LOG"'
+  echo '{}' > "$QUOTA_FILE"; : > "$CURL_LOG"
+  sed -i 's#{ kind: repo, path: ./, required: true }#{ kind: artifact, path: .kit/nope.md, required: true }#' "$A/kt.md"
+  mows-agent run kt >/dev/null 2>&1; rc=$?
+  chk "kit: a kit refusal (missing input) → exit 6, posted with the kit's reason" '[ "$rc" = 6 ] && grep -q "required input missing" "$CURL_LOG"'
+  mkkit kt
+  chk "kit: kit-managed without kit.host.mowa is a lint error" 'mkkit kn && sed -i "/^  host:/,/^---/{/^---/!d}" "$A/kn.md" && ! mows-agent lint kn && mows-agent lint kn 2>&1 | grep -q "kit.host.mowa: block is required"'
+  chk "kit: kit not installed → lint refuses, run exits 6"   '! KIT_BIN=/nonexistent mows-agent lint kt >/dev/null 2>&1 && { KIT_BIN=/nonexistent mows-agent run kt >/dev/null 2>&1; [ $? = 6 ]; }'
+  rm -f "$A/kt.md" "$A/kn.md"
+fi
+
 echo; echo "e2e-agents: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

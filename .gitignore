@@ -8,3 +8,6 @@ rendered/
 scripts/preflight-local.pat
 tasks/
 .agent-team/
+
+# mowa-kit run output of kit-managed agents (reports, artifacts)
+.kit/

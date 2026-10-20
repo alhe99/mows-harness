@@ -39,6 +39,22 @@ everything else — budget, refusal, run records, escalation, triggers. Design:
 | `escalate.via` | `none` | `discord` posts refusals/failures to `DISCORD_WEBHOOK` |
 | `retention_days` | `30` | `mows-agent prune` deletes older run dirs (never `last`) |
 
+## Kit-managed agents — the `kit:` block (mowa-kit)
+
+An agent whose frontmatter has a top-level `kit:` block instead of `mows:` is a
+[mowa-kit](https://github.com/alhe99/mowa-kit) stage manifest. `mows-agent run` hands it to
+`kit run`, which owns lint, refusals, launch, the stall kill, the run record, memory (a
+` ```kit-memory ` block), evidence, the gate and merge. This runner stays the host: the claude
+version check, the quota floor and profile selection before the run, Discord escalation by exit
+code after it. The host keys move under `kit.host.mowa` with their names unchanged (`profile`,
+`triggers`, `escalate`, `retention_days`, `budget.quota_floor`, `budget.chat_usd`,
+`budget.chat_turns`); `kit.host.mowa.workdir` and `.task` override the kit's for this host.
+`mows-agent-meta` presents the file in the `mows` shape, so `list`, `render`, `prune`, `chat` and
+the dashboard read it unchanged. Requires the `kit` CLI on PATH (or `KIT_BIN`); without it the
+agent lints red and its run refuses. Example: `agents/examples/kit/harness-reviewer.md`.
+The record lands in the same state dir and gains `stage`, `host: mowa`, `kit_version`,
+`inputs_resolved`, `evidence.json` and `gate.json`.
+
 ## Run lifecycle and exit codes
 
 `mows-agent run <name> [task…]`: lint → refuse if already running / daily cap reached / quota
