@@ -81,8 +81,10 @@ const restart = () => {
   setTimeout(() => term.input('\r'), 420);
 };
 const theme = themes(term);
-const clip = clipboard(term);
-const att = attach(term);
+// a path from Attach file, text from Paste: into the composer while it stands in for Claude's box (or has the focus), else into the terminal
+const put = t => { if (!comp?.insert(t)) term.paste(t); };
+const clip = clipboard(term, put);
+const att = attach(term, put);
 const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
 const comp = composer(term, tc);
 const bar = el('div', { id: 'cckb' }, ...baseKeys(term, () => !!comp?.typing()));

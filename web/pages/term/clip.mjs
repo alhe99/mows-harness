@@ -4,7 +4,7 @@
 // phone; paste reads the clipboard and term.paste()s it. Both are actions of the menu sheet (menu.mjs); ?clip=off removes them, not OSC 52.
 import { el, flash, off, say } from './dom.mjs';
 
-export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term) {
+export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term, place = t => term.paste(t)) {
   let pending = '';
   const put = text => {
     if (!text) return;
@@ -46,6 +46,6 @@ export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term) {
   all.addEventListener('click', () => (navigator.clipboard?.writeText(txt.textContent) ?? Promise.reject()).then(() => flash(all, 'copied ✓'), () => flash(all, '✗ select manually')));
   return {
     open: () => { txt.textContent = grab(); ov.classList.add('on'); term.blur(); (/** @type {any} */ (document.activeElement))?.blur?.(); }, // drop the keyboard so the whole snapshot is visible
-    paste: () => (navigator.clipboard?.readText ? navigator.clipboard.readText().then(x => (x ? term.paste(x) : say('the clipboard is empty')), () => say('paste blocked: long-press the field and paste')) : say('paste is not available here')),
+    paste: () => (navigator.clipboard?.readText ? navigator.clipboard.readText().then(x => (x ? place(x) : say('the clipboard is empty')), () => say('paste blocked: long-press the field and paste')) : say('paste is not available here')),
   };
 }

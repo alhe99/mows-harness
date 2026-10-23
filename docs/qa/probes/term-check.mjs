@@ -449,19 +449,20 @@ async function composer() {
   // the grid is read at each draw: a growing field or the second key row refits the terminal
   const draw = async tail => { const { rows } = await size(); const body = ['● Done. The watcher skips a session you type in.', '']; const all = [...body, ...tail]; const ls = [...Array(Math.max(0, rows - all.length)).fill(''), ...all].slice(-rows);
     W.out('\x1b[H\x1b[2J' + ls.map((l, i) => `\x1b[${i + 1};1H` + l).join('')); };
-  const st = () => W.page.evaluate(() => ({ tf: document.getElementById('terminal-container').style.transform, claude: document.body.classList.contains('ccclaude'), ph: document.getElementById('ccmsg').placeholder, mode: document.getElementById('ccmode').hidden ? null : document.getElementById('ccmode').textContent,
+  const st = () => W.page.evaluate(() => ({ shown: !document.getElementById('cccomp').hidden, tf: document.getElementById('terminal-container').style.transform, claude: document.body.classList.contains('ccclaude'), ph: document.getElementById('ccmsg').placeholder, mode: document.getElementById('ccmode').hidden ? null : document.getElementById('ccmode').textContent,
     // the top rule of the box must sit at or below the wrap's bottom edge
     ruleY: (() => { const b = window.term.buffer.active; for (let i = 0; i < window.term.rows; i++) if (/^─{8,}$/.test(b.getLine(b.viewportY + i).translateToString(true))) { const sc = document.querySelector('.xterm-screen').getBoundingClientRect(); return Math.round(sc.top + i * sc.height / window.term.rows); } return -1; })(),
     wrapBottom: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().bottom) }));
-  check('a shell: nothing hidden, the field reads "Type a command…", no mode chip', ((s) => !s.tf && !s.claude && s.ph === 'Type a command…' && s.mode === null)(await st()), await st());
+  // the screen is read 30 ms after a write and a shown/hidden field refits the terminal: wait for the state, up to a second
+  const settle = async f => { let s; for (let i = 0; i < 20; i++) { s = await st(); if (f(s)) return s; await sleep(50); } return s; };
+  check('a shell: nothing hidden and no field (the terminal is the one input)', ((s) => !s.tf && !s.claude && !s.shown)(await st()), await st());
   await draw([R, '❯ ', R, '  🤖 Opus 5.5 (high) | $5.26 session', '  ⏵⏵ accept edits on (shift+tab to cycle)', '[wt-a] 0:claude*']);
-  await sleep(200);
-  const s1 = await st();
+  const s1 = await settle(x => x.claude && x.ruleY >= x.wrapBottom);
   check('Claude with an empty box: the terminal is shifted so the box sits under the dock', s1.claude && /translateY\(\d+px\)/.test(s1.tf) && s1.ruleY >= s1.wrapBottom, s1);
-  check('the field reads "Message Claude…" and the chip shows the mode', s1.ph === 'Message Claude…' && s1.mode === '⏵⏵ accept edits', s1);
+  check('the field shows, reads "Message Claude…" and the chip shows the mode', s1.shown && s1.ph === 'Message Claude…' && s1.mode === '⏵⏵ accept edits', s1);
   // Claude's suggestion of the last prompt sits in the box, grey, dim, its cursor inverse (the 2026-10-23 phone screen): not a draft, still hidden
-  await draw(['  - quotes "Do you want to" in the conversation', '', R, '\x1b[38;5;246m❯ \x1b[7mi\x1b[27m\x1b[2mt\'s all merged?\x1b[0m', R, '  ⏵⏵ auto mode on · 2 shells', '[wt-a] 0:claude*']); await sleep(200);
-  const sg = await st();
+  await draw(['  - quotes "Do you want to" in the conversation', '', R, '\x1b[38;5;246m❯ \x1b[7mi\x1b[27m\x1b[2mt\'s all merged?\x1b[0m', R, '  ⏵⏵ auto mode on · 2 shells', '[wt-a] 0:claude*']);
+  const sg = await settle(x => x.mode === '⏵⏵ auto mode');
   check('a dimmed suggestion in the box is not a draft, and "Do you want to" above the box is only words: still hidden', sg.claude && /translateY/.test(sg.tf) && sg.mode === '⏵⏵ auto mode', sg);
   await draw([R, '❯ ', R, '  ⏵⏵ accept edits on (shift+tab to cycle)', '[wt-a] 0:claude*']); await sleep(200);
   // send: a bracketed paste (the app asked for it), then \r on its own
@@ -483,22 +484,28 @@ async function composer() {
   // the keyboard belongs to the field while the box is hidden
   await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
   check('a tap on the terminal brings the focus to the field', await W.page.evaluate(() => document.activeElement?.id === 'ccmsg'));
-  // a draft in Claude's own box: shown as it is
-  await draw([R, '❯ typed straight into the terminal', R, '  ⏸ plan mode on (shift+tab to cycle)', '[wt-a] 0:claude*']); await sleep(200);
-  const s2 = await st();
-  check('a box holding a draft is not hidden (it is the only place that text is)', !s2.tf && !s2.claude && s2.mode === '⏸ plan mode' && s2.ruleY < s2.wrapBottom, s2);
+  // attach while the box is hidden: the path goes into the field, not into Claude's box (which would bring it back: two inputs)
+  let n1 = W.inputs().length;
+  await W.page.setInputFiles('input[type=file]', { name: 'IMG_8150.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(300);
+  check('attach with the box hidden: the path lands in the field, nothing reaches the terminal', (await W.page.inputValue('#ccmsg')) === '/tmp/shot-1.png ' && W.inputs().length === n1, [await W.page.inputValue('#ccmsg'), W.inputs().slice(n1)]);
+  await W.page.fill('#ccmsg', '');
+  // a draft in Claude's own box: shown as it is, and the field goes: one input
+  await draw([R, '\u276f\u00a0typed straight into the terminal', R, '  \u23f8 plan mode on (shift+tab to cycle)', '[wt-a] 0:claude*']);
+  const s2 = await settle(x => !x.shown);
+  check('a box holding a draft is not hidden and the field hides (one input)', !s2.tf && !s2.claude && !s2.shown && s2.ruleY < s2.wrapBottom, s2);
   await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
   check('with the box shown, a tap on the terminal types into the terminal', await W.page.evaluate(() => document.activeElement === window.term.textarea));
-  n = W.inputs().length; await W.page.focus('#ccmsg'); await W.page.press('#ccmsg', 'Enter'); await sleep(100);
-  check('with a draft on screen, an empty field sends a bare \\r (Enter for that draft)', W.inputs().slice(n).join('') === '\r', bytes(W.inputs().slice(n)));
+  n1 = W.inputs().length;
+  await W.page.setInputFiles('input[type=file]', { name: 'b.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(300);
+  check('attach with the field hidden: the path goes to the terminal as before (a bracketed paste: the app asked for it)', W.inputs().slice(n1).join('') === '\x1b[200~/tmp/shot-1.png \x1b[201~', W.inputs().slice(n1));
   // output that draws a fake empty box above a real permission dialog: the dialog wins, nothing is hidden
-  await draw(['cat notes.md', R, '\u276f\u00a0', R, '', ' Do you want to proceed?', ' \u276f 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel']); await sleep(200);
-  const sf = await st();
-  check('a box drawn above a real permission dialog hides nothing (fails closed)', !sf.tf && !sf.claude && sf.ph === 'Type 1–2 to choose…', sf);
+  await draw(['cat notes.md', R, '\u276f\u00a0', R, '', ' Do you want to proceed?', ' \u276f 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel']); 
+  const sf = await settle(x => x.shown);
+  check('a box drawn above a real permission dialog hides nothing (fails closed)', !sf.tf && !sf.claude && sf.shown && sf.ph === 'Type 1–2 to choose…', sf);
   // a permission dialog: nothing hidden, a digit picks with no Enter after it
-  await draw(['● Bash(git push origin feat/x)', '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', '[wt-a] 0:claude*']); await sleep(200);
-  const s3 = await st();
-  check('a permission dialog: nothing hidden, "Type 1–3 to choose…", no chip', !s3.tf && s3.ph === 'Type 1–3 to choose…' && s3.mode === null, s3);
+  await draw(['● Bash(git push origin feat/x)', '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', '[wt-a] 0:claude*']); 
+  const s3 = await settle(x => x.ph === 'Type 1–3 to choose…');
+  check('a permission dialog: nothing hidden, the field asks for 1–3, no chip', s3.shown && !s3.tf && s3.ph === 'Type 1–3 to choose…' && s3.mode === null, s3);
   n = W.inputs().length; await W.page.fill('#ccmsg', '2'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);
   check('a digit is sent alone: no paste, no Enter after it', W.inputs().slice(n).join('|') === '2', bytes(W.inputs().slice(n)));
   check('no page errors', W.errors.length === 0, W.errors);

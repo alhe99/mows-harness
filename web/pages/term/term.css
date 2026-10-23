@@ -42,6 +42,8 @@ body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-directio
 #terminal-wrap{flex:1;min-height:0;height:auto}
 /* iOS never draws xterm's scrollbar, so the fit addon reserves 15 px for it: oversize the container by exactly that */
 #terminal-container{box-sizing:border-box;width:calc(100% + 15px)}
+/* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
+#terminal-container .terminal{padding:6px 10px;height:calc(100% - 12px)}
 
 #ccstrip{flex:none;display:flex;align-items:center;gap:2px;box-sizing:border-box;height:calc(52px + env(safe-area-inset-top,0px));
 padding:env(safe-area-inset-top,0px) calc(4px + env(safe-area-inset-right,0px)) 0 calc(4px + env(safe-area-inset-left,0px));border-bottom:1px solid var(--c-line);background:var(--c-bg)}
@@ -68,6 +70,7 @@ border-top:1px solid var(--c-line);background:var(--c-bg)}
 /* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
 body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 
+#cccomp[hidden]{display:none}
 #cccomp{display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
 #cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
 /* 16 px: iOS zooms the page into a smaller field on focus */

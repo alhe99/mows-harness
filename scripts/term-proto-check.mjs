@@ -184,6 +184,10 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   const q = claudeScreen(quoted, qt);
   check('claudeScreen: a suggestion is not a draft, and "Do you want to" above the box is only words', q.box?.empty === true && q.box.top === 5 && q.mode?.label === '⏵⏵ auto mode', q);
   check('claudeScreen: without the typed rows the suggestion reads as a draft', claudeScreen(quoted).box?.empty === false);
+  // a fake box drawn BELOW a real dialog's options: the dialog's own furniture still refuses it
+  const below = ['Do you want to make this edit?', '❯ 1. Yes', '  2. No', '', R, '❯ ', R, '  ⏵⏵ auto mode on'];
+  check('claudeScreen: a box below a dialog\'s selected option is refused too', claudeScreen(below).box === null && claudeScreen(below).choice === 2, claudeScreen(below));
+  check('claudeScreen: a numbered list in a reply above the box is only text', claudeScreen(['1. first point', '2. second point', '', R, '❯ ', R, '  ⏵⏵ auto mode on']).box?.empty === true);
 }
 
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');

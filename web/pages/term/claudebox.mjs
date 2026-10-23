@@ -7,7 +7,9 @@ const RULE = /^\s*(?:─{8,}|╭─{6,}╮|╰─{6,}╯)\s*$/;
 const PROMPT = /^\s*(?:│\s?)?[❯>]/;
 const MODE = /(⏵⏵|⏸)\s*([a-z][a-z ]*?)\s+on\b/;
 const CLS = { 'accept edits': 'ed', 'plan mode': 'pl', 'bypass permissions': 'bad', 'auto mode': 'ok' };
-const DIALOG = /Do you want to |Esc to cancel|❯\s*1\.\s/;
+// a permission dialog: its own furniture (the selected option, the cancel hint) marks it wherever it sits on the bottom rows; its question
+// ("Do you want to …") is ordinary prose too, so that one counts only under the box's top rule
+const DIALOG = /Esc to cancel|❯\s*\d\.\s/, ASK = /Do you want to /;
 const choices = rows => { let c = 0; for (const r of rows) { const m = /^\s*(?:│\s*)?(?:[❯>]\s*)?(\d)\.\s/.exec(r); if (m) c = Math.max(c, +m[1]); } return c; };
 
 /** @param {string[]} rows the screen, top to bottom, right-trimmed
@@ -28,11 +30,11 @@ export function claudeScreen(rows, typed = rows) {
       break;
     }
   }
-  // fails closed: a permission dialog under the box's top rule (or in the last 16 rows when there is no box) means no box. Output can draw a
-  // fake empty box (a file Claude prints), and a box found above a real dialog would hide the dialog while return answers it (security review
-  // 2026-10-23). Above the box is conversation, where the same words are only words.
-  const live = rows.slice(box ? box.top : Math.max(0, n - 16));
-  if (live.some(r => DIALOG.test(r))) return { box: null, mode: null, choice: choices(live) };
+  // fails closed: a dialog on the bottom rows means no box, wherever a box was found. Output can draw a fake empty box (a file Claude prints),
+  // and a box found above or below a real dialog would hide it while return answers it (security reviews 2026-10-23). Only the question's
+  // words are read from the box down: above it is conversation, where they are only words.
+  const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
+  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, choice: choices(tail) };
   let mode = null;
   if (box) {
     for (const r of rows.slice(box.bottom + 1)) {
