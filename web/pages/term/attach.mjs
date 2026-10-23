@@ -3,7 +3,6 @@
 // terminal types its path. Claude then reads the file from that path.
 import { el, say } from './dom.mjs';
 
-/** `put` places the returned path: the composer while it stands in for Claude's box, else the terminal (term.mjs) */
 export function attach(/** @type {import('@xterm/xterm').Terminal} */ term, put = t => term.paste(t)) {
   let busy = false;
   const up = f => {

@@ -1,6 +1,6 @@
 // term.mjs — the /term document (ARCHITECTURE section 6; phase 04). xterm.js 6 on the same ttyd socket (ttyd.mjs), the key bar and its
-// features as modules of their own, themed from themes.json (theme.mjs). On a phone the page is a column: the strip (strip.mjs), the terminal,
-// the dock (the composer, composer.mjs, over the key bar, bar.mjs); the menu sheet (menu.mjs) holds the rest. window.term stays exposed: mobile-journey.mjs reads
+// features as modules of their own, themed from themes.json (theme.mjs). On a phone the page is a column: the terminal, then the dock (the
+// composer, composer.mjs, over the key bar, bar.mjs); the menu sheet (menu.mjs), behind the bar's ⋯, holds the rest. window.term stays exposed: mobile-journey.mjs reads
 // term._core._renderService.dimensions.css.cell.width. Assets come from /assets/, never /term/ (Caddy sends every /term* path to ttyd).
 // Kill switches, as URL params: ?ime=off ?clip=off ?comp=off ?paint=off ?theme=off.
 import { Terminal } from '@xterm/xterm';
@@ -17,7 +17,6 @@ import { diag, paint } from './paint.mjs';
 import { ime } from './ime.mjs';
 import { composer } from './composer.mjs';
 import { menu } from './menu.mjs';
-import { strip } from './strip.mjs';
 import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
 import { coarse, el } from './dom.mjs';
@@ -42,7 +41,7 @@ if (window.parent !== window) { addEventListener('focus', () => term.focus()); i
 const fit = (now = false) => { clearTimeout(ft); const run = () => { try { fitAddon.fit(); } catch { /* not laid out yet */ } }; now ? run() : (ft = setTimeout(run, 150)); };
 fit(true);
 addEventListener('resize', () => fit());
-// the box the terminal lives in changes with the strip, the dock (a second key row, a growing composer) and the keyboard: refit on any of them
+// the box the terminal lives in changes with the dock (a second key row, a growing composer) and the keyboard: refit on any of them
 const wrap = /** @type {HTMLElement} */ (document.getElementById('terminal-wrap'));
 new ResizeObserver(() => fit()).observe(wrap);
 
@@ -71,7 +70,7 @@ const client = ttydClient({
 let socketN = 0;
 const stat = new WeakMap(); // per socket: its number and the bytes it received, for the /z beacons
 
-// the chrome on a phone: strip on top, dock (composer + key bar) below, the menu sheet; a desktop gets the hidden key bar only
+// the chrome on a phone: the dock (composer + key bar) under the terminal, the menu sheet; a desktop gets the hidden key bar only
 const fonts = fontKeys(term, fit);
 // staged: tmux's assume-paste-time treats a burst as a paste and skips its key bindings (prefix is C-q)
 const restart = () => {
@@ -81,20 +80,20 @@ const restart = () => {
   setTimeout(() => term.input('\r'), 420);
 };
 const theme = themes(term);
-// a path from Attach file, text from Paste: into the composer while it stands in for Claude's box (or has the focus), else into the terminal
+// text from the menu's Paste: into the composer while it is the input, else into the terminal. An attached file's path always goes to the
+// terminal: in Claude's box an image path becomes a real attachment ([Image #1]), which the composer then shows as its draft chip.
 const put = t => { if (!comp?.insert(t)) term.paste(t); };
 const clip = clipboard(term, put);
-const att = attach(term, put);
+const att = attach(term);
 const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
 const comp = composer(term, tc);
-const bar = el('div', { id: 'cckb' }, ...baseKeys(term, () => !!comp?.typing()));
+// the session of the URL names the menu's header (?arg=attach&arg=<session>)
+const args = new URLSearchParams(location.search).getAll('arg');
+const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') } : null;
+const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session }) : null;
+const bar = el('div', { id: 'cckb' }, ...baseKeys(term, { typing: () => !!comp?.typing(), type: t => comp?.insert(t), menu: () => sheet?.open() }));
 document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
-if (coarse()) {
-  const sheet = menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => top?.cur() ?? null });
-  const top = strip(sheet.open);
-  if (top) document.body.prepend(top.el);
-  wrap.append(modChip());
-}
+if (coarse()) wrap.append(modChip());
 touchScroll();
 viewportFit(fit);
 ime(term, client);

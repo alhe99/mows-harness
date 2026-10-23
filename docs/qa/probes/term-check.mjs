@@ -5,7 +5,7 @@
 // every frame the page sends is recorded and the probe answers with '0' output frames), /app/live.json, /a/switch, /shot, /z and
 // /settings/term-theme.json are answered here, so nothing the probe does reaches ttyd, tmux or the disk. The MOWS_TEST_HOOKS flag the dev
 // instance carries is not needed: the fake ttyd lives in the browser context. `paint` and `theme` run on Playwright's fake clock.
-// Selectors: #cckb > button[data-k] #ccstrip #ccback #cctabs .tab[data-s] #ccmenu-btn #ccsheet .pan .tile .ln #ccdock #cccomp #ccmsg #ccmode #ccsend
+// Selectors: #cckb > button[data-k] (data-k=Menu opens #ccsheet) #ccsheet .pan .tile .ln #ccdock #cccomp #ccmsg #ccmode #ccsend
 // #ccmods #ccclip #ccclip-txt #ccthemesel #ccovl #cctoast.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -73,6 +73,7 @@ const keyBtn = (W, k) => `#cckb > button[data-k="${CSS_ESC(k)}"]`;
 const CSS_ESC = k => k.replace(/["\\]/g, '\\$&');
 const press = async (W, k, wait = 60) => { await W.page.locator(keyBtn(W, k)).dispatchEvent('pointerdown'); await sleep(wait); };
 // a row of the menu sheet, by its text (the sheet need not be open: a click is dispatched)
+const openMenu = async W => { await W.page.locator('#cckb > button[data-k="Menu"]').click(); await W.page.waitForSelector('#ccsheet.open .pan'); };
 const menuRow = (W, text) => W.page.locator('#ccsheet button', { hasText: text }).first().dispatchEvent('click');
 
 // ---- proto: the bytes on the wire, per key -------------------------------------------------------------------------------------------------
@@ -80,7 +81,9 @@ async function proto() {
   const W = await open();
   const first = JSON.parse(W.sent[0].toString('utf8'));
   const dims = await W.page.evaluate(() => ({ cols: window.term.cols, rows: window.term.rows }));
-  check('the first frame is JSON {AuthToken, columns, rows} with the terminal size', W.sent[0][0] === 0x7b && first.AuthToken === '' && first.columns === dims.cols && first.rows === dims.rows, [first, dims]);
+  // the dock's web fonts can land after the socket opens and refit the grid: the size the pty has is the first frame's, or the last resize's
+  const lastRz = W.frames('1').map(f => JSON.parse(f)).at(-1) || { columns: first.columns, rows: first.rows };
+  check('the first frame is JSON {AuthToken, columns, rows}; the pty ends at the terminal size', W.sent[0][0] === 0x7b && first.AuthToken === '' && first.columns > 0 && first.rows > 0 && lastRz.columns === dims.cols && lastRz.rows === dims.rows, [first, lastRz, dims]);
   check('the socket is /term/ws with the page query and one token was fetched', W.sockets[0].url().endsWith(`/term/ws?arg=attach&arg=${A}&arg=${TAB}&v=3`) && W.tokens === 1, W.sockets[0].url());
   const expect = { Esc: '\x1b', Tab: '\t', 'S-Tab': '\x1b[Z', UP: '\x1b[A', DN: '\x1b[B', RT: '\x1b[C', LT: '\x1b[D', '^C': '\x03', NL: '\r' };
   for (const [k, want] of Object.entries(expect)) {
@@ -153,13 +156,13 @@ async function keybar() {
     Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
   } });
   const order = await W.page.evaluate(() => [...document.querySelectorAll('#cckb > *')].map(e => e.dataset.k));
-  const want = ['^C', 'Alt', 'LT', 'RT', 'PgUp', 'PgDn', 'NL', 'Esc', 'S-Tab', 'Tab', 'Ctrl', 'UP', 'DN', 'More'];
-  check('the key bar: the second row, then the main row, seven keys each', JSON.stringify(order) === JSON.stringify(want), order);
-  const geo = () => W.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(), kb = r('cckb'), dock = r('ccdock'), strip = r('ccstrip'), wrap = r('terminal-wrap'), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), t = /** @type {any} */ (window.term);
-    return { kbH: Math.round(kb.height), dockBottom: Math.round(dock.bottom), dockTop: Math.round(dock.top), ih: innerHeight, iw: innerWidth, stripTop: Math.round(strip.top), stripBottom: Math.round(strip.bottom), wrapTop: Math.round(wrap.top), wrapBottom: Math.round(wrap.bottom), scRight: sc.right, cell: t._core._renderService.dimensions.css.cell.width, u: t.unicode.activeVersion, rows: t.rows }; });
+  const want = ['^C', 'Alt', 'LT', 'RT', 'PgUp', 'PgDn', 'NL', 'Slash', 'Menu', 'Esc', 'S-Tab', 'Tab', 'Ctrl', 'UP', 'DN', 'More'];
+  check('the key bar: the second row, then the main row (⋯ first), eight keys each', JSON.stringify(order) === JSON.stringify(want), order);
+  const geo = () => W.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(), kb = r('cckb'), dock = r('ccdock'), wrap = r('terminal-wrap'), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), t = /** @type {any} */ (window.term);
+    return { kbH: Math.round(kb.height), dockBottom: Math.round(dock.bottom), dockTop: Math.round(dock.top), ih: innerHeight, iw: innerWidth, wrapTop: Math.round(wrap.top), wrapBottom: Math.round(wrap.bottom), scRight: sc.right, cell: t._core._renderService.dimensions.css.cell.width, u: t.unicode.activeVersion, rows: t.rows }; });
   const g = await geo();
-  check('one key row (42 px keys), the dock flush with the bottom, the strip at the top', g.kbH < 50 && g.dockBottom === g.ih && g.stripTop === 0, g);
-  check('the terminal fills the space between strip and dock and reaches the right edge', g.wrapTop === g.stripBottom && g.wrapBottom === g.dockTop && g.iw - g.scRight <= 20 + g.cell, g);
+  check('one key row (42 px keys), the dock flush with the bottom', g.kbH < 50 && g.dockBottom === g.ih, g);
+  check('the terminal fills the space from the top to the dock and reaches the right edge', g.wrapTop === 0 && g.wrapBottom === g.dockTop && g.iw - g.scRight <= 20 + g.cell, g);
   await press(W, 'More', 400);
   const g2 = await geo();
   check('the chevron opens the second row: the bar doubles and the terminal is refitted to fewer rows', g2.kbH > 80 && g2.rows < g.rows && g2.wrapBottom === g2.dockTop, [g.rows, g2]);
@@ -368,36 +371,11 @@ async function clipboard() {
   await shut(O);
 }
 
-// ---- sheet: the strip (sessions + state), the menu sheet, attach, the back key -------------------------------------------------------------
+// ---- sheet: the menu sheet behind the bar's ⋯, attach (the strip of sessions was removed 2026-10-23: no switching on a phone) -------------
 async function sheet() {
-  const W = await open();
-  const tabs = P => P.page.$$eval('#cctabs .tab[data-s]', t => t.map(x => ({ s: x.dataset.s, on: x.getAttribute('aria-current') === 'true', cls: x.className, txt: x.textContent })));
-  await W.page.waitForFunction(() => document.querySelectorAll('#cctabs .tab[data-s]').length === 2);
-  const t0 = await tabs(W);
-  check('the strip: one tab per live session, the current one marked, labels win over names', t0.length === 2 && t0[0].on && t0[0].s === A && /\bs-working\b/.test(t0[0].cls) && /second/.test(t0[1].txt), t0);
-  check('a session that needs you says so in amber even when not current; the current one says its state', /needs you/.test(t0[1].txt) && /\bs-needs-you\b/.test(t0[1].cls) && /working/.test(t0[0].txt), t0);
-  check('the list is fetched with this tab id', W.beacons.some(u => u.includes(`/app/live.json?tab=${TAB}`)), W.beacons);
-  await W.page.locator('#cctabs .tab', { hasText: 'second' }).click();
-  await W.page.waitForFunction(b => document.querySelector(`#cctabs .tab[data-s="${b}"]`)?.getAttribute('aria-current') === 'true', B);
-  check('a tab POSTs /a/switch (tab, to) and the strip changes in place', W.posts.length === 1 && W.posts[0].url.endsWith('/a/switch') && new URLSearchParams(W.posts[0].body).get('tab') === TAB && new URLSearchParams(W.posts[0].body).get('to') === B && W.page.url().endsWith(URL_A), W.posts[0]);
-  // a refused switch: one reload into attach, same tab id
-  W.switchStatus = 409;
-  await Promise.all([W.page.waitForURL(u => u.pathname === '/term/' && u.search === `?arg=attach&arg=${A}&arg=${TAB}&v=3`, { timeout: 8000 }), W.page.locator(`#cctabs .tab[data-s="${A}"]`).click()])
-    .then(() => check('a refused switch reloads once into attach with the same tab id', true), e => check('a refused switch reloads once into attach with the same tab id', false, String(e).split('\n')[0]));
-  await shut(W);
-
-  const M = await open('/term/?v=3');
-  await M.page.waitForSelector('#cctabs .tab[data-s]');
-  await Promise.all([M.page.waitForURL(u => /^\?arg=attach&arg=wt-b&arg=[0-9a-f]{8}&v=3$/.test(u.search), { timeout: 8000 }), M.page.locator('#cctabs .tab', { hasText: 'second' }).click()])
-    .then(() => check('no tab id: choosing a session reloads into attach with a minted tab id', true), e => check('no tab id: choosing a session reloads into attach with a minted tab id', false, String(e).split('\n')[0]));
-  await shut(M);
-
-  const E = await open(URL_A, { live: [] });
-  await sleep(300);
-  const et = await tabs(E);
-  check('no live sessions listed: the strip still shows this session, and the new-session tab', et.length === 1 && et[0].s === A && (await E.page.locator('#cctabs .tab.new').count()) === 1, et);
-  await E.page.locator('#ccmenu-btn').click();
-  await E.page.waitForSelector('#ccsheet.open .pan');
+  const E = await open();
+  check('no strip and no back key: the terminal starts at the top', await E.page.evaluate(() => !document.getElementById('ccstrip') && !document.getElementById('ccback') && Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().top) === 0));
+  await openMenu(E);
   const sh = await E.page.evaluate(() => { const pan = document.querySelector('#ccsheet .pan').getBoundingClientRect(); return { bottom: Math.round(pan.bottom), ih: innerHeight, h: pan.height, head: document.querySelector('#ccsheet .hd').textContent, tiles: [...document.querySelectorAll('#ccsheet .tile')].map(t => t.textContent), rows: [...document.querySelectorAll('#ccsheet .ln')].map(r => r.textContent.trim()), rowH: Math.min(...[...document.querySelectorAll('#ccsheet .ln')].map(r => r.getBoundingClientRect().height)) }; });
   check('⋯ opens the menu sheet at the bottom, at most 80 % tall, rows at least 52 px', sh.bottom === sh.ih && sh.h <= sh.ih * 0.8 + 1 && sh.rowH >= 52, sh);
   check('the menu: the session, Copy text / Paste / Attach file, text size, theme, detach, restart, all sessions', sh.head.includes(A) && JSON.stringify(sh.tiles) === '["Copy text","Paste","Attach file"]' && /^Text size/.test(sh.rows[0]) && /^Theme/.test(sh.rows[1]) && /^Detach from tmux/.test(sh.rows[2]) && /^Restart this pane/.test(sh.rows[3]) && /^All sessions/.test(sh.rows[4]), sh);
@@ -407,7 +385,7 @@ async function sheet() {
   check('restart: the first tap arms it and sends nothing', E.inputs().length === n0 && /Tap again/.test(await E.page.locator('#ccsheet .ln.danger').textContent()));
   await E.page.locator('#ccsheet .ln.danger').click(); await sleep(600);
   check('restart: the second tap sends C-q, then :respawn-pane -k and Enter, staged', E.inputs().slice(n0).join('|') === '\x11|:|respawn-pane -k|\r', E.inputs().slice(n0));
-  await E.page.locator('#ccmenu-btn').click(); await E.page.waitForSelector('#ccsheet.open .pan');
+  await openMenu(E);
   await Promise.all([E.page.waitForURL(u => u.pathname === '/', { timeout: 8000 }), E.page.locator('#ccsheet .ln', { hasText: 'All sessions' }).click()])
     .then(() => check('"All sessions" navigates to /', true), e => check('"All sessions" navigates to /', false, String(e).split('\n')[0]));
   await shut(E);
@@ -416,7 +394,7 @@ async function sheet() {
   const T = await open(URL_A, { motion: true });
   const tp = await T.page.$eval('#ccsheet .pan', e => getComputedStyle(e).transitionProperty);
   check('motion on: the pan slide transition is wired', /transform/.test(tp), tp);
-  await T.page.locator('#ccmenu-btn').click(); await T.page.waitForSelector('#ccsheet.open .pan');
+  await openMenu(T);
   check('motion on: the sheet settles flush with the bottom edge', await T.page.waitForFunction(() => Math.abs(document.querySelector('#ccsheet .pan').getBoundingClientRect().bottom - innerHeight) < 1, null, { timeout: 1500 }).then(() => true, () => false));
   await T.page.mouse.click(10, 10);
   check('motion on: a backdrop tap closes it, display returns to none', await T.page.waitForFunction(() => getComputedStyle(document.getElementById('ccsheet')).display === 'none', null, { timeout: 2000 }).then(() => true, () => false));
@@ -433,10 +411,7 @@ async function sheet() {
   check('a dropped file of any type goes up with its own name', F.posts.length === 2 && decodeURIComponent(F.posts[1].headers['x-name']) === 'notes.md' && F.posts[1].headers['content-type'] === 'text/markdown', F.posts[1] && F.posts[1].headers);
   const pr = await F.page.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(['y'], 'p.png', { type: 'image/png' })); const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }); document.body.dispatchEvent(e); return e.defaultPrevented; }); await sleep(300);
   check('a pasted file is intercepted and uploaded', pr && F.posts.length === 3 && decodeURIComponent(F.posts[2].headers['x-name']) === 'p.png', [pr, F.posts.length]);
-  // the back key: a plain navigation
-  await Promise.all([F.page.waitForURL(u => u.pathname === '/', { timeout: 8000 }), F.page.locator('#ccback').dispatchEvent('pointerdown')])
-    .then(() => check('‹ navigates to /', true), e => check('‹ navigates to /', false, String(e).split('\n')[0]));
-  check('no page errors', W.errors.length === 0 && E.errors.length === 0 && T.errors.length === 0, [...W.errors, ...E.errors, ...T.errors]);
+  check('no page errors', E.errors.length === 0 && T.errors.length === 0 && F.errors.length === 0, [...E.errors, ...T.errors, ...F.errors]);
   await shut(F);
 }
 
@@ -447,9 +422,11 @@ async function composer() {
   const size = () => W.page.evaluate(() => ({ cols: window.term.cols, rows: window.term.rows }));
   const R = '─'.repeat((await size()).cols);
   // the grid is read at each draw: a growing field or the second key row refits the terminal
-  const draw = async tail => { const { rows } = await size(); const body = ['● Done. The watcher skips a session you type in.', '']; const all = [...body, ...tail]; const ls = [...Array(Math.max(0, rows - all.length)).fill(''), ...all].slice(-rows);
+  // this fake does not redraw on a resize (real Claude does): wait until the grid has held for 300 ms (a refit is coalesced 150 ms) before drawing
+  const stable = async () => { let a = await size(); for (let i = 0; i < 20; i++) { await sleep(150); const b = await size(); if (b.rows === a.rows && b.cols === a.cols) { await sleep(150); const c = await size(); if (c.rows === b.rows) return; } a = b; } };
+  const draw = async tail => { await stable(); const { rows } = await size(); const body = ['● Done. The watcher skips a session you type in.', '']; const all = [...body, ...tail]; const ls = [...Array(Math.max(0, rows - all.length)).fill(''), ...all].slice(-rows);
     W.out('\x1b[H\x1b[2J' + ls.map((l, i) => `\x1b[${i + 1};1H` + l).join('')); };
-  const st = () => W.page.evaluate(() => ({ shown: !document.getElementById('cccomp').hidden, tf: document.getElementById('terminal-container').style.transform, claude: document.body.classList.contains('ccclaude'), ph: document.getElementById('ccmsg').placeholder, mode: document.getElementById('ccmode').hidden ? null : document.getElementById('ccmode').textContent,
+  const st = () => W.page.evaluate(() => ({ shown: !document.getElementById('cccomp').hidden, draft: document.getElementById('ccdraft').hidden ? '' : document.getElementById('ccdraft').textContent, tf: document.getElementById('terminal-container').style.transform, claude: document.body.classList.contains('ccclaude'), ph: document.getElementById('ccmsg').placeholder, mode: document.getElementById('ccmode').hidden ? null : document.getElementById('ccmode').textContent,
     // the top rule of the box must sit at or below the wrap's bottom edge
     ruleY: (() => { const b = window.term.buffer.active; for (let i = 0; i < window.term.rows; i++) if (/^─{8,}$/.test(b.getLine(b.viewportY + i).translateToString(true))) { const sc = document.querySelector('.xterm-screen').getBoundingClientRect(); return Math.round(sc.top + i * sc.height / window.term.rows); } return -1; })(),
     wrapBottom: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().bottom) }));
@@ -484,20 +461,24 @@ async function composer() {
   // the keyboard belongs to the field while the box is hidden
   await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
   check('a tap on the terminal brings the focus to the field', await W.page.evaluate(() => document.activeElement?.id === 'ccmsg'));
-  // attach while the box is hidden: the path goes into the field, not into Claude's box (which would bring it back: two inputs)
+  // attach: the path goes into Claude's box (where an image path becomes a real attachment); the box stays hidden and the field shows it
   let n1 = W.inputs().length;
   await W.page.setInputFiles('input[type=file]', { name: 'IMG_8150.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(300);
-  check('attach with the box hidden: the path lands in the field, nothing reaches the terminal', (await W.page.inputValue('#ccmsg')) === '/tmp/shot-1.png ' && W.inputs().length === n1, [await W.page.inputValue('#ccmsg'), W.inputs().slice(n1)]);
-  await W.page.fill('#ccmsg', '');
-  // a draft in Claude's own box: shown as it is, and the field goes: one input
-  await draw([R, '\u276f\u00a0typed straight into the terminal', R, '  \u23f8 plan mode on (shift+tab to cycle)', '[wt-a] 0:claude*']);
-  const s2 = await settle(x => !x.shown);
-  check('a box holding a draft is not hidden and the field hides (one input)', !s2.tf && !s2.claude && !s2.shown && s2.ruleY < s2.wrapBottom, s2);
+  check('attach: the path goes to the terminal (Claude makes it an attachment)', W.inputs().slice(n1).join('') === '\x1b[200~/tmp/shot-1.png \x1b[201~', W.inputs().slice(n1));
+  // what Claude then holds in its box (drawn in the default colour, as typed text is): the box stays hidden, the field shows it as the draft chip
+  await draw([R, '\u276f\u00a0[Image #1] ', R, '  \u23f8 plan mode on (shift+tab to cycle)', '[wt-a] 0:claude*']);
+  const s2 = await settle(x => x.draft === '[Image #1]');
+  check('a box holding a draft stays hidden; the field shows it as the draft chip (one input)', s2.claude && /translateY/.test(s2.tf) && s2.shown && s2.ruleY >= s2.wrapBottom && s2.mode === '\u23f8 plan mode', s2);
+  n1 = W.inputs().length; await W.page.locator('#ccsend').click(); await sleep(150);
+  check('send with an empty field submits the draft alone (a bare \\r)', W.inputs().slice(n1).join('') === '\r', bytes(W.inputs().slice(n1)));
+  n1 = W.inputs().length; await W.page.fill('#ccmsg', 'what is this?'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);
+  check('send with text appends it to the draft: one paste, then \\r', W.inputs().slice(n1).join('|') === '\x1b[200~what is this?\x1b[201~|\r', bytes(W.inputs().slice(n1)));
+  // a shell: after the linger the field goes and the terminal is the one input
+  W.out('\x1b[H\x1b[2Jdev@box:~$ '); await sleep(1700);
+  const sh = await settle(x => !x.shown);
+  check('Claude gone (a shell): the field goes after the linger, nothing hidden', !sh.shown && !sh.tf && !sh.claude, sh);
   await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
-  check('with the box shown, a tap on the terminal types into the terminal', await W.page.evaluate(() => document.activeElement === window.term.textarea));
-  n1 = W.inputs().length;
-  await W.page.setInputFiles('input[type=file]', { name: 'b.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(300);
-  check('attach with the field hidden: the path goes to the terminal as before (a bracketed paste: the app asked for it)', W.inputs().slice(n1).join('') === '\x1b[200~/tmp/shot-1.png \x1b[201~', W.inputs().slice(n1));
+  check('with no field, a tap on the terminal types into the terminal', await W.page.evaluate(() => document.activeElement === window.term.textarea));
   // output that draws a fake empty box above a real permission dialog: the dialog wins, nothing is hidden
   await draw(['cat notes.md', R, '\u276f\u00a0', R, '', ' Do you want to proceed?', ' \u276f 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel']); 
   const sf = await settle(x => x.shown);
@@ -615,7 +596,7 @@ async function theme() {
   await q(Ph, () => window.cctheme(''));
   const D2 = Ph;
   // the picker, in the menu sheet
-  await D2.page.locator('#ccmenu-btn').click(); await D2.page.waitForSelector('#ccsheet.open #ccthemesel');
+  await openMenu(D2);
   await D2.page.locator('#ccthemesel').selectOption('Catppuccin Mocha');
   check('the picker in the menu applies and stores a theme', (await read(D2)).foreground.toLowerCase() === THEMES['Catppuccin Mocha'].foreground.toLowerCase() && (await q(D2, () => localStorage.cctheme)) === 'Catppuccin Mocha');
   await D2.page.locator('#ccthemesel').selectOption('Default');

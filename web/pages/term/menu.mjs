@@ -39,7 +39,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title }) {
   sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
   const open = () => {
     const t = title();
-    name.textContent = t ? t.label || t.name : 'terminal'; sub.textContent = t ? 'tmux ' + t.name : '';
+    name.textContent = t ? t.label || t.name : 'terminal'; sub.textContent = t && t.label && t.label !== t.name ? 'tmux ' + t.name : '';
     armed = 0; restartRow.firstChild.textContent = RESTART;
     sheet.classList.add('open');
   };

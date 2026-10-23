@@ -128,7 +128,8 @@ docker with `--ui=legacy`, fetches ten pages and compares them with `docs/qa/bas
 
 ```sh
 node scripts/term-proto-check.mjs                    # the ttyd 1.7.4 client against a fake socket: no browser, no server
-node docs/qa/probes/term-check.mjs webkit all        # proto keybar ime clipboard sheet paint theme
+node docs/qa/probes/term-check.mjs webkit all        # proto keybar ime clipboard sheet composer paint theme framed
+node docs/qa/probes/term-claude-check.mjs webkit [dir] # the phone terminal against a fake Claude that redraws on resize; 3 iPhone sizes
 node docs/qa/probes/term-check.mjs chromium sheet    # one mode, one engine
 node docs/qa/probes/md-check.mjs chromium            # /md: download, CSP, lazy pinned mermaid, tap to toggle
 ```
@@ -142,6 +143,15 @@ the keyboard-aware fit (a stand-in `visualViewport`, since no engine raises an o
 the overlay and the paste key (the system clipboard itself is read back on Chromium only); `sheet` the session pill and bottom sheet, attach by key,
 paste and drop, the back key and the geometry beacon; `paint` repaint on foreground, resize coalescing and the 4/8/15 s boot ladder on Playwright's
 fake clock; `theme` every theme of `themes.json` applied from the built `[data-theme]` CSS, the precedence and the 30 s poll.
+`sheet` is now the strip (one tab per session with its fleet state, in-place switch) and the menu sheet; `composer` the message field on hand-drawn
+Claude screens (the box hidden and the draft chip, a dialog takes a digit, a fake box over a dialog refused, attach, `?comp=off`).
+
+`term-claude-check` needs no server: `dist/term.html` and its assets come from disk. It drives the page at 375x667, 393x852 and 430x932 against a fake
+Claude Code that behaves like the real one where the composer was fooled (2026-10-23): on every resize tmux cuts the pane first (shrinking deletes
+the lines under the cursor, which sits on Claude's prompt row, so the box's bottom goes first; growing pulls history in at the top) and Claude
+redraws 120 ms later; a pasted image path becomes `[Image #N]`; ↑ recalls; shift+tab cycles the mode; a permission dialog; an exit to a shell. A sampler
+in the page reads every painted frame: Claude's own input line visible while the field shows is a failure, and so is any show/hide of the field the
+journey did not ask for. With a directory argument it writes a screenshot per step.
 
 `md-check` runs against the real `/md` of the dev instance for the repo's `README.md`: the download link, the CSP (BASE_CSP + the CDN origin + the hash
 of the one inline loader), no request to the CDN until the first ` ```mermaid ` fence scrolls into view, then one request for the pinned

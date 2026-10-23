@@ -24,8 +24,9 @@ export function claudeScreen(rows, typed = rows) {
     for (let t = b - 1; t >= Math.max(0, b - 11); t--) {
       if (!RULE.test(rows[t])) continue;
       if (t + 1 < b && PROMPT.test(rows[t + 1])) {
-        const draft = typed.slice(t + 1, b).join('\n').replace(PROMPT, '').replace(/[│❯>\s ]+/g, '');
-        box = { top: t, bottom: b, empty: !draft };
+        // what is typed, as one line for the composer's draft chip: the prompt glyph, the box's sides and the runs of blanks folded away
+        const draft = typed.slice(t + 1, b).join(' ').replace(PROMPT, '').replace(/[│❯]/g, ' ').replace(/[\s\u00a0]+/g, ' ').trim();
+        box = { top: t, bottom: b, empty: !draft, draft };
       }
       break;
     }
@@ -34,7 +35,11 @@ export function claudeScreen(rows, typed = rows) {
   // and a box found above or below a real dialog would hide it while return answers it (security reviews 2026-10-23). Only the question's
   // words are read from the box down: above it is conversation, where they are only words.
   const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
-  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, choice: choices(tail) };
+  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, choice: choices(tail), edge: -1 };
+  // edge: the lowest rule with a prompt row under it, bottom rule or not. Mid-resize tmux shows the pane cut to the new size before Claude
+  // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
+  let edge = -1;
+  for (let r = n - 2; r >= Math.max(1, n - 16) && edge < 0; r--) if (RULE.test(rows[r]) && PROMPT.test(rows[r + 1])) edge = r;
   let mode = null;
   if (box) {
     for (const r of rows.slice(box.bottom + 1)) {
@@ -43,5 +48,5 @@ export function claudeScreen(rows, typed = rows) {
     }
     mode ??= { label: 'default mode', cls: 'df' };
   }
-  return { box, mode, choice: 0 };
+  return { box, mode, choice: 0, edge };
 }

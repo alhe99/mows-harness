@@ -1,11 +1,15 @@
 // composer.mjs — the message field over the keys (2026-10-23). Return sends what is typed: a bracketed paste and, 60 ms later, a \r (the
-// paste and the Enter must not land in one read). Shift+return breaks the line; an empty field sends nothing. Phone text, so autocorrect, dictation and the caret work as in any other field.
-// While Claude Code's own input box is on screen and empty (claudebox.mjs), the composer stands in for it: the terminal is shifted down by
-// the box's rows, so the box, Claude's status and mode lines and tmux's status line slide under the dock, and a tap on the terminal brings
-// the keyboard up in the composer. The mode line comes back as the chip (tap = shift+tab). A box holding a draft, a permission dialog, a
-// shell or a full-screen program: nothing is hidden and the terminal reads as it is. One input, always: the field shows only while it stands in
-// for Claude's hidden box or answers a permission dialog; otherwise the terminal is the input, as before (2026-10-23, two inputs seen on the
-// phone with a draft and after Attach). ?comp=off turns the composer off.
+// paste and the Enter must not land in one read). Shift+return breaks the line. Phone text, so autocorrect, dictation and the caret work as
+// in any other field.
+// In a Claude session the field stands in for Claude Code's own input box (claudebox.mjs): the terminal is shifted down by the box's rows, so
+// the box, Claude's status and mode lines and tmux's status line slide under the dock, and a tap on the terminal brings the keyboard up in
+// the field. What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
+// submits it with whatever is typed; with an empty field, send submits the draft alone. The mode line comes back as the mode chip (tap =
+// shift+tab). A permission dialog: nothing is hidden, a bare digit picks. A shell or a full-screen program: no field, the terminal is the one
+// input. ?comp=off turns the composer off.
+// The layout must not depend on the screen from one frame to the next: showing the field resizes the terminal, Claude and tmux redraw, and
+// mid-redraw the box is briefly gone (the phone, 2026-10-23: the field flashed on and off). So the field appears at once and goes only after
+// Claude has been off the screen for LINGER ms, and the shift and the chips are kept through the same window.
 // ponytail: the shift wastes the hidden rows at the top of the screen (a blank band under the strip). Upgrade path: grow the pty by those
 // rows instead, at the price of a resize whenever the box comes and goes.
 import { claudeScreen } from './claudebox.mjs';
@@ -13,23 +17,25 @@ import { coarse, el, icon, off } from './dom.mjs';
 import { mods } from './bar.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
+const LINGER = 1500;
 
 export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc) {
   if (!coarse() || off('comp')) return null;
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
   const mode = el('button', { type: 'button', id: 'ccmode', hidden: true, 'aria-label': 'permission mode, tap to cycle' });
+  const draft = el('span', { id: 'ccdraft', hidden: true, title: "what Claude's input box holds" });
   const send = el('button', { type: 'submit', id: 'ccsend', 'aria-label': 'send' }, icon(SEND));
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, mode, send));
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, mode, draft, send));
 
-  let hidden = -1, choice = 0; // hidden: the screen row of the top rule of Claude's box while it is hidden, else -1
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; form.classList.toggle('has', !!ta.value.trim()); };
+  let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; form.classList.toggle('has', !!ta.value.trim() || !!held); };
   const submit = () => {
     scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
     const t = ta.value.replace(/\s+$/, '');
     ta.value = ''; grow();
-    if (!t) return; // never a bare Enter: under the field is a hidden box or a dialog whose Enter would answer it
-    if (choice && /^\d$/.test(t)) { term.input(t); return; } // a permission dialog: the digit picks, an Enter after it would land in the next prompt
+    if (choice) { if (/^\d$/.test(t)) term.input(t); return; } // a permission dialog: a digit picks, and nothing else is sent into it
+    if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
   };
@@ -43,11 +49,26 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   });
   mode.addEventListener('click', () => term.input('\x1b[Z'));
 
-  // the screen, read after every write (coalesced: one scan per 30 ms burst)
+  const place = (/** @type {number} */ t) => {
+    // the shift that puts the box's top rule just under the wrap's bottom edge (the screen sits a padding into the container)
+    const scr = document.querySelector('.xterm-screen'), wrap = tc.parentElement;
+    if (t < 0 || !scr || !wrap) return '';
+    // the cell height: a DOM row's (the renderer iOS uses), else the screen's height over the rows. Right after a resize the screen keeps its
+    // old height until xterm renders, so that ratio is stale for a frame: the rAF pass after a resize corrects it
+    const r0 = /** @type {HTMLElement | null} */ (document.querySelector('.xterm-rows > div'));
+    const cell = r0?.offsetHeight || scr.clientHeight / term.rows;
+    const y = scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cell;
+    return `translateY(${Math.max(0, Math.ceil(wrap.clientHeight - y))}px)`; // mid-refit the rule can already sit below the edge
+  };
+  // the screen, read in the same write that changed it (before the frame is painted: the shift and the content move together), and after
+  // every resize
   /** @type {any} */ let pend = 0;
+  /** @type {any} */ let linger = 0;
   const scan = () => {
     clearTimeout(pend); pend = 0;
-    const b = term.buffer.active, rows = [], typed = [], cell = b.getNullCell();
+    const b = term.buffer.active;
+    if (b.viewportY !== b.baseY) return; // scrolled back in xterm's own history: nothing to read, nothing changes
+    const rows = [], typed = [], cell = b.getNullCell();
     for (let i = 0; i < term.rows; i++) {
       const l = b.getLine(b.viewportY + i);
       rows.push(l?.translateToString(true) ?? '');
@@ -56,39 +77,49 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       if (l) for (let x = 0; x < l.length; x++) { const c = l.getCell(x, cell); if (!c || !c.getWidth()) continue; t += c.isFgDefault() && !c.isDim() && !c.isInverse() ? c.getChars() || ' ' : ' '; }
       typed.push(t);
     }
-    const s = b.viewportY === b.baseY ? claudeScreen(rows, typed) : { box: null, mode: null, choice: 0 };
-    // at most 12 rows (box, Claude's status and mode lines, a task list, tmux's line) and never from the first row: a misread screen cannot
-    // swallow the conversation. Not a share of the rows: with the keyboard up on a small phone the box alone is two thirds of them.
-    const top = s.box?.empty && s.box.top >= 1 && term.rows - s.box.top <= 12 ? s.box.top : -1;
-    if (top !== hidden) {
-      hidden = top;
-      // the shift that puts the box's top rule just under the wrap's bottom edge (the screen sits 5 px into the container: .terminal's padding)
-      const scr = document.querySelector('.xterm-screen'), wrap = tc.parentElement;
-      const y = scr && wrap ? scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + top * (scr.clientHeight / term.rows) : 0;
-      tc.style.transform = top >= 0 && wrap ? `translateY(${Math.max(0, Math.ceil(wrap.clientHeight - y))}px)` : ''; // mid-refit the rule can already sit below the edge
-      document.body.classList.toggle('ccclaude', top >= 0);
-    }
+    const s = claudeScreen(rows, typed), now = Date.now();
+    // at most 16 rows holding something (box, Claude's status and mode lines, a task list, tmux's line; blank rows a redraw has not reached
+    // yet do not count): a misread screen cannot swallow the conversation. Not a share of the rows: with the keyboard up on a small phone the
+    // box alone is two thirds of them, and on an SE with the second key row open it starts on the first row.
+    const ok = r => r >= 0 && rows.slice(r).filter(x => x.trim()).length <= 16;
+    let t = s.box && ok(s.box.top) ? s.box.top : -1;
+    const recent = now - seen < LINGER;
+    if (t >= 0 || s.choice) seen = now;
+    else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
-    mode.hidden = !(top >= 0 && s.mode);
-    if (s.mode) { mode.textContent = s.mode.label; mode.className = s.mode.cls; }
-    ta.placeholder = choice ? `Type 1–${choice} to choose…` : 'Message Claude…';
-    const show = top >= 0 || choice > 0;
+    clearTimeout(linger);
+    if (t >= 0) {
+      top = t; shift = place(t);
+      if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
+        held = s.box.draft || '';
+        mode.hidden = !s.mode;
+        if (s.mode) { mode.textContent = s.mode.label; mode.className = s.mode.cls; }
+      }
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; } // a dialog shows at once; the rest after LINGER without Claude
+    else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
+    if (tc.style.transform !== shift) tc.style.transform = shift;
+    document.body.classList.toggle('ccclaude', top >= 0);
+    if (draft.textContent !== held) { draft.hidden = !held; draft.textContent = held; grow(); } // only on a change: grow() moves the layout
+    const ph = choice ? `Type 1–${choice} to choose…` : held ? 'Add a message, or send as it is…' : 'Message Claude…';
+    if (ta.placeholder !== ph) ta.placeholder = ph;
+    const show = top >= 0 || choice > 0 || recent;
     if (form.hidden === show) {
       form.hidden = !show;
       if (!show && document.activeElement === ta) term.focus(); // the keyboard carries on in the terminal, the one input left
     }
   };
   const later = () => { pend ||= setTimeout(scan, 30); };
-  term.onWriteParsed(later); term.onScroll(later);
+  term.onWriteParsed(scan); term.onScroll(later);
   // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there
-  term.textarea?.addEventListener('focus', () => { if (hidden >= 0) ta.focus(); });
-  // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: measure again
-  const remeasure = () => { hidden = -2; later(); };
-  term.onResize(remeasure);
-  if (tc.parentElement) new ResizeObserver(remeasure).observe(tc.parentElement);
-  /** text from attach or paste: it goes where the user types. true if taken */
+  term.textarea?.addEventListener('focus', () => { if (top >= 0) ta.focus(); });
+  // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: place the shift again
+  term.onResize(() => { scan(); requestAnimationFrame(() => scan()); });
+  // from the observer: the shift is placed at once (a transform: it cannot resize what is observed, and the frame paints with it), the full
+  // scan a tick later (it can show or hide the field, which inside the callback would be a ResizeObserver loop: WebKit reports it)
+  if (tc.parentElement) new ResizeObserver(() => { if (top >= 0) tc.style.transform = shift = place(top); clearTimeout(pend); pend = setTimeout(scan, 0); }).observe(tc.parentElement);
+  /** text from the menu's Paste: it goes where the user types. true if taken */
   const insert = t => {
-    if (form.hidden) return false; // the field is not the input right now
+    if (form.hidden || choice) return false;
     ta.setRangeText(t, ta.selectionStart, ta.selectionEnd, 'end'); grow();
     return true;
   };

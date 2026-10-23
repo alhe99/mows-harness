@@ -2,13 +2,17 @@
 // seven: the main row always, the second behind the chevron. Every key goes through term.input()/term.paste() (public API), so the bytes on the
 // wire are what term-check.mjs's `proto` mode asserts. Ctrl and Alt latch: one tap applies to the next key typed (the phone keyboard, the
 // composer, an arrow), a second tap within 350 ms locks, a tap on a set latch clears it. The rest of the old bar (copy, paste, attach, size,
-// theme, restart, detach) lives in the menu sheet (menu.mjs); the session pill became the strip (strip.mjs). 2026-10-23
+// theme, restart, detach, all sessions) lives in the menu sheet (menu.mjs), opened by the bar's first key ⋯. No session switching on a phone
+// (the owner never used it: the pill, then the strip, are gone). The keys that type text (⇧⏎, /) type into the composer while it has the focus:
+// the phone keyboard has no shift+return, so ⇧⏎ is the field's line break. 2026-10-23
 import { el, icon, key, store } from './dom.mjs';
+
+const DOTS = '<circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/>';
 
 const CHEV = '<path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
 // the second row first in the DOM: the grid draws it above the main row
-const MORE = { '^C': '^c', Alt: 'alt', LT: '←', RT: '→', PgUp: 'pg↑', PgDn: 'pg↓', NL: '⇧⏎' };
-const MAIN = { Esc: 'esc', 'S-Tab': '⇧tab', Tab: 'tab', Ctrl: 'ctrl', UP: '↑', DN: '↓', More: '' };
+const MORE = { '^C': '^c', Alt: 'alt', LT: '←', RT: '→', PgUp: 'pg↑', PgDn: 'pg↓', NL: '⇧⏎', Slash: '/' };
+const MAIN = { Menu: '', Esc: 'esc', 'S-Tab': '⇧tab', Tab: 'tab', Ctrl: 'ctrl', UP: '↑', DN: '↓', More: '' };
 const ARROW = { UP: 'A', DN: 'B', RT: 'C', LT: 'D' };
 const SEQ = { Esc: '\x1b', Tab: '\t', 'S-Tab': '\x1b[Z', '^C': '\x03' };
 
@@ -38,15 +42,26 @@ export function latch(d) {
   return out;
 }
 
-/** the keys of #cckb, the second row first; `typing()` is true while the composer holds the focus (a key must not take it away) */
-export function baseKeys(/** @type {import('@xterm/xterm').Terminal} */ term, typing = () => false) {
+/** the keys of #cckb, the second row first. `typing()`: the composer holds the focus (a key must not take it away); `type(s)`: puts text in it;
+ *  `menu()`: opens the menu sheet */
+/** @param {import('@xterm/xterm').Terminal} term @param {{ typing?: () => boolean, type?: (s: string) => any, menu?: () => void }} [o] */
+export function baseKeys(term, o = {}) {
+  const typing = o.typing || (() => false), type = o.type || (() => {}), menu = o.menu || (() => {});
   const raw = term.input.bind(term);
   term.input = (d, u) => raw(latch(d), u); // the phone keyboard (ime.mjs) and every key below go through the latches
   const act = {
-    NL: () => term.paste('\n'), PgUp: () => wheel(-1, 6), PgDn: () => wheel(1, 6),
+    NL: () => (typing() ? type('\n') : term.paste('\n')), Slash: () => (typing() ? type('/') : term.input('/')), PgUp: () => wheel(-1, 6), PgDn: () => wheel(1, 6),
   };
   let last = { k: '', t: 0 };
   const make = (k, label, row) => {
+    if (k === 'Menu') {
+      // a plain click, not the keys' pointerdown: the keyboard must drop (the sheet sits at the bottom, under it), and a sheet opened on
+      // pointerdown would take this tap's click on its backdrop and close again
+      const m = el('button', { type: 'button', 'aria-label': 'terminal actions' }, icon(DOTS));
+      m.dataset.k = k;
+      m.addEventListener('click', () => { (/** @type {any} */ (document.activeElement))?.blur?.(); menu(); });
+      return m;
+    }
     const b = key(label, (_b, e) => {
       if (k === 'Ctrl' || k === 'Alt') {
         const dbl = last.k === k && e.timeStamp - last.t < 350 && mods[k] === 'armed';

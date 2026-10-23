@@ -1,0 +1,193 @@
+// term-claude-check.mjs — the phone terminal against a fake Claude Code that behaves like the real one, at three iPhone sizes. Exit code is the verdict.
+// usage: node docs/qa/probes/term-claude-check.mjs [webkit|chromium] [shots-dir]      (PLAYWRIGHT: module path; default: the repo's playwright)
+// No server: dist/term.html and its /assets/ come from disk (run `node build.mjs` first), every route is answered here.
+// Why it exists (2026-10-23): the composer passed term-check on hand-drawn screens and then flashed on a phone, because a real session redraws.
+// Showing the field resizes the terminal; tmux first cuts the pane (shrinking deletes the lines under the cursor, which sits on Claude's prompt
+// row, so the box's bottom goes first; growing pulls history in at the top), then Claude redraws for the new size. The fake does exactly that,
+// turns a pasted image path into [Image #N] (as Claude does), recalls with ↑, cycles modes with shift+tab, raises a permission dialog, exits to
+// a shell. A sampler in the page reads every painted frame (rAF, then a task after the paint): Claude's own input line (a rule with its ❯ row)
+// visible while the field shows is two inputs, and every show/hide of the field is counted, so a flash fails the run.
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const pw = await import(process.env.PLAYWRIGHT || 'playwright').catch(() => { console.error('term-claude-check: playwright is not installed (npm ci --ignore-scripts)'); process.exit(2); });
+const engine = process.argv[2] || 'webkit', OUT = process.argv[3] || '';
+if (OUT) mkdirSync(OUT, { recursive: true });
+const ROOT = join(import.meta.dirname, '../../..');
+const PAGE = readFileSync(join(ROOT, 'dist/term.html'), 'utf8');
+const browser = await pw[engine].launch();
+let bad = 0;
+const check = (id, ok, d) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${engine}/${id}${ok ? '' : ' ' + JSON.stringify(d)}`); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const MODES = ['⏵⏵ auto mode on', '⏵⏵ accept edits on', '⏸ plan mode on', ''];
+const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m';
+
+class FakeClaude {
+  constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: ['\x1b[38;5;246m✻ Welcome back\x1b[0m', ''], draft: '', last: 'it\'s all merged?', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
+  feed(m) {
+    const s = typeof m === 'string' ? m : Buffer.from(m).toString('utf8');
+    if (s[0] === '{') { const j = JSON.parse(s); this.rows = j.rows; this.cols = j.columns; this.redraw(); return; }
+    if (s[0] === '1') { const j = JSON.parse(s.slice(1)); this.resize(j.rows, j.columns); return; }
+    if (s[0] !== '0') return;
+    let d = s.slice(1);
+    if (this.scene === 'shell') { for (const c of d) { if (c === '\r') { this.log.push('dev@box:~$ ' + this.draft); this.draft = ''; } else if (c >= ' ') this.draft += c; } this.redraw(); return; }
+    while (d) {
+      let m;
+      if ((m = /^\x1b\[200~([\s\S]*?)\x1b\[201~/.exec(d))) { const p = m[1]; this.draft += /\.(png|jpe?g|gif|webp)\s*$/i.test(p) ? `[Image #${++this.imgs}] ` : p.replace(/\r/g, '\n'); d = d.slice(m[0].length); continue; }
+      if (d.startsWith('\x1b[Z')) { this.mode = (this.mode + 1) % MODES.length; d = d.slice(3); continue; }
+      if (d.startsWith('\x1b[A') || d.startsWith('\x1bOA')) { this.draft = this.last; d = d.slice(3); continue; }
+      if (d.startsWith('\x1b')) { // esc: cancels a dialog, clears the input
+        if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
+        d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
+      }
+      const c = d[0]; d = d.slice(1);
+      if (this.scene === 'dialog') { if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
+      if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
+      if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
+      if (c >= ' ') this.draft += c;
+    }
+    this.redraw();
+  }
+  submit() {
+    const p = this.draft.trim(); this.last = p; this.draft = '';
+    this.log.push(`\x1b[48;5;237m\x1b[38;5;246m❯ \x1b[38;5;231m${p}\x1b[0m`, '');
+    this.scene = 'working'; this.redraw();
+    setTimeout(() => { this.log.push('\x1b[32m●\x1b[0m Done: ' + p.slice(0, 60), ''); this.scene = 'idle'; this.redraw(); }, 400);
+  }
+  frame() {
+    const R = '\x1b[38;5;244m' + '─'.repeat(this.cols) + '\x1b[0m';
+    const wrap = l => { const plain = l.replace(/\x1b\[[0-9;]*m/g, ''); if (plain.length <= this.cols) return [l]; const out = []; for (let i = 0; i < plain.length; i += this.cols) out.push(plain.slice(i, i + this.cols)); return out; };
+    let tail;
+    if (this.scene === 'shell') tail = ['dev@box:~$ ' + this.draft, TMUX];
+    else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
+    else {
+      // the input line: what is typed in the default colour; empty, the last prompt as Claude's dimmed suggestion under its inverse cursor
+      const prompt = this.draft ? '\x1b[38;5;246m❯ \x1b[39m' + this.draft.split('\n')[0] : '\x1b[38;5;246m❯ \x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1) + '\x1b[0m';
+      tail = [...(this.scene === 'working' ? ['\x1b[38;5;173m✻ Simmering…\x1b[0m \x1b[2m(3s · esc to interrupt)\x1b[0m', ''] : []), R, prompt, ...this.draft.split('\n').slice(1), R,
+        '  🤖 Opus 5.5 (high) | 💰 $17.17 session', MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
+    }
+    const all = [...this.log.flatMap(wrap), ...tail];
+    return [...Array(Math.max(0, this.rows - all.length)).fill(''), ...all].slice(-this.rows);
+  }
+  paint(lines) {
+    this.screen = lines;
+    const pre = this.bp ? '' : (this.bp = true, '\x1b[?2004h'); // Claude asks for bracketed paste
+    this.ws.send(Buffer.concat([Buffer.from('0'), Buffer.from(pre + '\x1b[H\x1b[2J' + lines.map((l, i) => `\x1b[${i + 1};1H` + l).join(''))]));
+  }
+  redraw() { if (this.rows) this.paint(this.frame()); }
+  resize(rows, cols) {
+    // tmux first (screen_resize_y), its status line staying the last row; then, 120 ms later, Claude's own redraw for the new size
+    const old = this.screen.slice(0, -1), d = old.length - (rows - 1);
+    let cut = old;
+    if (d > 0) { const cur = old.findIndex(l => l.includes('❯')), below = cur < 0 ? 0 : Math.max(0, old.length - 1 - cur); cut = old.slice(0, old.length - Math.min(d, below)).slice(-(rows - 1)); }
+    this.rows = rows; this.cols = cols;
+    if (d < 0) cut = [...this.frame().slice(0, rows - 1 - old.length), ...old];
+    if (old.length) this.paint([...cut, TMUX]);
+    clearTimeout(this.t); this.t = setTimeout(() => this.redraw(), 120);
+  }
+}
+
+async function phone(w, h) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+  await ctx.addInitScript(() => {
+    // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
+    const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
+    Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    window.__qa = { two: [], flips: 0, samples: 0 };
+    addEventListener('load', () => setTimeout(function tick() {
+      const comp = document.getElementById('cccomp'), sc = document.querySelector('.xterm-screen'), wrap = document.getElementById('terminal-wrap'), t = /** @type {any} */ (window).term;
+      if (comp && sc && t) {
+        if (comp.dataset.was !== String(comp.hidden)) { if (comp.dataset.was !== undefined) window.__qa.flips++; comp.dataset.was = String(comp.hidden); }
+        const r = sc.getBoundingClientRect(), wb = wrap.getBoundingClientRect().bottom, b = t.buffer.active, line = i => b.getLine(b.viewportY + i)?.translateToString(true) || '';
+        for (let i = 0; i < t.rows - 1; i++) if (/^─{8,}$/.test(line(i)) && /^❯/.test(line(i + 1)) && r.top + (i + 2) * r.height / t.rows <= wb + 1 && !comp.hidden) { window.__qa.two.push({ at: Math.round(performance.now()), row: i, rows: t.rows, tf: document.getElementById('terminal-container').style.transform }); break; }
+        window.__qa.samples++;
+      }
+      requestAnimationFrame(() => setTimeout(tick, 0));
+    }, 16));
+  });
+  let fake;
+  await ctx.route(u => new URL(u).hostname === 'mows.test', async r => {
+    const p = new URL(r.request().url()).pathname;
+    if (p === '/term/') return r.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE });
+    if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
+    if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
+    if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
+    if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
+    if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
+    return r.fulfill({ status: 204 });
+  });
+  await ctx.routeWebSocket(/\/term\/ws/, ws => { fake = new FakeClaude(ws); ws.onMessage(m => fake.feed(m)); });
+  const page = await ctx.newPage(); const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await page.goto('http://mows.test/term/?arg=attach&arg=ccw-dev&arg=ab12cd34&v=3');
+  await page.waitForFunction(() => /** @type {any} */ (window).term && document.getElementById('cckb'));
+  await sleep(700);
+  return { ctx, page, errs, fake: () => fake };
+}
+const st = P => P.page.evaluate(() => {
+  const sc = document.querySelector('.xterm-screen').getBoundingClientRect();
+  return { shown: !document.getElementById('cccomp').hidden, draft: document.getElementById('ccdraft').hidden ? '' : document.getElementById('ccdraft').textContent,
+    chip: document.getElementById('ccmode').hidden ? '' : document.getElementById('ccmode').textContent, ph: /** @type {any} */ (document.getElementById('ccmsg')).placeholder,
+    focus: document.activeElement?.id || document.activeElement?.className, two: window.__qa.two.length, flips: window.__qa.flips, samples: window.__qa.samples,
+    sw: document.scrollingElement.scrollWidth, iw: innerWidth, left: Math.round(sc.left), right: Math.round(innerWidth - sc.right) };
+});
+const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
+const key = (P, k) => P.page.locator(`#cckb > button[data-k="${k}"]`).dispatchEvent('pointerdown');
+const shot = (P, n) => (OUT ? P.page.screenshot({ path: join(OUT, `${n}.png`) }) : null);
+const twos = P => P.page.evaluate(() => window.__qa.two.slice(0, 3));
+
+for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'promax']]) {
+  const P = await phone(w, h), F = P.fake();
+  let s = await st(P);
+  check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 1, s);
+  check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
+  await shot(P, `${tag}-1-idle`);
+  // no strip: the terminal starts at the top; ⋯, the bar's first key, opens the menu (the keyboard drops for it) and a backdrop tap closes it
+  const top = await P.page.evaluate(() => ({ strip: !!document.getElementById('ccstrip'), wrapTop: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().top), first: document.querySelector('#cckb > button:not(.mr)')?.dataset.k }));
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await shot(P, `${tag}-1-menu`);
+  await P.page.mouse.click(w / 2, 40); await sleep(300);
+  const closed = await P.page.evaluate(() => !document.getElementById('ccsheet').classList.contains('open'));
+  check(`${tag} 1 no strip, ⋯ is the bar's first key and opens the menu, a backdrop tap closes it`, !top.strip && top.wrapTop === 0 && top.first === 'Menu' && closed, [top, closed]);
+  await P.page.evaluate(() => /** @type {any} */ (window).term.focus()); await kb(P, Math.round(h * 0.52)); await sleep(1200);
+  s = await st(P);
+  check(`${tag} 2 a tap on the terminal + the keyboard: focus in the field, never two inputs, no flash`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1, [s, await twos(P)]);
+  await shot(P, `${tag}-2-keyboard`);
+  await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  s = await st(P);
+  check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 1, [s, await twos(P)]);
+  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(700);
+  s = await st(P);
+  check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 1, [s, F.draft, await twos(P)]);
+  await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);
+  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  s = await st(P);
+  check(`${tag} 5 send with the image: one prompt "[Image #1] what is wrong here?", the chip clears`, F.last === '[Image #1] what is wrong here?' && !s.draft && s.two === 0, [s, F.last]);
+  await P.page.setInputFiles('input[type=file]', { name: 'b.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(700);
+  await P.page.locator('#ccsend').click(); await sleep(900);
+  check(`${tag} 6 an image alone: send with an empty field submits the draft`, F.last === '[Image #2]', F.last);
+  await key(P, 'UP'); await sleep(400); s = await st(P);
+  check(`${tag} 7 ↑ recalls the last prompt: the chip shows it, the box stays hidden`, s.draft === '[Image #2]' && s.two === 0, s);
+  await key(P, 'Esc'); await sleep(300); s = await st(P);
+  check(`${tag} 7 esc clears Claude's input: the chip goes`, !s.draft && F.draft === '', [s, F.draft]);
+  await P.page.locator('#ccmode').click(); await sleep(400); s = await st(P);
+  check(`${tag} 8 the mode chip: shift+tab, Claude's next mode on the chip`, s.chip === '⏵⏵ accept edits', s);
+  await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
+  await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
+  s = await st(P);
+  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash`, s.two === 0 && s.flips === 1 && s.shown, [s, await twos(P)]);
+  F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
+  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Type 1–3 to choose…' && s.shown && !s.chip && s.two === 0, s);
+  await shot(P, `${tag}-10-dialog`);
+  await P.page.fill('#ccmsg', '1'); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
+  check(`${tag} 11 a digit answers the dialog`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
+  F.scene = 'shell'; F.redraw(); await sleep(300); s = await st(P);
+  check(`${tag} 12 Claude gone: the field lingers a moment (a redraw is not an exit)`, s.shown, s);
+  await sleep(1700); s = await st(P);
+  check(`${tag} 13 a shell: the field goes after the linger, the terminal is the one input`, !s.shown && s.two === 0 && s.flips === 2, s);
+  await shot(P, `${tag}-13-shell`);
+  check(`${tag} 14 no sideways overflow, no page errors (${s.samples} painted frames sampled)`, s.sw === s.iw && P.errs.length === 0, [s, P.errs]);
+  await P.ctx.close();
+}
+await browser.close();
+console.log(bad ? `term-claude-check ${engine}: ${bad} FAILED` : `term-claude-check ${engine}: ALL PASS`);
+process.exit(bad ? 1 : 0);

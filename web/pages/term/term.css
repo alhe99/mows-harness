@@ -1,4 +1,4 @@
-/* term.css — the /term document's own rules: page geometry, the strip #ccstrip, the dock #ccdock (composer #cccomp, key bar #cckb), the copy
+/* term.css — the /term document's own rules: page geometry, the dock #ccdock (composer #cccomp, key bar #cckb), the copy
    overlay, the menu sheet. The terminal colours are NOT here but in the --t-<key> properties: the default below, and one [data-theme] block per theme
    generated from infra/webconsole/themes.json at build time (theme.mjs reads them into xterm). The chrome draws from the --c-<key> tokens, the shell's. */
 :root{--t-black:#000;--t-red:#d81e00;--t-green:#5ea702;--t-yellow:#cfae00;--t-blue:#427ab3;--t-magenta:#89658e;--t-cyan:#00a7aa;--t-white:#dbded8;
@@ -23,7 +23,7 @@ body{overscroll-behavior:none;-webkit-font-smoothing:antialiased}
 button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent;cursor:pointer}
 :is(button,select,textarea):focus-visible{outline:2px solid var(--c-ok);outline-offset:2px}
 
-#ccstrip,#ccdock,#ccmods{display:none}
+#ccdock,#ccmods{display:none}
 #cckb{display:none}
 #cckb button{min-width:0;height:42px;padding:0;border-radius:10px;border:1px solid var(--c-line);background:var(--c-surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.045);
 color:var(--c-fg2);font:500 12.5px var(--c-mono);display:grid;place-items:center;touch-action:manipulation;-webkit-user-select:none;user-select:none}
@@ -36,37 +36,19 @@ color:var(--c-fg2);font:500 12.5px var(--c-mono);display:grid;place-items:center
 #cckb svg{width:18px;height:18px}
 #cckb.open button[data-k=More] svg{transform:rotate(180deg)}
 
-/* a phone: the page is a fixed column (strip / terminal / dock), pinned to the visual viewport under the iOS keyboard (bar.mjs viewportFit) */
+/* a phone: the page is a fixed column (terminal / dock), pinned to the visual viewport under the iOS keyboard (bar.mjs viewportFit) */
 @media(pointer:coarse){
 body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-direction:column}
-#terminal-wrap{flex:1;min-height:0;height:auto}
+/* no strip: the terminal starts under the status bar of an installed app */
+#terminal-wrap{flex:1;min-height:0;height:auto;margin-top:env(safe-area-inset-top,0px)}
 /* iOS never draws xterm's scrollbar, so the fit addon reserves 15 px for it: oversize the container by exactly that */
 #terminal-container{box-sizing:border-box;width:calc(100% + 15px)}
 /* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
 #terminal-container .terminal{padding:6px 10px;height:calc(100% - 12px)}
 
-#ccstrip{flex:none;display:flex;align-items:center;gap:2px;box-sizing:border-box;height:calc(52px + env(safe-area-inset-top,0px));
-padding:env(safe-area-inset-top,0px) calc(4px + env(safe-area-inset-right,0px)) 0 calc(4px + env(safe-area-inset-left,0px));border-bottom:1px solid var(--c-line);background:var(--c-bg)}
-#ccstrip .ib{flex:none;width:42px;height:42px;display:grid;place-items:center;border:0;border-radius:12px;background:none;color:var(--c-mut);padding:0}
-#ccstrip .ib:active{background:var(--c-surface)}
-#ccstrip .ib svg{width:20px;height:20px}
-#cctabs{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 6px;
--webkit-mask-image:linear-gradient(90deg,transparent,#000 6px,#000 calc(100% - 18px),transparent);mask-image:linear-gradient(90deg,transparent,#000 6px,#000 calc(100% - 18px),transparent)}
-#cctabs::-webkit-scrollbar{display:none}
-#cctabs .tab{flex:none;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:999px;border:1px solid transparent;background:none;
-color:var(--c-mut);font:500 13.5px var(--c-sans);white-space:nowrap}
-#cctabs .tab[aria-current=true]{background:var(--c-surface);border-color:var(--c-line2);color:var(--c-fg)}
-#cctabs .st{font:400 11px var(--c-mono);color:var(--c-dim)}
-#cctabs .s-needs-you,#cctabs .s-needs-you .st{color:var(--c-warn)}
-#cctabs .tab.new{color:var(--c-dim);padding:0 10px}
-#cctabs .dot{width:7px;height:7px;border-radius:50%;background:#52525c;flex:none}
-#cctabs .s-working .dot{background:var(--c-ok)}
-#cctabs .s-needs-you .dot{background:var(--c-warn)}
-#cctabs .s-paused .dot{background:transparent;box-shadow:inset 0 0 0 1.5px var(--c-dim)}
-
 #ccdock{flex:none;display:grid;gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
 border-top:1px solid var(--c-line);background:var(--c-bg)}
-#cckb{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+#cckb{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px}
 /* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
 body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 
@@ -77,9 +59,12 @@ body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 #ccmsg{width:100%;box-sizing:border-box;height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
 #ccmsg::placeholder{color:var(--c-dim)}
 #cccomp .cbar{display:flex;align-items:center;gap:8px;margin-left:-8px}
-#ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%}
+#ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
 #ccmode[hidden]{display:none}
 #ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}
+#ccdraft{flex:1;min-width:0;height:30px;line-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--c-ok-bd);background:var(--c-ok-bg);color:var(--c-fg);
+font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box}
+#ccdraft[hidden]{display:none}
 #ccsend{margin-left:auto;flex:none;width:36px;height:36px;border-radius:50%;border:0;padding:0;background:var(--c-raised);color:var(--c-dim);display:grid;place-items:center}
 #cccomp.has #ccsend{background:var(--c-ok);color:#04130d}
 #ccsend svg{width:17px;height:17px}
@@ -92,8 +77,7 @@ padding:5px 10px;border-radius:999px;opacity:0;pointer-events:none}
 /* status overlay and toast */
 #ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:999px;background:var(--c-raised);border:1px solid var(--c-line2);
 color:var(--c-fg);font:500 12px var(--c-mono);opacity:0;pointer-events:none;transition:opacity .15s;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis}
-#ccovl{top:calc(60px + env(safe-area-inset-top,0px))}
-#cctoast{top:calc(60px + env(safe-area-inset-top,0px))}
+#ccovl,#cctoast{top:calc(12px + env(safe-area-inset-top,0px))}
 #ccovl.on,#cctoast.on{opacity:1}
 
 /* copy overlay */
@@ -124,11 +108,7 @@ font:15px var(--c-sans);color:var(--c-fg)}
 #cccomp{transition:border-color .15s,box-shadow .15s}
 #ccmods{transition:opacity .15s}
 #terminal-container{transition:transform .12s ease-out}
-#cctabs .s-working .dot{animation:ccbreathe 2.4s ease-in-out infinite}
-#cctabs .s-needs-you .dot{animation:ccping 1.6s ease-out infinite}
 }
-@keyframes ccbreathe{50%{opacity:.35}}
-@keyframes ccping{0%{box-shadow:0 0 0 0 rgba(255,185,0,.55)}100%{box-shadow:0 0 0 7px rgba(255,185,0,0)}}
 #ccsheet .grab{width:36px;height:4px;border-radius:2px;background:var(--c-line2);margin:0 auto 14px}
 #ccsheet .hd{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;min-width:0}
 #ccsheet .hd b{font:600 16px var(--c-sans);white-space:nowrap}

@@ -170,8 +170,8 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   const dlg = ['● Bash(git push origin feat/x)', '', 'Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and don\'t ask again for git push', '  3. No, and tell Claude what to do', '', 'Esc to cancel'];
   const d = claudeScreen(dlg);
   check('claudeScreen: a permission dialog has no box and three choices', d.box === null && d.choice === 3 && d.mode === null, d);
-  check('claudeScreen: a shell prompt is not Claude', claudeScreen(['alonso@mows:~$ ls', 'a b c', 'alonso@mows:~$ ']).box === null);
-  check('claudeScreen: a lone rule (a markdown hr in the output) is no box', claudeScreen(['text', R, 'more text', 'alonso@mows:~$ ']).box === null);
+  check('claudeScreen: a shell prompt is not Claude', claudeScreen(['dev@box:~$ ls', 'a b c', 'dev@box:~$ ']).box === null);
+  check('claudeScreen: a lone rule (a markdown hr in the output) is no box', claudeScreen(['text', R, 'more text', 'dev@box:~$ ']).box === null);
   // fails closed: output that draws a fake empty box above a real permission dialog must not hide the dialog
   const fake = ['cat notes.md', R, '❯\u00a0', R, '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel'];
   const f = claudeScreen(fake);
@@ -179,7 +179,7 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   check('claudeScreen: "Esc to cancel" alone is enough to refuse a box', claudeScreen([...idle.slice(0, 7), ' Esc to cancel']).box === null);
   // the screen of 2026-10-23 that showed two inputs: conversation text above the box quotes "Do you want to", and the box holds Claude's
   // dimmed suggestion of the last prompt (the typed rows blank it)
-  const quoted = ['  - Earlier conversation text on screen contains "Do', '    you want to".', '', '✻ Churned for 24m 50s', '', R, '❯ it\'s all merged?', R, '  🤖 Opus 5.5 (high)', '  ⏵⏵ auto mode on · 2 shells', '[ccw-alonso] claude*'];
+  const quoted = ['  - Earlier conversation text on screen contains "Do', '    you want to".', '', '✻ Churned for 24m 50s', '', R, '❯ it\'s all merged?', R, '  🤖 Opus 5.5 (high)', '  ⏵⏵ auto mode on · 2 shells', '[ccw-dev] claude*'];
   const qt = quoted.map((r, i) => (i === 6 ? '  ' : r));
   const q = claudeScreen(quoted, qt);
   check('claudeScreen: a suggestion is not a draft, and "Do you want to" above the box is only words', q.box?.empty === true && q.box.top === 5 && q.mode?.label === '⏵⏵ auto mode', q);
