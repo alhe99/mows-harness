@@ -469,7 +469,7 @@ async function composer() {
   await W.page.fill('#ccmsg', 'line one'); await W.page.press('#ccmsg', 'Shift+Enter'); await W.page.type('#ccmsg', 'line two'); await W.page.locator('#ccsend').click(); await sleep(200);
   check('shift+return breaks the line inside the one paste; the send button sends', W.inputs().slice(n).join('|') === '\x1b[200~line one\rline two\x1b[201~|\r', bytes(W.inputs().slice(n)));
   n = W.inputs().length; await W.page.press('#ccmsg', 'Enter'); await sleep(100);
-  check('an empty field sends a bare \\r', W.inputs().slice(n).join('') === '\r', bytes(W.inputs().slice(n)));
+  check('an empty field sends nothing while Claude\'s box is hidden (no Enter into rows the user cannot see)', W.inputs().length === n, bytes(W.inputs().slice(n)));
   n = W.inputs().length; await W.page.locator('#ccmode').click(); await sleep(100);
   check('the mode chip sends shift+tab', W.inputs().slice(n).join('') === '\x1b[Z', bytes(W.inputs().slice(n)));
   // a latched ctrl turns the next character typed in the field into a key
@@ -484,6 +484,12 @@ async function composer() {
   check('a box holding a draft is not hidden (it is the only place that text is)', !s2.tf && !s2.claude && s2.mode === '⏸ plan mode' && s2.ruleY < s2.wrapBottom, s2);
   await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
   check('with the box shown, a tap on the terminal types into the terminal', await W.page.evaluate(() => document.activeElement === window.term.textarea));
+  n = W.inputs().length; await W.page.focus('#ccmsg'); await W.page.press('#ccmsg', 'Enter'); await sleep(100);
+  check('with a draft on screen, an empty field sends a bare \\r (Enter for that draft)', W.inputs().slice(n).join('') === '\r', bytes(W.inputs().slice(n)));
+  // output that draws a fake empty box above a real permission dialog: the dialog wins, nothing is hidden
+  await draw(['cat notes.md', R, '\u276f\u00a0', R, '', ' Do you want to proceed?', ' \u276f 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel']); await sleep(200);
+  const sf = await st();
+  check('a box drawn above a real permission dialog hides nothing (fails closed)', !sf.tf && !sf.claude && sf.ph === 'Type 1–2 to choose…', sf);
   // a permission dialog: nothing hidden, a digit picks with no Enter after it
   await draw(['● Bash(git push origin feat/x)', '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', '[wt-a] 0:claude*']); await sleep(200);
   const s3 = await st();

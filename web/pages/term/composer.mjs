@@ -24,9 +24,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   let hidden = -1, choice = 0; // hidden: the screen row of the top rule of Claude's box while it is hidden, else -1
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; form.classList.toggle('has', !!ta.value.trim()); };
   const submit = () => {
+    scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
     const t = ta.value.replace(/\s+$/, '');
     ta.value = ''; grow();
-    if (!t) { term.input('\r'); return; }
+    if (!t) { if (hidden < 0) term.input('\r'); return; } // Enter for a draft on screen; never an Enter into rows the user cannot see
     if (choice && /^\d$/.test(t)) { term.input(t); return; } // a permission dialog: the digit picks, an Enter after it would land in the next prompt
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
@@ -44,7 +45,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // the screen, read after every write (coalesced: one scan per 30 ms burst)
   /** @type {any} */ let pend = 0;
   const scan = () => {
-    pend = 0;
+    clearTimeout(pend); pend = 0;
     const b = term.buffer.active, rows = [];
     for (let i = 0; i < term.rows; i++) rows.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? '');
     const s = b.viewportY === b.baseY ? claudeScreen(rows) : { box: null, mode: null, choice: 0 };
