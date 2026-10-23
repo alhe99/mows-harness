@@ -459,6 +459,11 @@ async function composer() {
   const s1 = await st();
   check('Claude with an empty box: the terminal is shifted so the box sits under the dock', s1.claude && /translateY\(\d+px\)/.test(s1.tf) && s1.ruleY >= s1.wrapBottom, s1);
   check('the field reads "Message Claude…" and the chip shows the mode', s1.ph === 'Message Claude…' && s1.mode === '⏵⏵ accept edits', s1);
+  // Claude's suggestion of the last prompt sits in the box, grey, dim, its cursor inverse (the 2026-10-23 phone screen): not a draft, still hidden
+  await draw(['  - quotes "Do you want to" in the conversation', '', R, '\x1b[38;5;246m❯ \x1b[7mi\x1b[27m\x1b[2mt\'s all merged?\x1b[0m', R, '  ⏵⏵ auto mode on · 2 shells', '[wt-a] 0:claude*']); await sleep(200);
+  const sg = await st();
+  check('a dimmed suggestion in the box is not a draft, and "Do you want to" above the box is only words: still hidden', sg.claude && /translateY/.test(sg.tf) && sg.mode === '⏵⏵ auto mode', sg);
+  await draw([R, '❯ ', R, '  ⏵⏵ accept edits on (shift+tab to cycle)', '[wt-a] 0:claude*']); await sleep(200);
   // send: a bracketed paste (the app asked for it), then \r on its own
   W.out('\x1b[?2004h'); await sleep(50);
   let n = W.inputs().length;

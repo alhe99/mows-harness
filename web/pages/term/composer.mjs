@@ -46,9 +46,16 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   /** @type {any} */ let pend = 0;
   const scan = () => {
     clearTimeout(pend); pend = 0;
-    const b = term.buffer.active, rows = [];
-    for (let i = 0; i < term.rows; i++) rows.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? '');
-    const s = b.viewportY === b.baseY ? claudeScreen(rows) : { box: null, mode: null, choice: 0 };
+    const b = term.buffer.active, rows = [], typed = [], cell = b.getNullCell();
+    for (let i = 0; i < term.rows; i++) {
+      const l = b.getLine(b.viewportY + i);
+      rows.push(l?.translateToString(true) ?? '');
+      // only what Claude draws in the terminal's default colour, not dim, not its inverse cursor: typed text. Its hints are grey or dim.
+      let t = '';
+      if (l) for (let x = 0; x < l.length; x++) { const c = l.getCell(x, cell); if (!c || !c.getWidth()) continue; t += c.isFgDefault() && !c.isDim() && !c.isInverse() ? c.getChars() || ' ' : ' '; }
+      typed.push(t);
+    }
+    const s = b.viewportY === b.baseY ? claudeScreen(rows, typed) : { box: null, mode: null, choice: 0 };
     const top = s.box?.empty && term.rows - s.box.top <= term.rows / 2 ? s.box.top : -1;
     if (top !== hidden) {
       hidden = top;

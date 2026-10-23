@@ -177,6 +177,13 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   const f = claudeScreen(fake);
   check('claudeScreen: a box drawn above a permission dialog is ignored (the dialog wins, two choices)', f.box === null && f.choice === 2, f);
   check('claudeScreen: "Esc to cancel" alone is enough to refuse a box', claudeScreen([...idle.slice(0, 7), ' Esc to cancel']).box === null);
+  // the screen of 2026-10-23 that showed two inputs: conversation text above the box quotes "Do you want to", and the box holds Claude's
+  // dimmed suggestion of the last prompt (the typed rows blank it)
+  const quoted = ['  - Earlier conversation text on screen contains "Do', '    you want to".', '', '✻ Churned for 24m 50s', '', R, '❯ it\'s all merged?', R, '  🤖 Opus 5.5 (high)', '  ⏵⏵ auto mode on · 2 shells', '[ccw-alonso] claude*'];
+  const qt = quoted.map((r, i) => (i === 6 ? '  ' : r));
+  const q = claudeScreen(quoted, qt);
+  check('claudeScreen: a suggestion is not a draft, and "Do you want to" above the box is only words', q.box?.empty === true && q.box.top === 5 && q.mode?.label === '⏵⏵ auto mode', q);
+  check('claudeScreen: without the typed rows the suggestion reads as a draft', claudeScreen(quoted).box?.empty === false);
 }
 
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');
