@@ -361,6 +361,14 @@ async function tmuxLiveCompute() {
 // ---------- fleet snippet: "what is it doing now" (last 16KB, newest message, mtime-cached) ----------
 // mirror of titleOf() above but reads the TAIL of the transcript, not the head — titleOf
 // stays the session's opening ask (history rows); this is the fleet card/row snippet.
+// markdown -> one plain line for the fleet snippet and the push body: a lock-screen
+// notification renders "**¿Por qué…**" literally. ponytail: strips emphasis/code/heading/
+// list/link markers only, not a parser — a lone * or _ inside a word is left alone.
+export const plainText = t => t
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')                   // [label](url) -> label
+  .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')   // heading/quote/list markers
+  .replace(/^\s*[-*_]{3,}\s*$|\*\*|__|~~|`+/gm, '')            // rules, bold, strike, code
+  .replace(/\s+/g, ' ').trim();
 const tailCache = new Map(); // path -> {mt, text, turn}: turn = when the newest assistant entry was written (0: none in the tail)
 async function tailOf(e) {
   const hit = tailCache.get(e.path);
@@ -393,7 +401,7 @@ async function tailOf(e) {
       }
     }
   } catch {}
-  text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
+  text = plainText(text).slice(0, 160);
   const v = { mt: e.mt, text, turn, last };
   if (tailCache.size > 4000) tailCache.clear();
   tailCache.set(e.path, v);
@@ -422,6 +430,15 @@ const FLEET_RE = {
   // multi-phase workflow rendered as idle because only `working` above was checked.
   workflowMonitor: /\bstop workflow\b|Waiting for \d+[^\n]*\bworkflow\b/i,
 };
+
+// sessions someone is driving right now, from `tmux list-clients -F '#{client_session}\t#{client_activity}'`:
+// a needs-you push for a session you are typing into is noise (2026-10-23: rang while the user was in it).
+// tmux bumps client_activity on keystrokes only, never on output, so a grid tab left open stops counting
+// once you stop typing there. ponytail: fixed 10-min window; switch to "typed since this turn began" if a
+// long turn watched without typing still rings.
+export const WATCH_MS = 600000;
+export const watchedSessions = (clients, now) => new Set(String(clients).split('\n').map(l => l.split('\t'))
+  .filter(([n, a]) => n && now - a * 1000 < WATCH_MS).map(([n]) => n));
 
 // pure classifier — no I/O, no closures over live state — so it's unit-testable in
 // isolation (see the --selftest fixture block at the bottom of this file).
