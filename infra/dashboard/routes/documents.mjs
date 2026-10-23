@@ -72,7 +72,7 @@ export async function appView(req, res, url, home = false) {
   res.writeHead(302, { location: to, 'cache-control': 'no-store' }); res.end();
 }
 
-// GET /app/live.json?tab= (§2): the chip list this tab's poll refreshes itself with.
+// GET /app/live.json?tab= (§2): the session strip this tab's poll refreshes itself with; `state` is the fleet's (working, needs-you, paused, idle).
 export async function liveJson(req, res, url) {
   const tab = url.searchParams.get('tab') || '';
   // no-store, not send()'s usual no-cache: this must never be revalidated, only re-fetched
@@ -80,7 +80,8 @@ export async function liveJson(req, res, url) {
     res.writeHead(400, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify({ err: 'bad tab' }));
   }
-  const live = await tmuxLive();
+  const [live, fleet] = await Promise.all([tmuxLive(), fleetState()]);
+  const state = new Map(fleet.map(f => [f.name, f.state]));
   let tty = '';
   try { tty = (await fsp.readFile(path.join(TMUX_HOME, '.cache', 'webterm-clients', tab), 'utf8')).trim(); } catch {}
   let cur = '';
@@ -88,7 +89,7 @@ export async function liveJson(req, res, url) {
     const out = await sh(...userCmd(['tmux', 'list-clients', '-F', '#{client_tty}\t#{session_name}']));
     for (const l of out.trim().split('\n')) { const [t, n] = l.split('\t'); if (t === tty) { cur = n; break; } }
   }
-  const buf = Buffer.from(JSON.stringify(live.map(l => ({ name: l.name, label: l.label || '', current: l.name === cur }))));
+  const buf = Buffer.from(JSON.stringify(live.map(l => ({ name: l.name, label: l.label || '', current: l.name === cur, state: state.get(l.name) || 'idle' }))));
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': buf.length });
   res.end(buf);
 }

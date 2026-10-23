@@ -4,6 +4,7 @@
 // numbers, the prefs allowlist and the two reconnect paths were all inside ttyd's minified bundle. No browser, no server, no network.
 //   node scripts/term-proto-check.mjs
 import { ALLOW, FLOW, ttydClient, BACKOFF } from '../web/pages/term/ttyd.mjs';
+import { claudeScreen } from '../web/pages/term/claudebox.mjs';
 
 let bad = 0;
 const check = (name, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
@@ -149,6 +150,28 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   sockets[0].recv(bytes('2', '{"disableReconnect":true}'));
   sockets[0].close(1006); await tick();
   check('the disableReconnect preference turns the automatic reconnect off', sockets.length === 1);
+}
+
+// claudeScreen (web/pages/term/claudebox.mjs): Claude Code's input area, read off screens captured from live panes (2026-10-23)
+{
+  const R = '─'.repeat(55);
+  const idle = ['● Done. PR #22 is pushed.', '', R, '❯ ', R, '  🤖 Opus 5.5 (high) | 💰 $5.26 session', '  ⏵⏵ auto mode on (shift+tab to cycle) · ✉', '',
+    '  ● main', '  ◯ tierb-strict  Running … 16m 54s', '[cc-work] 0:claude*'];
+  const s = claudeScreen(idle);
+  check('claudeScreen: an empty box is found under the output, with its mode', s.box && s.box.top === 2 && s.box.bottom === 4 && s.box.empty && s.mode.label === '⏵⏵ auto mode' && s.mode.cls === 'ok', s);
+  const typed = [...idle]; typed[3] = '❯ explain in Spanish so I can send it';
+  check('claudeScreen: a box holding typed text is not empty', claudeScreen(typed).box.empty === false);
+  const two = ['x', R, '❯ first line', '  second line', R, '  ⏸ plan mode on (shift+tab to cycle)'];
+  const t = claudeScreen(two);
+  check('claudeScreen: a two-line draft, plan mode', t.box.top === 1 && t.box.bottom === 4 && !t.box.empty && t.mode.cls === 'pl', t);
+  check('claudeScreen: no mode line reads as the default mode', claudeScreen(['x', R, '❯ ', R, '  ? for shortcuts']).mode.label === 'default mode');
+  const old = ['x', '╭' + '─'.repeat(40) + '╮', '│ >                                      │', '╰' + '─'.repeat(40) + '╯', '  ⏵⏵ accept edits on'];
+  check('claudeScreen: the older rounded box', claudeScreen(old).box?.empty === true && claudeScreen(old).mode.cls === 'ed');
+  const dlg = ['● Bash(git push origin feat/x)', '', 'Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and don\'t ask again for git push', '  3. No, and tell Claude what to do', '', 'Esc to cancel'];
+  const d = claudeScreen(dlg);
+  check('claudeScreen: a permission dialog has no box and three choices', d.box === null && d.choice === 3 && d.mode === null, d);
+  check('claudeScreen: a shell prompt is not Claude', claudeScreen(['alonso@mows:~$ ls', 'a b c', 'alonso@mows:~$ ']).box === null);
+  check('claudeScreen: a lone rule (a markdown hr in the output) is no box', claudeScreen(['text', R, 'more text', 'alonso@mows:~$ ']).box === null);
 }
 
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');

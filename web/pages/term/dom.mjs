@@ -18,8 +18,8 @@ export const store = {
 /** a key of the bar: pointerdown is cancelled, which keeps the terminal's focus (and the on-screen keyboard); `act` runs on pointerdown, or on pointerup */
 export const key = (label, act, on = 'pointerdown') => {
   const b = el('button', { type: 'button', textContent: label });
-  b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (on === 'pointerdown') act(b); });
-  if (on === 'pointerup') b.addEventListener('pointerup', () => act(b));
+  b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (on === 'pointerdown') act(b, e); });
+  if (on === 'pointerup') b.addEventListener('pointerup', e => act(b, e));
   return b;
 };
 /** show `s` on a key for a moment, then restore its label */
@@ -29,3 +29,11 @@ export const flash = (b, s, ms = 1400) => {
   clearTimeout(b._fl);
   b._fl = setTimeout(() => { b.textContent = b.dataset.l; }, ms);
 };
+/** a short status line over the terminal (#cctoast): what was copied, sent, uploaded */
+export const say = m => {
+  const t = document.getElementById('cctoast') || document.body.appendChild(el('div', { id: 'cctoast', role: 'status' }));
+  t.textContent = m; t.classList.add('on');
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('on'), 1500);
+};
+/** an inline SVG icon from path data (24-unit box, stroked) */
+export const icon = d => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = d; return s; };

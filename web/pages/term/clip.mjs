@@ -1,16 +1,11 @@
 // clip.mjs — the clipboard (MAP 4.2 B-00, B-60). OSC 52 from the terminal goes to navigator.clipboard through the parser, public API; a write the
 // browser refuses is held until the next keydown or mousedown (a gesture). Copy-on-select after a drag or a double click. The copy overlay
-// (the key ⧉) snapshots buffer.active with wrapped rows re-joined into a plain <pre>, where the OS selection handles and Copy menu work on a
-// phone; the paste key (📋) reads the clipboard on pointerup and term.paste()s it. ?clip=off removes the two keys, not OSC 52.
-import { el, flash, key, off } from './dom.mjs';
+// (Copy text) snapshots buffer.active with wrapped rows re-joined into a plain <pre>, where the OS selection handles and Copy menu work on a
+// phone; paste reads the clipboard and term.paste()s it. Both are actions of the menu sheet (menu.mjs); ?clip=off removes them, not OSC 52.
+import { el, flash, off, say } from './dom.mjs';
 
 export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term) {
-  let pending = '', toast = null;
-  const say = m => {
-    toast ??= document.body.appendChild(el('div', { id: 'cctoast' }));
-    toast.textContent = m; toast.classList.add('on');
-    clearTimeout(toast._t); toast._t = setTimeout(() => toast.classList.remove('on'), 1500);
-  };
+  let pending = '';
   const put = text => {
     if (!text) return;
     (navigator.clipboard?.writeText(text) ?? Promise.reject()).then(() => say(`copied ${text.length} chars`), () => { pending = text; say('copy blocked — click or press a key'); });
@@ -31,7 +26,7 @@ export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term) {
     if (Math.abs(e.clientX - dx) + Math.abs(e.clientY - dy) >= 6 || e.detail >= 2) setTimeout(() => put(term.getSelection()), 0);
   }, true);
 
-  if (off('clip')) return { keys: [] };
+  if (off('clip')) return null;
   const grab = () => {
     const b = term.buffer.active, out = [];
     for (let i = 0; i < b.length; i++) {
@@ -49,8 +44,8 @@ export function clipboard(/** @type {import('@xterm/xterm').Terminal} */ term) {
   document.body.append(ov);
   ov.querySelector('#ccclip-x').addEventListener('click', () => ov.classList.remove('on'));
   all.addEventListener('click', () => (navigator.clipboard?.writeText(txt.textContent) ?? Promise.reject()).then(() => flash(all, 'copied ✓'), () => flash(all, '✗ select manually')));
-  return { keys: [
-    key('⧉', () => { txt.textContent = grab(); ov.classList.add('on'); term.blur(); }, 'pointerup'), // drop the keyboard so the whole snapshot is visible
-    key('📋', b => (navigator.clipboard?.readText ? navigator.clipboard.readText().then(x => (x ? term.paste(x) : flash(b, 'empty')), () => flash(b, '✗ blocked')) : flash(b, '✗')), 'pointerup'),
-  ] };
+  return {
+    open: () => { txt.textContent = grab(); ov.classList.add('on'); term.blur(); (/** @type {any} */ (document.activeElement))?.blur?.(); }, // drop the keyboard so the whole snapshot is visible
+    paste: () => (navigator.clipboard?.readText ? navigator.clipboard.readText().then(x => (x ? term.paste(x) : say('the clipboard is empty')), () => say('paste blocked: long-press the field and paste')) : say('paste is not available here')),
+  };
 }
