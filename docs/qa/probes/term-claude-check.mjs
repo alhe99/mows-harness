@@ -129,7 +129,11 @@ const st = P => P.page.evaluate(() => {
   return { shown: !document.getElementById('cccomp').hidden, draft: document.getElementById('ccdraft').hidden ? '' : document.getElementById('ccdraft').textContent,
     chip: document.getElementById('ccmode').hidden ? '' : document.getElementById('ccmode').textContent, ph: /** @type {any} */ (document.getElementById('ccmsg')).placeholder,
     focus: document.activeElement?.id || document.activeElement?.className, two: window.__qa.two.length, flips: window.__qa.flips, samples: window.__qa.samples,
-    sw: document.scrollingElement.scrollWidth, iw: innerWidth, left: Math.round(sc.left), right: Math.round(innerWidth - sc.right) };
+    sw: document.scrollingElement.scrollWidth, iw: innerWidth, left: Math.round(sc.left), right: Math.round(innerWidth - sc.right),
+    // the blank band: the shift left after the rows went under the dock (less than a row), and the rows the pty has beyond what is shown
+    band: +(/translateY\((\d+)px\)/.exec(document.getElementById('terminal-container').style.transform)?.[1] || 0), cell: Math.round(sc.height / window.term.rows),
+    under: window.term.rows - Math.floor((document.getElementById('terminal-wrap').getBoundingClientRect().height - 6) / (sc.height / window.term.rows)),
+    dockRight: Math.round(document.getElementById('ccdock').getBoundingClientRect().right) };
 });
 const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
 const key = (P, k) => P.page.locator(`#cckb > button[data-k="${k}"]`).dispatchEvent('pointerdown');
@@ -141,6 +145,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   let s = await st(P);
   check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 1, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
+  check(`${tag} 1 no blank band: Claude's rows are under the dock (the pty has them), what is left of the shift is less than a row`, s.under >= 5 && s.band < s.cell + 8, s);
   await shot(P, `${tag}-1-idle`);
   // no strip: the terminal starts at the top; ⋯, the bar's first key, opens the menu (the keyboard drops for it) and a backdrop tap closes it
   const top = await P.page.evaluate(() => ({ strip: !!document.getElementById('ccstrip'), wrapTop: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().top), first: document.querySelector('#cckb > button:not(.mr)')?.dataset.k }));
@@ -148,9 +153,16 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   const closed = await P.page.evaluate(() => !document.getElementById('ccsheet').classList.contains('open'));
   check(`${tag} 1 no strip, ⋯ is the bar's first key and opens the menu, a backdrop tap closes it`, !top.strip && top.wrapTop === 0 && top.first === 'Menu' && closed, [top, closed]);
-  await P.page.evaluate(() => /** @type {any} */ (window).term.focus()); await kb(P, Math.round(h * 0.52)); await sleep(1200);
+  // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
+  await P.page.evaluate(() => document.activeElement?.blur?.());
+  const box = await P.page.locator('#terminal-wrap').boundingBox();
+  const pt = [{ identifier: 1, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }];
+  await P.page.dispatchEvent('.xterm-screen', 'touchstart', { touches: pt, changedTouches: pt });
+  await P.page.dispatchEvent('.xterm-screen', 'touchend', { touches: [], changedTouches: pt, cancelable: true });
+  check(`${tag} 2 a tap on the terminal: the focus is in the field`, await P.page.evaluate(() => document.activeElement?.id === 'ccmsg'), await P.page.evaluate(() => document.activeElement?.className));
+  await kb(P, Math.round(h * 0.52)); await sleep(1200);
   s = await st(P);
-  check(`${tag} 2 a tap on the terminal + the keyboard: focus in the field, never two inputs, no flash`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1, [s, await twos(P)]);
+  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
   await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
@@ -169,6 +181,12 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 7 ↑ recalls the last prompt: the chip shows it, the box stays hidden`, s.draft === '[Image #2]' && s.two === 0, s);
   await key(P, 'Esc'); await sleep(300); s = await st(P);
   check(`${tag} 7 esc clears Claude's input: the chip goes`, !s.draft && F.draft === '', [s, F.draft]);
+  // a long draft (the phone, 2026-10-23: the chip pushed the dock past the screen): the chip is cut with an ellipsis, nothing scrolls sideways
+  F.last = '[Image #9] what is this empty space at the top of the terminal, and why does the page scroll sideways now?'; await key(P, 'UP'); await sleep(400);
+  s = await st(P);
+  check(`${tag} 7 a long draft: the chip shows it cut, the dock stays inside the screen`, s.draft.startsWith('[Image #9] what is this') && s.sw === s.iw && s.dockRight <= s.iw && s.two === 0, s);
+  await shot(P, `${tag}-7-longdraft`);
+  await key(P, 'Esc'); await sleep(300);
   await P.page.locator('#ccmode').click(); await sleep(400); s = await st(P);
   check(`${tag} 8 the mode chip: shift+tab, Claude's next mode on the chip`, s.chip === '⏵⏵ accept edits', s);
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);

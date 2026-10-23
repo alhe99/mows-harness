@@ -46,19 +46,20 @@ body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-directio
 /* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
 #terminal-container .terminal{padding:6px 10px;height:calc(100% - 12px)}
 
-#ccdock{flex:none;display:grid;gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
+/* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
+#ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
 border-top:1px solid var(--c-line);background:var(--c-bg)}
 #cckb{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px}
 /* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
 body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 
 #cccomp[hidden]{display:none}
-#cccomp{display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
+#cccomp{min-width:0;display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
 #cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
 /* 16 px: iOS zooms the page into a smaller field on focus */
 #ccmsg{width:100%;box-sizing:border-box;height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
 #ccmsg::placeholder{color:var(--c-dim)}
-#cccomp .cbar{display:flex;align-items:center;gap:8px;margin-left:-8px}
+#cccomp .cbar{min-width:0;display:flex;align-items:center;gap:8px;margin-left:-8px}
 #ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
 #ccmode[hidden]{display:none}
 #ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}

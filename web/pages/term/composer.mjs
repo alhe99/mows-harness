@@ -1,25 +1,27 @@
 // composer.mjs — the message field over the keys (2026-10-23). Return sends what is typed: a bracketed paste and, 60 ms later, a \r (the
 // paste and the Enter must not land in one read). Shift+return breaks the line. Phone text, so autocorrect, dictation and the caret work as
 // in any other field.
-// In a Claude session the field stands in for Claude Code's own input box (claudebox.mjs): the terminal is shifted down by the box's rows, so
-// the box, Claude's status and mode lines and tmux's status line slide under the dock, and a tap on the terminal brings the keyboard up in
-// the field. What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
+// In a Claude session the field stands in for Claude Code's own input box (claudebox.mjs): the terminal is made taller than the space it shows
+// by exactly the rows of Claude's chrome (the box, its status and mode lines, a task list, tmux's status line), so the pty has those rows and
+// they sit under the dock while every visible row is conversation; what a row's remainder leaves is closed by a shift of less than a row. A
+// tap on the terminal brings the keyboard up in the field (from the touch itself: iOS ignores a focus moved inside a focus event). What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
 // submits it with whatever is typed; with an empty field, send submits the draft alone. The mode line comes back as the mode chip (tap =
 // shift+tab). A permission dialog: nothing is hidden, a bare digit picks. A shell or a full-screen program: no field, the terminal is the one
 // input. ?comp=off turns the composer off.
 // The layout must not depend on the screen from one frame to the next: showing the field resizes the terminal, Claude and tmux redraw, and
 // mid-redraw the box is briefly gone (the phone, 2026-10-23: the field flashed on and off). So the field appears at once and goes only after
 // Claude has been off the screen for LINGER ms, and the shift and the chips are kept through the same window.
-// ponytail: the shift wastes the hidden rows at the top of the screen (a blank band under the strip). Upgrade path: grow the pty by those
-// rows instead, at the price of a resize whenever the box comes and goes.
+// The hidden rows change only when Claude's chrome changes height (a dialog, an exit, a multi-line draft), never while a resize is settling
+// (SETTLE ms): each change is one pty resize. (The first version shifted the terminal down instead: no resizes, but the hidden rows came
+// back as a blank band at the top, and with the keyboard up on a small phone that band was most of the screen. 2026-10-23)
 import { claudeScreen } from './claudebox.mjs';
 import { coarse, el, icon, off } from './dom.mjs';
 import { mods } from './bar.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
-const LINGER = 1500;
+const LINGER = 1500, SETTLE = 400;
 
-export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc) {
+export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}) {
   if (!coarse() || off('comp')) return null;
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
@@ -49,16 +51,25 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   });
   mode.addEventListener('click', () => term.input('\x1b[Z'));
 
+  // the cell height: a DOM row's (the renderer iOS uses), else the screen's height over the rows. Right after a resize the screen keeps its
+  // old height until xterm renders, so that ratio is stale for a frame: the rAF pass after a resize corrects it
+  const cellH = () => { const r0 = /** @type {HTMLElement | null} */ (document.querySelector('.xterm-rows > div')), scr = document.querySelector('.xterm-screen'); return r0?.offsetHeight || (scr ? scr.clientHeight / term.rows : 0); };
   const place = (/** @type {number} */ t) => {
-    // the shift that puts the box's top rule just under the wrap's bottom edge (the screen sits a padding into the container)
+    // the shift that puts the box's top rule just under the wrap's bottom edge (the screen sits a padding into the container): with the rows
+    // hidden by height, what is left is a row's remainder
     const scr = document.querySelector('.xterm-screen'), wrap = tc.parentElement;
     if (t < 0 || !scr || !wrap) return '';
-    // the cell height: a DOM row's (the renderer iOS uses), else the screen's height over the rows. Right after a resize the screen keeps its
-    // old height until xterm renders, so that ratio is stale for a frame: the rAF pass after a resize corrects it
-    const r0 = /** @type {HTMLElement | null} */ (document.querySelector('.xterm-rows > div'));
-    const cell = r0?.offsetHeight || scr.clientHeight / term.rows;
-    const y = scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cell;
+    const y = scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cellH();
     return `translateY(${Math.max(0, Math.ceil(wrap.clientHeight - y))}px)`; // mid-refit the rule can already sit below the edge
+  };
+  // rows hidden under the dock by height: the container grows by them, the pty gets them (one resize per change)
+  let extra = 0, extraPx = 0, resized = 0;
+  const hide = (/** @type {number} */ n) => {
+    const px = n ? Math.ceil(n * cellH()) : 0;
+    if (n === extra && px === extraPx) return;
+    extra = n; extraPx = px;
+    tc.style.height = px ? `calc(100% + ${px}px)` : '';
+    fit();
   };
   // the screen, read in the same write that changed it (before the frame is painted: the shift and the content move together), and after
   // every resize
@@ -89,13 +100,16 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     choice = s.choice;
     clearTimeout(linger);
     if (t >= 0) {
+      // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
+      // still settling)
+      if (s.box && now - resized > SETTLE) hide(Math.min(16, term.rows - t));
       top = t; shift = place(t);
       if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
         held = s.box.draft || '';
         mode.hidden = !s.mode;
         if (s.mode) { mode.textContent = s.mode.label; mode.className = s.mode.cls; }
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; hide(0); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
@@ -110,10 +124,19 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   };
   const later = () => { pend ||= setTimeout(scan, 30); };
   term.onWriteParsed(scan); term.onScroll(later);
-  // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there
-  term.textarea?.addEventListener('focus', () => { if (top >= 0) ta.focus(); });
+  // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there. From the touch itself (a user gesture,
+  // which iOS needs to raise the keyboard), cancelled so xterm never takes the focus; a drag is a scroll, not a tap. The focus redirect stays
+  // for any other way xterm gets the focus.
+  let tx = 0, ty = 0;
+  tc.parentElement?.addEventListener('touchstart', e => { tx = e.touches[0].clientX; ty = e.touches[0].clientY; }, { passive: true });
+  tc.parentElement?.addEventListener('touchend', e => {
+    const p = e.changedTouches[0];
+    if (top < 0 || form.hidden || !p || Math.abs(p.clientX - tx) + Math.abs(p.clientY - ty) > 10) return;
+    e.preventDefault(); ta.focus();
+  });
+  term.textarea?.addEventListener('focus', () => { if (top >= 0 && !form.hidden) ta.focus(); });
   // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: place the shift again
-  term.onResize(() => { scan(); requestAnimationFrame(() => scan()); });
+  term.onResize(() => { resized = Date.now(); scan(); requestAnimationFrame(() => scan()); });
   // from the observer: the shift is placed at once (a transform: it cannot resize what is observed, and the frame paints with it), the full
   // scan a tick later (it can show or hide the field, which inside the callback would be a ResizeObserver loop: WebKit reports it)
   if (tc.parentElement) new ResizeObserver(() => { if (top >= 0) tc.style.transform = shift = place(top); clearTimeout(pend); pend = setTimeout(scan, 0); }).observe(tc.parentElement);
