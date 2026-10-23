@@ -431,6 +431,15 @@ const FLEET_RE = {
   workflowMonitor: /\bstop workflow\b|Waiting for \d+[^\n]*\bworkflow\b/i,
 };
 
+// sessions someone is driving right now, from `tmux list-clients -F '#{client_session}\t#{client_activity}'`:
+// a needs-you push for a session you are typing into is noise (2026-10-23: rang while the user was in it).
+// tmux bumps client_activity on keystrokes only, never on output, so a grid tab left open stops counting
+// once you stop typing there. ponytail: fixed 10-min window; switch to "typed since this turn began" if a
+// long turn watched without typing still rings.
+export const WATCH_MS = 600000;
+export const watchedSessions = (clients, now) => new Set(String(clients).split('\n').map(l => l.split('\t'))
+  .filter(([n, a]) => n && now - a * 1000 < WATCH_MS).map(([n]) => n));
+
 // pure classifier — no I/O, no closures over live state — so it's unit-testable in
 // isolation (see the --selftest fixture block at the bottom of this file).
 // First match wins, exactly per the spec table: paused > needs-you > working > idle.
