@@ -56,7 +56,7 @@
 // legacy.mjs and routes/documents.mjs only. See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
 import { assetView, swView } from './static.mjs';
-import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
+import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, plainText, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
 import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamView } from './sse.mjs';
 import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
@@ -279,6 +279,9 @@ if (args.includes('--selftest')) {
                       '<blockquote>', '<strong>b</strong>', '<a href="https://x/">l</a>', '<a href="#">j</a>'])
     if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
   console.log('md renderer: OK');
+  // push/fleet snippet: markdown must not reach the lock screen as literal ** / ` / ##
+  const snip = plainText('**¿Por qué?**\n\n## El `Secret` (S3-7)\n1. paso\n- en [n1-vault](https://x/) y __b__\n---\na*b');
+  if (snip !== '¿Por qué? El Secret (S3-7) paso en n1-vault y b a*b') { console.error(`FAIL: plainText got ${JSON.stringify(snip)}`); process.exit(1); }
   console.log(`fleet classifier: ${FLEET_FIXTURES.length} fixtures OK — selftest PASS`);
   process.exit(0);
 }

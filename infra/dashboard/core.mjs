@@ -361,6 +361,14 @@ async function tmuxLiveCompute() {
 // ---------- fleet snippet: "what is it doing now" (last 16KB, newest message, mtime-cached) ----------
 // mirror of titleOf() above but reads the TAIL of the transcript, not the head — titleOf
 // stays the session's opening ask (history rows); this is the fleet card/row snippet.
+// markdown -> one plain line for the fleet snippet and the push body: a lock-screen
+// notification renders "**¿Por qué…**" literally. ponytail: strips emphasis/code/heading/
+// list/link markers only, not a parser — a lone * or _ inside a word is left alone.
+export const plainText = t => t
+  .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')                   // [label](url) -> label
+  .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')   // heading/quote/list markers
+  .replace(/^\s*[-*_]{3,}\s*$|\*\*|__|~~|`+/gm, '')            // rules, bold, strike, code
+  .replace(/\s+/g, ' ').trim();
 const tailCache = new Map(); // path -> {mt, text, turn}: turn = when the newest assistant entry was written (0: none in the tail)
 async function tailOf(e) {
   const hit = tailCache.get(e.path);
@@ -393,7 +401,7 @@ async function tailOf(e) {
       }
     }
   } catch {}
-  text = text.replace(/\s+/g, ' ').trim().slice(0, 160);
+  text = plainText(text).slice(0, 160);
   const v = { mt: e.mt, text, turn, last };
   if (tailCache.size > 4000) tailCache.clear();
   tailCache.set(e.path, v);
