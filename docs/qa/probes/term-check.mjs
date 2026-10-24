@@ -442,8 +442,8 @@ async function composer() {
   check('the field shows, reads "Message Claude…" and the chip shows the mode', s1.shown && s1.ph === 'Message Claude…' && s1.mode === '⏵⏵ accept edits', s1);
   // Claude's suggestion of the last prompt sits in the box, grey, dim, its cursor inverse (the 2026-10-23 phone screen): not a draft, still hidden
   await draw(['  - quotes "Do you want to" in the conversation', '', R, '\x1b[38;5;246m❯ \x1b[7mi\x1b[27m\x1b[2mt\'s all merged?\x1b[0m', R, '  ⏵⏵ auto mode on · 2 shells', '[wt-a] 0:claude*']);
-  const sg = await settle(x => x.mode === '⏵⏵ auto mode');
-  check('a dimmed suggestion in the box is not a draft, and "Do you want to" above the box is only words: still hidden', sg.claude && /translateY/.test(sg.tf) && sg.mode === '⏵⏵ auto mode', sg);
+  const sg = await settle(x => x.mode === '⏵⏵ auto');
+  check('a dimmed suggestion in the box is not a draft, and "Do you want to" above the box is only words: still hidden', sg.claude && /translateY/.test(sg.tf) && sg.mode === '⏵⏵ auto', sg);
   await draw([R, '❯ ', R, '  ⏵⏵ accept edits on (shift+tab to cycle)', '[wt-a] 0:claude*']); await sleep(200);
   // send: a bracketed paste (the app asked for it), then \r on its own
   W.out('\x1b[?2004h'); await sleep(50);
@@ -476,7 +476,7 @@ async function composer() {
   // what Claude then holds in its box (drawn in the default colour, as typed text is): the box stays hidden, the field shows it as the draft chip
   await draw([R, '\u276f\u00a0[Image #1] ', R, '  \u23f8 plan mode on (shift+tab to cycle)', '[wt-a] 0:claude*']);
   const s2 = await settle(x => x.draft === '[Image #1]');
-  check('a box holding a draft stays hidden; the field shows it as the draft chip (one input)', s2.claude && /translateY/.test(s2.tf) && s2.shown && s2.ruleY >= s2.wrapBottom && s2.mode === '\u23f8 plan mode', s2);
+  check('a box holding a draft stays hidden; the field shows it as the draft chip (one input)', s2.claude && /translateY/.test(s2.tf) && s2.shown && s2.ruleY >= s2.wrapBottom && s2.mode === '\u23f8 plan', s2);
   n1 = W.inputs().length; await W.page.locator('#ccsend').click(); await sleep(150);
   check('send with an empty field submits the draft alone (a bare \\r)', W.inputs().slice(n1).join('') === '\r', bytes(W.inputs().slice(n1)));
   n1 = W.inputs().length; await W.page.fill('#ccmsg', 'what is this?'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);

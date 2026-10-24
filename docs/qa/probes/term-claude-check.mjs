@@ -32,7 +32,7 @@ const PNG = (() => {
 const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m';
 
 class FakeClaude {
-  constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
+  constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', model: 'Opus 5.5 (high)', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
   feed(m) {
     const s = typeof m === 'string' ? m : Buffer.from(m).toString('utf8');
     // the attach: tmux's window still has the size of the last client (a desktop, 60 rows); it cuts the pane to this one, Claude redraws after
@@ -48,10 +48,14 @@ class FakeClaude {
       if (d.startsWith('\x1b[Z')) { this.mode = (this.mode + 1) % MODES.length; d = d.slice(3); continue; }
       if (d.startsWith('\x1b[A') || d.startsWith('\x1bOA')) { this.draft = this.last; d = d.slice(3); continue; }
       if (d.startsWith('\x1b')) { // esc: cancels a dialog, clears the input
-        if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
+        if (this.scene === 'model') this.scene = 'idle';
+        else if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
         d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
       }
       let c = d[0]; d = d.slice(1);
+      // Claude's /model picker: a number (or Enter, the highlighted first) switches, the status line follows
+      if (this.scene === 'model') { if (c === '\r') c = '1'; if (/[1-3]/.test(c)) { this.model = ['Opus 5.5 (high)', 'Sonnet 5.5 (medium)', 'Haiku 5.5'][+c - 1]; this.log.push(`\x1b[2m  ⎿  Set model to ${this.model.replace(/ \(.*/, '')}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
+      if (c === '\r' && this.draft.trim() === '/model') { this.draft = ''; this.scene = 'model'; continue; }
       if (this.scene === 'dialog') { if (c === '\r') c = '1'; /* Enter answers the highlighted option, the first */ if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
@@ -71,6 +75,7 @@ class FakeClaude {
     const wrap = l => { const plain = l.replace(/\x1b\[[0-9;]*m/g, ''); if (plain.length <= this.cols) return [l]; const out = []; for (let i = 0; i < plain.length; i += this.cols) out.push(plain.slice(i, i + this.cols)); return out; };
     let tail;
     if (this.scene === 'shell') tail = ['dev@box:~$ ' + this.draft, TMUX];
+    else if (this.scene === 'model') tail = [' Select model', ' Switch between Claude models. Applies to this session.', '', ' \x1b[38;5;153m❯ 1. Opus 5.5\x1b[0m    Most capable', '   2. Sonnet 5.5  Fast and capable', '   3. Haiku 5.5   Fastest', '', ' Enter to confirm · Esc to exit', TMUX];
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
     else {
       // the input line: what is typed in the default colour; empty, the last prompt as Claude's dimmed suggestion under its inverse cursor
@@ -78,7 +83,7 @@ class FakeClaude {
       const w = Math.max(8, this.cols - 2), rowsOf = t => t.split('\n').flatMap(p => { const out = []; for (let i = 0; i < Math.max(1, p.length); i += w) out.push(p.slice(i, i + w)); return out; });
       const input = this.draft ? rowsOf(this.draft).map((r, i) => (i ? '  ' : '\x1b[38;5;246m❯\u00a0\x1b[39m') + r) : ['\x1b[38;5;246m❯\u00a0\x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1, w) + '\x1b[0m'];
       tail = [...(this.scene === 'working' ? ['\x1b[38;5;173m✻ Simmering…\x1b[0m \x1b[2m(3s · esc to interrupt)\x1b[0m', ''] : []), R, ...input, R,
-        '  🤖 Opus 5.5 (high) | 💰 $17.17 session', MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
+        `  🤖 ${this.model} | 💰 $17.17 session`, MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
     }
     const all = [...this.log.flatMap(wrap), ...tail];
     return [...Array(Math.max(0, this.rows - all.length)).fill(''), ...all].slice(-this.rows);
@@ -234,7 +239,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   const ent = await P.page.evaluate(() => { window.__qa.entryOn = false; const f = window.__qa.flips; window.__qa.flips = 0; return { e: window.__qa.entry, f, boot: document.body.classList.contains('ccboot'), shownAt: window.__qa.shownAt, loader: [...new Set(window.__qa.loader || [])], loaderGone: !document.getElementById('ccload')?.getBoundingClientRect().height }; });
   check(`${tag} 0 first open: the new UI from the first frame, never Claude's own box or tmux's line, at most two resizes (${(F.sizes || []).length}; in sight ${ent.shownAt} ms after the first output), the loader meanwhile`, !ent.e.length && !ent.boot && (F.sizes || []).length <= 2 && ent.loader.some(t => /^ccw-dev(connecting|opening)$/.test(t)) && ent.loaderGone, [ent.e.length, ent.e.slice(0, 3), ent, F.sizes]);
   s = await st(P);
-  check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 0, s);
+  check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto' && s.two === 0 && s.flips === 0, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
   // on open the field appears, the terminal refits and settles (SETTLE) before Claude's rows go under the dock: allow that second
   for (let i = 0; i < 20 && !(s.under >= 5 && s.band < s.cell + 8); i++) { await sleep(100); s = await st(P); }
@@ -409,6 +414,26 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
   await P.page.fill('#ccmsg', ''); await sleep(700);
+  // M the model, from Claude's status line, on a chip next to the mode; a tap opens Claude's own /model picker, a number switches
+  const chips = () => P.page.evaluate(() => { const m = document.getElementById('ccmodel'), r = m.getBoundingClientRect(), sd = document.getElementById('ccsend').getBoundingClientRect(), md = document.getElementById('ccmode').getBoundingClientRect();
+    const sp = m.querySelector('span'); return { shown: getComputedStyle(m).display !== 'none', whole: (() => { const rg = document.createRange(); rg.selectNodeContents(sp); return rg.getBoundingClientRect().width <= sp.getBoundingClientRect().width + 0.5; })(), name: sp.textContent, effort: m.querySelector('small').textContent, right: Math.round(r.right), sendLeft: Math.round(sd.left), modeRight: Math.round(md.right), left: Math.round(r.left), top: Math.round(r.top), modeTop: Math.round(md.top), sw: document.scrollingElement.scrollWidth, iw: innerWidth }; });
+  let c = await chips();
+  check(`${tag} M1 the model chip: "Opus 5.5" and its effort, next to the mode chip, on one row, nothing overflows`, c.shown && c.name === 'Opus 5.5' && c.effort === 'high' && c.left >= c.modeRight && c.right <= c.sendLeft && c.top === c.modeTop && c.sw === c.iw, c);
+  await shot(P, `${tag}-M1-model`);
+  // the longest mode, as on the phone: "bypass permissions" and the model share the row, nothing pushed off it
+  const m0 = F.mode; MODES.push('⏵⏵ bypass permissions on'); F.mode = MODES.length - 1; F.redraw(); await sleep(400); c = await chips();
+  check(`${tag} M1 with "bypass permissions": both chips on the row, the model's name whole, nothing overflows`, c.shown && c.whole && c.left >= c.modeRight && c.right <= c.sendLeft && c.top === c.modeTop && c.sw === c.iw, c);
+  await shot(P, `${tag}-M1-bypass`);
+  MODES.pop(); F.mode = m0; F.redraw(); await sleep(400);
+  await P.page.locator('#ccmodel').click(); await sleep(500); s = await st(P);
+  check(`${tag} M2 a tap opens Claude's /model picker: the field asks for a number`, F.scene === 'model' && s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown, [F.scene, s]);
+  await shot(P, `${tag}-M2-picker`);
+  await P.page.fill('#ccmsg', '2'); await P.page.press('#ccmsg', 'Enter'); await sleep(600); c = await chips();
+  check(`${tag} M3 "2" switches to Sonnet: the chip follows`, F.scene === 'idle' && F.model.startsWith('Sonnet') && c.shown && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.model, c]);
+  await key(P, 'UP'); await sleep(600); c = await chips(); const n1 = (F.inputs || []).join('').split('/model').length;
+  check(`${tag} M4 while Claude holds a draft the chip gives its place to the draft chip (a /model typed after it would be text)`, !c.shown && (await st(P)).draft !== '', c);
+  await key(P, 'Esc'); await sleep(400);
+  check(`${tag} M4 nothing was typed into the draft`, (F.inputs || []).join('').split('/model').length === n1);
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);

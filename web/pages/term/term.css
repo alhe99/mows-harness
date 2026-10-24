@@ -95,8 +95,17 @@ background:var(--c-surface);border:1px solid var(--c-line2);border-radius:16px;p
 #ccadd svg{width:16px;height:16px}
 #ccadd:active{background:var(--c-raised)}
 #ccsheet .tile[hidden]{display:none}
-#ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
+#ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;flex:none}
 #ccmode[hidden]{display:none}
+/* the model chip: the name, its effort dim, a chevron (it opens a picker); it gives way first when the row is short, and to the draft chip */
+#ccmodel{flex:0 1 auto;min-width:0;height:30px;padding:0 8px 0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);
+font:500 12px var(--c-mono);display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden}
+#ccmodel span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#ccmodel small{flex:0 100 auto;min-width:0;overflow:hidden;font:400 11px var(--c-mono);color:var(--c-dim)} /* the effort gives way before the name */
+#ccmodel small:empty{display:none}
+#ccmodel svg{flex:none;width:12px;height:12px;color:var(--c-dim)}
+#ccmodel:active{background:var(--c-raised)}
+#ccmodel[hidden],#cccomp:has(.dchip:not([hidden])) #ccmodel{display:none}
 #ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}
 /* the draft chip: the text (tap: the preview) and its × (clear) */
 #cccomp .dchip{flex:1;min-width:0;display:flex;align-items:center;height:30px;border-radius:999px;border:1px solid var(--c-ok-bd);background:var(--c-ok-bg);box-sizing:border-box}

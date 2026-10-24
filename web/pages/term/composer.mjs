@@ -15,7 +15,7 @@
 // (SETTLE ms): each change is one pty resize. (The first version shifted the terminal down instead: no resizes, but the hidden rows came
 // back as a blank band at the top, and with the keyboard up on a small phone that band was most of the screen. 2026-10-23)
 import { claudeScreen } from './claudebox.mjs';
-import { coarse, el, icon, off } from './dom.mjs';
+import { coarse, el, icon, off, say } from './dom.mjs';
 import { mods } from './bar.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
@@ -28,6 +28,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
   const mode = el('button', { type: 'button', id: 'ccmode', hidden: true, 'aria-label': 'permission mode, tap to cycle' });
+  // the model, when a status line names it: tap opens Claude's own /model picker (its list, always current), answered from the field
+  const modelName = el('span'), modelEffort = el('small');
+  const model = el('button', { type: 'button', id: 'ccmodel', hidden: true, 'aria-label': 'model, tap to change' }, modelName, modelEffort,
+    icon('<path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'));
   // the draft chip: what Claude's box holds. Tap it to see it (the attached images, from this phone's own copy); × clears it (one ctrl+c:
   // Claude clears a non-empty input with it and stays; checked on Claude Code 2026-10-24)
   const draftText = el('button', { type: 'button', id: 'ccdraft', 'aria-label': "show what is attached" });
@@ -48,7 +52,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // a shell last time) opens without the field: it comes with Claude's box, while the terminal is still out of sight.
   const args = new URLSearchParams(location.search).getAll('arg'), KEY = 'cchid:' + (args[0] === 'attach' ? args[1] || '' : '');
   let last = 0; try { last = +(localStorage.getItem(KEY) || 0); } catch { /* storage off: a first visit every time */ }
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, ta, el('div', { className: 'cbar' }, add, mode, model, draft, send));
   let booting = true, got = false, cap = 0;
   document.body.classList.add('ccboot');
   const ready = () => { if (booting) { booting = false; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
@@ -115,6 +119,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     e.preventDefault(); term.input(e.data);
   });
   mode.addEventListener('click', () => term.input('\x1b[Z'));
+  model.addEventListener('click', () => {
+    scan();
+    if (held) { say('Send or remove what is attached first'); return; } // typed after it, /model would be text, not the command
+    if (top < 0 || choice) return;
+    term.paste('/model');
+    setTimeout(() => term.input('\r'), 60);
+  });
 
   // the cell height: a DOM row's (the renderer iOS uses), else the screen's height over the rows. Right after a resize the screen keeps its
   // old height until xterm renders, so that ratio is stale for a frame: the rAF pass after a resize corrects it
@@ -187,9 +198,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
         held = s.box.draft || '';
         mode.hidden = !s.mode;
-        if (s.mode) { mode.textContent = s.mode.label; mode.className = s.mode.cls; }
+        // the chip says it short (its colour says which mode; the model chip needs the room), its label in full
+        if (s.mode) { mode.textContent = s.mode.label.replace(/ (mode|permissions)$/, ''); mode.className = s.mode.cls; mode.setAttribute('aria-label', s.mode.label + ', tap to cycle'); }
+        model.hidden = !s.model;
+        if (s.model && modelName.textContent !== s.model.name) modelName.textContent = s.model.name;
+        if (s.model && modelEffort.textContent !== s.model.effort) modelEffort.textContent = s.model.effort;
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; hide(0); } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; hide(0); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);

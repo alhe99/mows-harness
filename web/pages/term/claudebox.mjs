@@ -7,6 +7,8 @@ const RULE = /^\s*(?:─{8,}|╭─{6,}╮|╰─{6,}╯)\s*$/;
 const PROMPT = /^\s*(?:│\s?)?[❯>]/;
 const MODE = /(⏵⏵|⏸)\s*([a-z][a-z ]*?)\s+on\b/;
 const CLS = { 'accept edits': 'ed', 'plan mode': 'pl', 'bypass permissions': 'bad', 'auto mode': 'ok' };
+// the model, from a status line under the box that names it (a custom one: `🤖 Opus 5.5 (high) | …`); Claude's own UI does not show it
+const MODEL = /\b(Opus|Sonnet|Haiku|Fable)(?: (\d+(?:\.\d+)?))?(?:\s*\((low|medium|high|xhigh|max|auto)\))?/;
 // a permission dialog: its own furniture (the selected option, the cancel hint) marks it wherever it sits on the bottom rows; its question
 // ("Do you want to …") is ordinary prose too, so that one counts only under the box's top rule
 const DIALOG = /Esc to cancel|❯\s*\d\.\s/, ASK = /Do you want to /;
@@ -35,18 +37,19 @@ export function claudeScreen(rows, typed = rows) {
   // and a box found above or below a real dialog would hide it while return answers it (security reviews 2026-10-23). Only the question's
   // words are read from the box down: above it is conversation, where they are only words.
   const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
-  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, choice: choices(tail), edge: -1 };
+  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, model: null, choice: choices(tail), edge: -1 };
   // edge: the lowest rule with a prompt row under it, bottom rule or not. Mid-resize tmux shows the pane cut to the new size before Claude
   // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
   let edge = -1;
   for (let r = n - 2; r >= Math.max(1, n - 16) && edge < 0; r--) if (RULE.test(rows[r]) && PROMPT.test(rows[r + 1])) edge = r;
-  let mode = null;
+  let mode = null, model = null;
   if (box) {
+    for (const r of rows.slice(box.bottom + 1)) { const m = MODEL.exec(r); if (m) { model = { name: m[2] ? `${m[1]} ${m[2]}` : m[1], effort: m[3] || '' }; break; } }
     for (const r of rows.slice(box.bottom + 1)) {
       const m = MODE.exec(r);
       if (m) { mode = { label: `${m[1]} ${m[2]}`, cls: CLS[m[2]] || 'df' }; break; }
     }
     mode ??= { label: 'default mode', cls: 'df' };
   }
-  return { box, mode, choice: 0, edge };
+  return { box, mode, model, choice: 0, edge };
 }
