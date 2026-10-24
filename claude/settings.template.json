@@ -6,15 +6,8 @@
         {"type": "command", "command": "[ -s \"$HOME/.local/state/claude-mem-health.alert\" ] && cat \"$HOME/.local/state/claude-mem-health.alert\" || true"},
         {"type": "command", "command": "command -v claude-quota >/dev/null 2>&1 && timeout 3 claude-quota --line || true"}
       ]}
-    ],
-    "Notification": [
-      {"matcher": "permission_prompt|elicitation_dialog|agent_needs_input",
-       "hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" input"}]},
-      {"matcher": "idle_prompt",
-       "hooks": [{"type": "command", "command": "\"$HOME/.claude/scripts/discord-notify.sh\" idle"}]}
     ]
   },
-  "remoteControlAtStartup": true,
   "autoCompactEnabled": true,
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",

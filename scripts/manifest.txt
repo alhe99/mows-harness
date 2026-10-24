@@ -36,7 +36,6 @@ claude/commands/work.md
 claude/global/CLAUDE.md
 claude/mcp.template.json
 claude/rules/context7.md
-claude/scripts/discord-notify.sh
 claude/scripts/discord-send.sh
 claude/scripts/discord-via-agy.sh
 claude/settings.template.json
