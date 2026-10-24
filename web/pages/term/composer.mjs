@@ -134,6 +134,16 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       form.hidden = !show;
       if (!show && document.activeElement === ta) term.focus(); // the keyboard carries on in the terminal, the one input left
     }
+    // while the field is the input, xterm's own input is disabled: nothing can type into Claude's box behind it, not a tap, not the iOS
+    // keyboard bar's ^/v (which walks the page's text fields), not a focus from anywhere else (the phone, 2026-10-24: a message landed in
+    // Claude's box). The bar's keys do not need it: they write through term.input().
+    const x = term.textarea;
+    if (x && x.disabled !== show) {
+      const had = document.activeElement === x;
+      x.disabled = show;
+      if (show && had) ta.focus();
+      if (!show && document.activeElement === ta) term.focus();
+    }
   };
   const later = () => { pend ||= setTimeout(scan, 30); };
   term.onWriteParsed(scan); term.onScroll(later);
@@ -147,7 +157,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (top < 0 || form.hidden || !p || Math.abs(p.clientX - tx) + Math.abs(p.clientY - ty) > 10) return;
     e.preventDefault(); ta.focus();
   });
-  term.textarea?.addEventListener('focus', () => { if (top >= 0 && !form.hidden) ta.focus(); });
+  term.textarea?.addEventListener('focus', () => { if (!form.hidden) ta.focus(); });
+  // a tap the touch handler did not see (a mouse, an accessibility tap): the click is a gesture too
+  tc.parentElement?.addEventListener('click', () => { if (!form.hidden && document.activeElement !== ta) ta.focus(); });
   // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: place the shift again
   // xterm can leave its viewport off the bottom after a resize that pushed rows into its scrollback, showing an older view until the next
   // output; under tmux that scrollback is never read (the finger scrolls tmux), so the view goes back to the bottom at once

@@ -46,6 +46,8 @@ addEventListener('resize', () => fit());
 // desktop a window drag is a burst, coalesced as before
 const wrap = /** @type {HTMLElement} */ (document.getElementById('terminal-wrap'));
 new ResizeObserver(() => fit(coarse())).observe(wrap);
+// an engine without overflow:clip can still scroll the box (term.css): put it back at once
+wrap.addEventListener('scroll', () => { if (wrap.scrollTop || wrap.scrollLeft) { wrap.scrollTop = 0; wrap.scrollLeft = 0; } });
 
 // the status overlay (ttyd's): connection closed, reconnecting, press Enter
 const ovl = document.body.appendChild(el('div', { id: 'ccovl' }));

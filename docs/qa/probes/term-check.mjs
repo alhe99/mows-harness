@@ -461,8 +461,13 @@ async function composer() {
   await press(W, 'Ctrl'); n = W.inputs().length; await W.page.focus('#ccmsg'); await W.page.keyboard.type('o'); await sleep(100);
   check('ctrl, then o typed in the field: ^O goes to the terminal, the field stays empty', W.inputs().slice(n).join('') === '\x0f' && (await W.page.inputValue('#ccmsg')) === '', [bytes(W.inputs().slice(n)), await W.page.inputValue('#ccmsg')]);
   // the keyboard belongs to the field while the box is hidden
-  await W.page.evaluate(() => document.activeElement?.blur()); await W.page.evaluate(() => window.term.focus()); await sleep(50);
-  check('a tap on the terminal brings the focus to the field', await W.page.evaluate(() => document.activeElement?.id === 'ccmsg'));
+  // a tap (a touch, as on a phone) brings the focus to the field; xterm's own input is disabled meanwhile, so nothing else can take it
+  await W.page.evaluate(() => document.activeElement?.blur());
+  { const b = await W.page.locator('#terminal-wrap').boundingBox(), pt = [{ identifier: 1, clientX: b.x + b.width / 2, clientY: b.y + b.height / 3 }];
+    await W.page.dispatchEvent('.xterm-screen', 'touchstart', { touches: pt, changedTouches: pt });
+    await W.page.dispatchEvent('.xterm-screen', 'touchend', { touches: [], changedTouches: pt, cancelable: true }); }
+  await sleep(50);
+  check('a tap on the terminal brings the focus to the field; xterm\'s input is disabled', await W.page.evaluate(() => document.activeElement?.id === 'ccmsg' && window.term.textarea.disabled));
   // attach: the path goes into Claude's box (where an image path becomes a real attachment); the box stays hidden and the field shows it
   let n1 = W.inputs().length;
   await W.page.setInputFiles('input[type=file]', { name: 'IMG_8150.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(300);

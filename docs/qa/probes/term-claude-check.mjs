@@ -30,6 +30,7 @@ class FakeClaude {
     if (s[0] === '1') { const j = JSON.parse(s.slice(1)); this.resize(j.rows, j.columns); return; }
     if (s[0] !== '0') return;
     let d = s.slice(1);
+    (this.inputs ||= []).push(d); // every byte the page sent, for the writing checks
     if (this.scene === 'shell') { for (const c of d) { if (c === '\r') { this.log.push('dev@box:~$ ' + this.draft); this.draft = ''; } else if (c >= ' ') this.draft += c; } this.redraw(); return; }
     while (d) {
       let m;
@@ -62,8 +63,10 @@ class FakeClaude {
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
     else {
       // the input line: what is typed in the default colour; empty, the last prompt as Claude's dimmed suggestion under its inverse cursor
-      const prompt = this.draft ? '\x1b[38;5;246m❯ \x1b[39m' + this.draft.split('\n')[0] : '\x1b[38;5;246m❯ \x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1) + '\x1b[0m';
-      tail = [...(this.scene === 'working' ? ['\x1b[38;5;173m✻ Simmering…\x1b[0m \x1b[2m(3s · esc to interrupt)\x1b[0m', ''] : []), R, prompt, ...this.draft.split('\n').slice(1), R,
+      // as Claude draws it: wrapped at the box's width, the first row after ❯, the rest indented two
+      const w = Math.max(8, this.cols - 2), rowsOf = t => t.split('\n').flatMap(p => { const out = []; for (let i = 0; i < Math.max(1, p.length); i += w) out.push(p.slice(i, i + w)); return out; });
+      const input = this.draft ? rowsOf(this.draft).map((r, i) => (i ? '  ' : '\x1b[38;5;246m❯\u00a0\x1b[39m') + r) : ['\x1b[38;5;246m❯\u00a0\x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1, w) + '\x1b[0m'];
+      tail = [...(this.scene === 'working' ? ['\x1b[38;5;173m✻ Simmering…\x1b[0m \x1b[2m(3s · esc to interrupt)\x1b[0m', ''] : []), R, ...input, R,
         '  🤖 Opus 5.5 (high) | 💰 $17.17 session', MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
     }
     const all = [...this.log.flatMap(wrap), ...tail];
@@ -258,6 +261,62 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await key(P, 'Esc'); await sleep(300);
   await P.page.locator('#ccmode').click(); await sleep(400); s = await st(P);
   check(`${tag} 8 the mode chip: shift+tab, Claude's next mode on the chip`, s.chip === '⏵⏵ accept edits', s);
+  // ---- writing (the phone, 2026-10-24: a message typed after using the ⋯ menu landed in Claude's box, and the box showed) ----
+  const sent = () => (F.inputs || []).length;
+  const tapTerm = async () => {
+    const b = await P.page.locator('#terminal-wrap').boundingBox(), pt = [{ identifier: 1, clientX: b.x + b.width / 2, clientY: b.y + b.height / 3 }];
+    await P.page.dispatchEvent('.xterm-screen', 'touchstart', { touches: pt, changedTouches: pt });
+    await P.page.dispatchEvent('.xterm-screen', 'touchend', { touches: [], changedTouches: pt, cancelable: true });
+  };
+  const two0 = (await st(P)).two;
+  // W1 a long message in the field: nothing reaches the terminal while typing, then one paste and Enter
+  await tapTerm(); let n0 = sent();
+  const long = 'all menus I fire from the options should land here, in the field, and never in the box of Claude that sits behind it';
+  await P.page.keyboard.type(long, { delay: 5 }); await sleep(200);
+  s = await st(P);
+  check(`${tag} W1 typing a long message: every key in the field, nothing to the terminal, the field grows, no box`, (await P.page.inputValue('#ccmsg')) === long && sent() === n0 && s.two === two0, [sent() - n0, s]);
+  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  check(`${tag} W1 send: Claude has the whole message`, F.last === long, F.last);
+  // W2 xterm's own input is disabled while the field is the input: a focus from anywhere (the iOS keyboard bar's ^/v walks the page's text
+  // fields) cannot type into Claude's box
+  n0 = sent();
+  const x = await P.page.evaluate(async () => {
+    const t = /** @type {any} */ (window).term.textarea, wrap = document.getElementById('terminal-wrap');
+    t.focus();
+    // what iOS does for a focused input: scroll its container to bring it into view; the terminal's box must not move
+    wrap.scrollTop = 200; t.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 50));
+    return { disabled: t.disabled, focused: document.activeElement === t, scrolled: wrap.scrollTop };
+  });
+  await P.page.keyboard.type('zz'); await sleep(150);
+  check(`${tag} W2 xterm's input is disabled: a focus on it does not take, typed keys reach nothing behind the field`, x.disabled && !x.focused && sent() === n0 && !F.draft.includes('zz'), [x, sent() - n0, F.draft]);
+  check(`${tag} W2 the terminal's box cannot be scrolled (iOS scrolls a focused input's container into view): Claude's box stays under the dock`, x.scrolled === 0 && (await st(P)).two === two0, [x, await st(P)]);
+  // W3 every way out of the ⋯ menu, then a tap on the terminal and typing: the text is in the field
+  for (const way of ['backdrop', 'Copy text', 'Attach file']) {
+    await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan');
+    if (way === 'backdrop') await P.page.mouse.click(w / 2, 30);
+    else if (way === 'Copy text') { await P.page.locator('#ccsheet .tile', { hasText: 'Copy text' }).click(); await sleep(150); await P.page.locator('#ccclip-x').click(); }
+    else { await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await P.page.setInputFiles('input[type=file]', { name: 'w3.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); }
+    await sleep(500);
+    await tapTerm(); n0 = sent();
+    await P.page.keyboard.type('after ' + way, { delay: 5 }); await sleep(250);
+    s = await st(P);
+    check(`${tag} W3 after the menu (${way}): a tap and typing go into the field, nothing to the terminal, no box`, (await P.page.inputValue('#ccmsg')).endsWith('after ' + way) && sent() === n0 && s.two === two0, [await P.page.inputValue('#ccmsg'), sent() - n0, s.focus, s]);
+    await P.page.fill('#ccmsg', '');
+  }
+  check(`${tag} W3 the attached image is Claude's draft, shown as the chip`, (await st(P)).draft.startsWith('[Image #'), await st(P));
+  await key(P, 'Esc'); await sleep(300);
+  // W4 Claude's draft grows to several rows (a long recalled prompt): the box grows, the rows under the dock follow, the box never shows
+  F.last = 'a recalled prompt long enough to wrap over several rows of Claude Code\'s own input box on a phone, the way a long message does when it is typed straight into the terminal';
+  await key(P, 'UP'); await sleep(1000);
+  s = await st(P);
+  check(`${tag} W4 a draft over several rows: hidden, on the chip, never two inputs`, s.draft.startsWith('a recalled prompt') && s.two === two0 && s.shown, [s, await twos(P)]);
+  await key(P, 'Esc'); await sleep(400);
+  // W5 typing the next message while Claude works on the last one
+  await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(60);
+  await P.page.keyboard.type('second while it works', { delay: 5 }); await sleep(300);
+  s = await st(P);
+  check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
+  await P.page.fill('#ccmsg', ''); await sleep(700);
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);

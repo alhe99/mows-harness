@@ -16,7 +16,9 @@
 /* canvas bg = dock chrome: iOS 26 paints its reserved bottom gesture zone with the page canvas colour, so the page black fuses that zone with the dock */
 html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:var(--c-bg);color-scheme:dark} /* a desktop with a mouse draws xterm's viewport scrollbar; dark, not a white bar */
 body{overscroll-behavior:none;-webkit-font-smoothing:antialiased}
-#terminal-wrap{position:relative;height:100%;overflow:hidden}
+/* clip, not hidden: an overflow:hidden box can still be scrolled by the browser, and iOS scrolls it to bring a focused input into view; xterm's
+   input sits at the cursor, in Claude's box under the dock, so a focus there scrolled the box up into sight (the phone, 2026-10-24) */
+#terminal-wrap{position:relative;height:100%;overflow:hidden;overflow:clip}
 #terminal-container{width:100%;height:100%;margin:0 auto;padding:0}
 #terminal-container .terminal{padding:5px;height:calc(100% - 10px)}
 .xterm .xterm-viewport{background-color:transparent;scrollbar-width:thin;scrollbar-color:#3f3f47 transparent} /* xterm paints the viewport #000 and the theme never repaints it: the 5 px padding and the space under the last row were a black frame on every theme; the body carries the theme background */
