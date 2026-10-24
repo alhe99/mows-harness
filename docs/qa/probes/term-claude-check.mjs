@@ -447,6 +447,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
   await P.page.fill('#ccmsg', ''); await sleep(700);
+  await P.page.evaluate(() => ((window.__qa.marks ||= {})['E'] = Math.round(performance.now())));
   // E esc while Claude works gives the message back in the field, to edit: once it has begun answering (Claude keeps nothing) and before it
   // has (Claude puts it back in its own box: it moves to the field, one ctrl+c out of Claude's box)
   F.work = 3000;
@@ -461,10 +462,12 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
       [busy, await P.page.inputValue('#ccmsg'), F.draft, s, (F.inputs || []).slice(c0)]);
     await P.page.fill('#ccmsg', ''); await sleep(300);
   }
+  await P.page.evaluate(() => ((window.__qa.marks ||= {})['E2'] = Math.round(performance.now())));
   // a turn that ends by itself gives nothing back
   await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(3600);
   check(`${tag} E a turn that ends by itself: the field stays empty`, (await P.page.inputValue('#ccmsg')) === '' && F.last === 'a finished one', [await P.page.inputValue('#ccmsg'), F.last]);
   F.work = 0; F.early = false;
+  await P.page.evaluate(() => ((window.__qa.marks ||= {})['M'] = Math.round(performance.now())));
   // M the model, from Claude's status line, on a chip next to the mode; a tap opens Claude's own /model picker, a number switches
   const chips = () => P.page.evaluate(() => { const m = document.getElementById('ccmodel'), r = m.getBoundingClientRect(), sd = document.getElementById('ccsend').getBoundingClientRect(), md = document.getElementById('ccmode').getBoundingClientRect();
     const sp = m.querySelector('span'); return { shown: getComputedStyle(m).display !== 'none', whole: (() => { const rg = document.createRange(); rg.selectNodeContents(sp); return rg.getBoundingClientRect().width <= sp.getBoundingClientRect().width + 0.5; })(), name: sp.textContent, effort: m.querySelector('small').textContent, right: Math.round(r.right), sendLeft: Math.round(sd.left), modeRight: Math.round(md.right), left: Math.round(r.left), top: Math.round(r.top), modeTop: Math.round(md.top), sw: document.scrollingElement.scrollWidth, iw: innerWidth }; });
@@ -476,6 +479,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} M1 with "bypass permissions": both chips on the row, the model's name whole, nothing overflows`, c.shown && c.whole && c.left >= c.modeRight && c.right <= c.sendLeft && c.top === c.modeTop && c.sw === c.iw, c);
   await shot(P, `${tag}-M1-bypass`);
   MODES.pop(); F.mode = m0; F.redraw(); await sleep(400);
+  await P.page.evaluate(() => ((window.__qa.marks ||= {})['P'] = Math.round(performance.now())));
   // P Claude's /model picker comes up as a sheet in the page's look: its rows, the highlight moved by a tap, the effort, its keys as buttons
   const sheet = () => P.page.evaluate(() => { const w = document.getElementById('ccpick'); if (!w) return { open: false }; const pan = w.querySelector('.pan'), r = pan.getBoundingClientRect(), on = w.querySelector('.opt.on .ol'), cur = w.querySelector('.opt.cur');
     return { open: w.classList.contains('open') && getComputedStyle(w).display !== 'none', title: w.querySelector('.hd b')?.textContent, rows: [...w.querySelectorAll('.opt .ol')].map(x => x.textContent), on: on?.textContent, cur: cur?.querySelector('.ol').textContent, tick: !!cur?.querySelector('svg'),
@@ -484,7 +488,8 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // open: the sheet up and its slide in over (a resize of the pty comes first)
   const opened = () => P.page.waitForFunction(() => { const w = document.getElementById('ccpick'); return w?.classList.contains('open') && getComputedStyle(w.querySelector('.pan')).transform === 'none'; }, null, { timeout: 5000 }).catch(() => {});
   const tapIn = async sel => { await P.page.locator('#ccpick ' + sel).click(); await sleep(450); };
-  F.prose = 40; // taller than every phone's screen, as /model is on a real one: the page gives the pty the rows to draw it whole
+  // a picker never resizes the pty: a resize makes Claude repaint the whole conversation, and on a long one the phone froze (2026-10-24)
+  const sz0 = (F.sizes || []).length;
   await P.page.locator('#ccmodel').click(); await opened(); let k = await sheet();
   check(`${tag} P1 a tap on the chip opens the picker as a sheet: its title, the first four models, Opus 5.5 highlighted and ticked, the keyboard down`, F.scene === 'model' && k.open && k.title === 'Select model' && k.rows.join() === 'Opus 5.5,Fable 5.1,Sonnet 5.5,Haiku 5.5' && k.on === 'Opus 5.5' && k.cur === 'Opus 5.5' && k.tick && !k.kb, k);
   check(`${tag} P1 the rest of it: 2 more models, the effort, its keys (Enter the primary), on screen, nothing overflows`, k.more.join() === 'Show 2 more' && k.adj === 'high effort' && k.acts.join() === 'Use this session only,Set as default*' && k.inView && k.sw === k.iw, k);
@@ -503,8 +508,12 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} P6 Cancel is Claude's esc: nothing changes`, F.scene === 'idle' && F.model === 'Opus 4.8 (xhigh)' && !k.open, [F.scene, F.model, k.open]);
   await P.page.locator('#ccmodel').click(); await opened(); await tapIn('.opt:has-text("Sonnet 5.5")'); await tapIn('.adj button:first-child'); await tapIn('.adj button:first-child'); await tapIn('.acts .pri'); k = await sheet(); c = await chips();
   check(`${tag} P7 "Set as default" is Claude's Enter: Sonnet 5.5 at medium, the default, the sheet gone`, F.scene === 'idle' && F.how === 'default' && F.model === 'Sonnet 5.5 (medium)' && !k.open && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.how, F.model, k.open, c]);
-  F.prose = 0; await sleep(800); s = await st(P);
-  check(`${tag} P8 the picker gone, the pty is back to its size: Claude's box under the dock, one input, no strip at the top`, s.shown && s.two === 0 && s.topGap <= 0 && F.rows < 60, [s, F.rows]);
+  await sleep(800); s = await st(P);
+  check(`${tag} P8 opened three times, moved, cancelled, chosen: not one resize of the pty; Claude's box back under the dock, one input`, (F.sizes || []).length === sz0 && s.shown && s.two === 0 && s.topGap <= 0, [(F.sizes || []).slice(sz0), await twos(P), s.two, await P.page.evaluate(() => window.__qa.marks)]);
+  // a picker taller than the rows (its keys cut off, as /model on a small phone): Claude's own drawing and the field, as before
+  F.prose = 60; await P.page.locator('#ccmodel').click(); await sleep(900); s = await st(P);
+  check(`${tag} P9 a picker taller than the screen: no sheet, the field asks for a number`, F.scene === 'model' && !(await sheet()).open && s.shown, [F.scene, s]);
+  await key(P, 'Esc'); await sleep(500); F.prose = 0; F.redraw(); await sleep(800);
   await key(P, 'UP'); await sleep(600); c = await chips(); const n1 = (F.inputs || []).join('').split('/model').length;
   check(`${tag} M4 while Claude holds a draft the chip gives its place to the draft chip (a /model typed after it would be text)`, !c.shown && (await st(P)).draft !== '', c);
   await key(P, 'Esc'); await sleep(400);
