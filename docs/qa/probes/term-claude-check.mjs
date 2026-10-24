@@ -20,6 +20,15 @@ let bad = 0;
 const check = (id, ok, d) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${engine}/${id}${ok ? '' : ' ' + JSON.stringify(d)}`); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const MODES = ['⏵⏵ auto mode on', '⏵⏵ accept edits on', '⏸ plan mode on', ''];
+// a real image to attach (a 48 px square, the shell's green): the preview must be able to show it
+import { deflateSync } from 'node:zlib';
+const PNG = (() => {
+  const crc = b => { let c, k = -1; for (const x of b) { c = (k ^ x) & 255; for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; k = (k >>> 8) ^ c; } return (k ^ -1) >>> 0; };
+  const chunk = (t, d) => { const len = Buffer.alloc(4), tc = Buffer.concat([Buffer.from(t), d]), cr = Buffer.alloc(4); len.writeUInt32BE(d.length); cr.writeUInt32BE(crc(tc)); return Buffer.concat([len, tc, cr]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(48, 0); ihdr.writeUInt32BE(48, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.concat(Array.from({ length: 48 }, () => Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: 48 }, () => [0, 212, 146]).flat())])));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+})();
 const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m';
 
 class FakeClaude {
@@ -45,6 +54,7 @@ class FakeClaude {
       if (this.scene === 'dialog') { if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
+      if (c === '\x03') { if (this.draft) this.draft = ''; else this.exitWarn = true; continue; } // Claude: ctrl+c clears a non-empty input; on an empty one it warns
       if (c >= ' ') this.draft += c;
     }
     this.redraw();
@@ -234,7 +244,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // the picker covers the page: blur, and the page is not rendered meanwhile, so a text area measures 0 (its scrollHeight, stubbed; the layout
   // itself does not move); the upload and Claude's [Image #1] arrive while it is up; then the page comes back
   await P.page.evaluate(() => { dispatchEvent(new Event('blur')); Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { get: () => 0, configurable: true }); });
-  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(600);
+  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: PNG }); await sleep(600);
   await P.page.evaluate(() => { delete (/** @type {any} */ (HTMLTextAreaElement.prototype)).scrollHeight; dispatchEvent(new Event('focus')); }); await sleep(600);
   {
     const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
@@ -247,15 +257,27 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 1, [s, F.draft, await twos(P)]);
   check(`${tag} 4 after the picker the field's text area is a whole line, not collapsed`, s.taH >= 36, s);
+  // tap the chip: the preview shows the image itself (this phone's own copy), named by Claude's token
+  await P.page.locator('#ccdraft').click(); await sleep(200);
+  const pv = await P.page.evaluate(() => ({ on: document.getElementById('ccprev').classList.contains('on'), img: document.querySelector('#ccprev img')?.getAttribute('src') || '', cap: document.querySelector('#ccprev figcaption')?.textContent || '' }));
+  await shot(P, `${tag}-4-preview`);
+  await P.page.locator('#ccprev .pv-x').click(); await sleep(100);
+  check(`${tag} 4 a tap on the chip previews the attached image`, pv.on && pv.img.startsWith('blob:') && pv.cap.startsWith('[Image #1]') && !(await P.page.evaluate(() => document.getElementById('ccprev').classList.contains('on'))), pv);
   await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);
   await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
   check(`${tag} 5 send with the image: one prompt "[Image #1] what is wrong here?", the chip clears`, F.last === '[Image #1] what is wrong here?' && !s.draft && s.two === 0, [s, F.last]);
-  await P.page.setInputFiles('input[type=file]', { name: 'b.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(700);
+  // attach, then take it back with the chip's ×: one ctrl+c, Claude's input is empty, the chip goes, Claude is not asked to exit
+  await P.page.setInputFiles('input[type=file]', { name: 'oops.png', mimeType: 'image/png', buffer: PNG }); await sleep(700);
+  const c0 = (F.inputs || []).length, d0 = (await st(P)).draft;
+  await P.page.locator('#ccclear').click(); await sleep(500);
+  s = await st(P);
+  check(`${tag} 5 × removes the attachment: one ctrl+c, Claude's input empty, no chip, no exit warning`, /^\[Image #\d+\]$/.test(d0) && (F.inputs || []).slice(c0).join('') === '\x03' && F.draft === '' && !s.draft && !F.exitWarn, [d0, (F.inputs || []).slice(c0), F.draft, s.draft, F.exitWarn]);
+  await P.page.setInputFiles('input[type=file]', { name: 'b.png', mimeType: 'image/png', buffer: PNG }); await sleep(700);
   await P.page.locator('#ccsend').click(); await sleep(900);
-  check(`${tag} 6 an image alone: send with an empty field submits the draft`, F.last === '[Image #2]', F.last);
+  check(`${tag} 6 an image alone: send with an empty field submits the draft`, /^\[Image #\d+\]$/.test(F.last), F.last);
   await key(P, 'UP'); await sleep(400); s = await st(P);
-  check(`${tag} 7 ↑ recalls the last prompt: the chip shows it, the box stays hidden`, s.draft === '[Image #2]' && s.two === 0, s);
+  check(`${tag} 7 ↑ recalls the last prompt: the chip shows it, the box stays hidden`, s.draft === F.last && s.two === 0, [s, F.last]);
   await key(P, 'Esc'); await sleep(300); s = await st(P);
   check(`${tag} 7 esc clears Claude's input: the chip goes`, !s.draft && F.draft === '', [s, F.draft]);
   // a long draft (the phone, 2026-10-23: the chip pushed the dock past the screen): the chip is cut with an ellipsis, nothing scrolls sideways
@@ -300,7 +322,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan');
     if (way === 'backdrop') await P.page.mouse.click(w / 2, 30);
     else if (way === 'Copy text') { await P.page.locator('#ccsheet .tile', { hasText: 'Copy text' }).click(); await sleep(150); await P.page.locator('#ccclip-x').click(); }
-    else { await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await P.page.setInputFiles('input[type=file]', { name: 'w3.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); }
+    else { await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await P.page.setInputFiles('input[type=file]', { name: 'w3.png', mimeType: 'image/png', buffer: PNG }); }
     await sleep(500);
     await tapTerm(); n0 = sent();
     await P.page.keyboard.type('after ' + way, { delay: 5 }); await sleep(250);

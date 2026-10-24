@@ -90,7 +90,7 @@ const put = t => { if (!comp?.insert(t)) term.paste(t); };
 const clip = clipboard(term, put);
 const att = attach(term);
 const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
-const comp = composer(term, tc, () => fit(true));
+const comp = composer(term, tc, () => fit(true), att.recent);
 // the session of the URL names the menu's header (?arg=attach&arg=<session>)
 const args = new URLSearchParams(location.search).getAll('arg');
 const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') } : null;

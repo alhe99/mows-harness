@@ -21,12 +21,17 @@ import { mods } from './bar.mjs';
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
 const LINGER = 1500, SETTLE = 400;
 
-export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}) {
+/** @param {{ url: string, name: string, path: string }[]} uploads images sent from this page, in order (attach.mjs) */
+export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = []) {
   if (!coarse() || off('comp')) return null;
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
   const mode = el('button', { type: 'button', id: 'ccmode', hidden: true, 'aria-label': 'permission mode, tap to cycle' });
-  const draft = el('span', { id: 'ccdraft', hidden: true, title: "what Claude's input box holds" });
+  // the draft chip: what Claude's box holds. Tap it to see it (the attached images, from this phone's own copy); × clears it (one ctrl+c:
+  // Claude clears a non-empty input with it and stays; checked on Claude Code 2026-10-24)
+  const draftText = el('button', { type: 'button', id: 'ccdraft', 'aria-label': "show what is attached" });
+  const clear = el('button', { type: 'button', id: 'ccclear', 'aria-label': 'remove it from the message', textContent: '×' });
+  const draft = el('span', { className: 'dchip', hidden: true }, draftText, clear);
   const send = el('button', { type: 'submit', id: 'ccsend', 'aria-label': 'send' }, icon(SEND));
   const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, mode, draft, send));
 
@@ -136,7 +141,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
-    if (draft.textContent !== held) { draft.hidden = !held; draft.textContent = held; grow(); } // only on a change: grow() moves the layout
+    if (draftText.textContent !== held) { draft.hidden = !held; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
     const ph = choice ? `Type 1–${choice} to choose…` : held ? 'Add a message, or send as it is…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
     const show = top >= 0 || choice > 0 || recent;
@@ -177,6 +182,33 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // from the observer: the shift is placed at once (a transform: it cannot resize what is observed, and the frame paints with it), the full
   // scan a tick later (it can show or hide the field, which inside the callback would be a ResizeObserver loop: WebKit reports it)
   if (tc.parentElement) new ResizeObserver(() => { if (top >= 0) tc.style.transform = shift = place(top); clearTimeout(pend); pend = setTimeout(scan, 0); }).observe(tc.parentElement);
+  // [Image #N] in the draft -> the upload it came from: each new token takes the next upload not yet matched, in order
+  const imgOf = new Map();
+  let nextUp = 0;
+  const match = () => {
+    for (const [tok] of held.matchAll(/\[Image #\d+\]/g)) if (!imgOf.has(tok) && nextUp < uploads.length) imgOf.set(tok, uploads[nextUp++]);
+  };
+  // the preview: every image of the draft, and the draft's text
+  const prevBody = el('div', { className: 'pv-body' });
+  const prev = el('div', { id: 'ccprev', role: 'dialog', 'aria-label': 'attached to your message' },
+    el('div', { className: 'pv-bar' }, el('span', { className: 'pv-t' }, 'In your message'),
+      el('button', { type: 'button', className: 'pv-rm', textContent: 'Remove' }), el('button', { type: 'button', className: 'pv-x', textContent: 'Close' })), prevBody);
+  document.body.append(prev);
+  const closePrev = () => prev.classList.remove('on');
+  const remove = () => { closePrev(); scan(); if (held && !choice) term.input('\x03'); };
+  draftText.addEventListener('click', () => {
+    prevBody.textContent = '';
+    for (const [tok] of held.matchAll(/\[Image #\d+\]/g)) {
+      const u = imgOf.get(tok);
+      prevBody.append(el('figure', {}, u ? el('img', { src: u.url, alt: tok }) : el('div', { className: 'pv-none', textContent: 'No preview: attached before this page was opened' }), el('figcaption', { textContent: tok + (u?.name ? ' · ' + u.name : '') })));
+    }
+    const rest = held.replace(/\[Image #\d+\]/g, '').trim();
+    if (rest) prevBody.append(el('p', { className: 'pv-text', textContent: rest }));
+    prev.classList.add('on');
+  });
+  prev.querySelector('.pv-x')?.addEventListener('click', closePrev);
+  prev.querySelector('.pv-rm')?.addEventListener('click', remove);
+  clear.addEventListener('click', remove);
   /** text from the menu's Paste: it goes where the user types. true if taken */
   const insert = t => {
     if (form.hidden || choice) return false;

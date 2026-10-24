@@ -74,9 +74,26 @@ body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 #ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
 #ccmode[hidden]{display:none}
 #ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}
-#ccdraft{flex:1;min-width:0;height:30px;line-height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--c-ok-bd);background:var(--c-ok-bg);color:var(--c-fg);
-font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box}
-#ccdraft[hidden]{display:none}
+/* the draft chip: the text (tap: the preview) and its × (clear) */
+#cccomp .dchip{flex:1;min-width:0;display:flex;align-items:center;height:30px;border-radius:999px;border:1px solid var(--c-ok-bd);background:var(--c-ok-bg);box-sizing:border-box}
+#cccomp .dchip[hidden]{display:none}
+#ccdraft{flex:1;min-width:0;height:28px;padding:0 4px 0 10px;border:0;background:none;color:var(--c-fg);text-align:left;
+font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ccclear{flex:none;width:30px;height:28px;padding:0;border:0;border-left:1px solid var(--c-ok-bd);background:none;color:var(--c-mut);font:400 18px/1 var(--c-sans)}
+#ccclear:active{color:var(--c-fg)}
+/* the preview of the draft */
+#ccprev{display:none;position:fixed;inset:0;z-index:85;background:var(--c-bg);flex-direction:column}
+#ccprev.on{display:flex}
+#ccprev .pv-bar{flex:none;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;border-bottom:1px solid var(--c-line)}
+#ccprev .pv-t{flex:1;font:600 15px var(--c-sans);color:var(--c-fg)}
+#ccprev .pv-bar button{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--c-line2);background:var(--c-surface);color:var(--c-fg);font:500 14px var(--c-sans)}
+#ccprev .pv-rm{color:var(--c-bad)!important}
+#ccprev .pv-body{flex:1;overflow:auto;padding:12px;display:grid;gap:14px;align-content:start}
+#ccprev figure{margin:0;display:grid;gap:6px}
+#ccprev img{max-width:100%;max-height:60vh;object-fit:contain;border-radius:12px;background:var(--c-surface);justify-self:center}
+#ccprev figcaption,#ccprev .pv-none{font:400 12px var(--c-mono);color:var(--c-mut);text-align:center}
+#ccprev .pv-none{padding:24px;border:1px dashed var(--c-line2);border-radius:12px}
+#ccprev .pv-text{margin:0;font:15px/1.5 var(--c-sans);color:var(--c-fg2);white-space:pre-wrap}
 #ccsend{margin-left:auto;flex:none;width:36px;height:36px;border-radius:50%;border:0;padding:0;background:var(--c-raised);color:var(--c-dim);display:grid;place-items:center}
 #cccomp.has #ccsend{background:var(--c-ok);color:#04130d}
 #ccsend svg{width:17px;height:17px}
