@@ -465,8 +465,8 @@ flowchart TB
 ## What each layer contains
 
 - **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 13
-  agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` (sets
-  `remoteControlAtStartup: true`) and MCP templates. Also installable as a standalone plugin
+  agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` (Remote Control is not auto-started; run `/remote-control` per session)
+  and MCP templates. Also installable as a standalone plugin
   (below).
 - **`watchdogs/`** — seven cron scripts keeping the host and remote-control Claude Code processes
   alive and clean: unit/wedge recovery, memory-capture verification, idle-session reaping,
