@@ -241,6 +241,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
   await P.page.locator('#cckb > button[data-k="Menu"]').click(); await kbAnim(P, Math.round(h * 0.52), h); await sleep(200);
   await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await sleep(100);
+  // iOS draws its Photo Library / Camera / Files menu at the file input: it must sit on the ⋯ key the user came from, not off screen
+  const anchor = await P.page.evaluate(() => { const i = document.querySelector('input[type=file]').getBoundingClientRect(), k = document.querySelector('#cckb > button[data-k="Menu"]').getBoundingClientRect();
+    return { x: Math.round(i.left), y: Math.round(i.top), kl: Math.round(k.left), kr: Math.round(k.right), kt: Math.round(k.top), kb: Math.round(k.bottom) }; });
+  check(`${tag} 4 the file picker's menu opens from the ⋯ key (the input sits on it)`, anchor.x >= anchor.kl && anchor.x <= anchor.kr && anchor.y >= anchor.kt - 1 && anchor.y <= anchor.kb, anchor);
   // the picker covers the page: blur, and the page is not rendered meanwhile, so a text area measures 0 (its scrollHeight, stubbed; the layout
   // itself does not move); the upload and Claude's [Image #1] arrive while it is up; then the page comes back
   await P.page.evaluate(() => { dispatchEvent(new Event('blur')); Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { get: () => 0, configurable: true }); });
