@@ -369,6 +369,7 @@ web/pages/term/ime.mjs
 web/pages/term/index.html
 web/pages/term/menu.mjs
 web/pages/term/paint.mjs
+web/pages/term/pick.mjs
 web/pages/term/term.css
 web/pages/term/term.mjs
 web/pages/term/theme.mjs

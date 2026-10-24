@@ -6,8 +6,8 @@
 // they sit under the dock while every visible row is conversation; what a row's remainder leaves is closed by a shift of less than a row. A
 // tap on the terminal brings the keyboard up in the field (from the touch itself: iOS ignores a focus moved inside a focus event). What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
 // submits it with whatever is typed; with an empty field, send submits the draft alone. The mode line comes back as the mode chip (tap =
-// shift+tab). A permission dialog: nothing is hidden, a bare digit picks. A shell or a full-screen program: no field, the terminal is the one
-// input. ?comp=off turns the composer off.
+// shift+tab). A permission dialog: nothing is hidden, a bare digit picks; a picker (/model) comes up as a sheet (pick.mjs). A shell or a
+// full-screen program: no field, the terminal is the one input. ?comp=off turns the composer off.
 // The layout must not depend on the screen from one frame to the next: showing the field resizes the terminal, Claude and tmux redraw, and
 // mid-redraw the box is briefly gone (the phone, 2026-10-23: the field flashed on and off). So the field appears at once and goes only after
 // Claude has been off the screen for LINGER ms, and the shift and the chips are kept through the same window.
@@ -17,6 +17,7 @@
 import { claudeScreen } from './claudebox.mjs';
 import { coarse, el, icon, off, say } from './dom.mjs';
 import { mods } from './bar.mjs';
+import { picker } from './pick.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
 const LINGER = 1500, SETTLE = 400;
@@ -47,6 +48,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // the "/" menu: Claude's commands, the session's skills and custom commands (/app/commands.json), filtered as the field is typed; it opens
   // above the field, over the terminal (no layout change: nothing resizes); a tap puts the command in the field
   const cmds = el('div', { id: 'cccmds', role: 'listbox', 'aria-label': 'commands', hidden: true });
+  const sheet = picker(term); // Claude's /model and the like, as a sheet
   // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line, cut mid-resize, before the field took over).
   // The page starts as it will look: the field up, and Claude's rows already under the dock (as many as this session had last time, so the
   // pty's first size is its final one: no resize, no second redraw); the terminal stays out of sight until Claude has redrawn with its box
@@ -211,6 +213,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (t >= 0 || s.choice) seen = now;
     else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
+    sheet.show(s.picker);
     clearTimeout(linger);
     if (t >= 0) {
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize

@@ -30,6 +30,9 @@ const PNG = (() => {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 })();
 const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m';
+// Claude's /model picker, as Claude draws it (2026-10-24): a window of 4 over the list, ❯ the highlight, ✔ the current, ←/→ the effort
+const PICK = [['Opus 5.5', 'Most capable'], ['Fable 5.1', 'Hardest work'], ['Sonnet 5.5', 'Fast'], ['Haiku 5.5', 'Fastest'], ['Opus 4.8', 'Everyday'], ['Sonnet 4.6', 'Routine']];
+const EFF = ['low', 'medium', 'high', 'xhigh'], WIN = 4;
 
 class FakeClaude {
   constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', model: 'Opus 5.5 (high)', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
@@ -44,6 +47,11 @@ class FakeClaude {
     if (this.scene === 'shell') { for (const c of d) { if (c === '\r') { this.log.push('dev@box:~$ ' + this.draft); this.draft = ''; } else if (c >= ' ') this.draft += c; } this.redraw(); return; }
     while (d) {
       let m;
+      if (this.scene === 'model' && (m = /^\x1b\[([ABCD])/.exec(d))) {
+        const k = m[1]; d = d.slice(3);
+        if (k === 'A' || k === 'B') this.hl = Math.min(PICK.length, Math.max(1, this.hl + (k === 'B' ? 1 : -1))); else this.eff = (this.eff + (k === 'C' ? 1 : EFF.length - 1)) % EFF.length;
+        continue;
+      }
       if ((m = /^\x1b\[200~([\s\S]*?)\x1b\[201~/.exec(d))) { const p = m[1]; this.draft += /\.(png|jpe?g|gif|webp)\s*$/i.test(p) ? `[Image #${++this.imgs}] ` : p.replace(/\r/g, '\n'); d = d.slice(m[0].length); continue; }
       if (d.startsWith('\x1b[Z')) { this.mode = (this.mode + 1) % MODES.length; d = d.slice(3); continue; }
       if (d.startsWith('\x1b[A') || d.startsWith('\x1bOA')) { this.draft = this.last; d = d.slice(3); continue; }
@@ -54,9 +62,13 @@ class FakeClaude {
         d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
       }
       let c = d[0]; d = d.slice(1);
-      // Claude's /model picker: a number (or Enter, the highlighted first) switches, the status line follows
-      if (this.scene === 'model') { if (c === '\r') c = '1'; if (/[1-3]/.test(c)) { this.model = ['Opus 5.5 (high)', 'Sonnet 5.5 (medium)', 'Haiku 5.5'][+c - 1]; this.log.push(`\x1b[2m  ⎿  Set model to ${this.model.replace(/ \(.*/, '')}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
-      if (c === '\r' && this.draft.trim() === '/model') { this.draft = ''; this.scene = 'model'; continue; }
+      // Claude's /model picker: a number or Enter sets the default, s this session only; the status line follows
+      if (this.scene === 'model') {
+        if (/[1-9]/.test(c) && +c <= PICK.length) this.hl = +c;
+        if (c === '\r' || c === 's' || /[1-9]/.test(c)) { this.model = `${PICK[this.hl - 1][0]} (${EFF[this.eff]})`; this.how = c === 's' ? 'session' : 'default'; this.log.push(`\x1b[2m  ⎿  Set model to ${PICK[this.hl - 1][0]}${c === 's' ? ' for this session' : ''}\x1b[0m`, ''); this.scene = 'idle'; }
+        continue;
+      }
+      if (c === '\r' && this.draft.trim() === '/model') { this.draft = ''; this.scene = 'model'; this.hl = PICK.findIndex(p => this.model.startsWith(p[0] + ' ')) + 1 || 1; this.win = 0; this.eff = Math.max(0, EFF.indexOf(/\((\w+)\)/.exec(this.model)?.[1])); continue; }
       if (this.scene === 'dialog') { if (c === '\r') c = '1'; /* Enter answers the highlighted option, the first */ if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
@@ -83,7 +95,17 @@ class FakeClaude {
     const wrap = l => { const plain = l.replace(/\x1b\[[0-9;]*m/g, ''); if (plain.length <= this.cols) return [l]; const out = []; for (let i = 0; i < plain.length; i += this.cols) out.push(plain.slice(i, i + this.cols)); return out; };
     let tail;
     if (this.scene === 'shell') tail = ['dev@box:~$ ' + this.draft, TMUX];
-    else if (this.scene === 'model') tail = [' Select model', ' Switch between Claude models. Applies to this session.', '', ' \x1b[38;5;153m❯ 1. Opus 5.5\x1b[0m    Most capable', '   2. Sonnet 5.5  Fast and capable', '   3. Haiku 5.5   Fastest', '', ' Enter to confirm · Esc to exit', TMUX];
+    else if (this.scene === 'model') {
+      this.win = Math.min(Math.max(this.win, this.hl - WIN), this.hl - 1);
+      const w = this.win, rows = PICK.slice(w, w + WIN).map(([name, what], j) => {
+        const n = w + j + 1, g = n === this.hl ? '❯' : j === 0 && w > 0 ? '↑' : j === WIN - 1 && w + WIN < PICK.length ? '↓' : ' ';
+        const l = `   ${g} ${n}.  ${(name + (this.model.startsWith(name + ' ') ? ' ✔' : '')).padEnd(13)}  ${what}`;
+        return n === this.hl ? `\x1b[38;5;153m${l}\x1b[0m` : l;
+      });
+      tail = ['\x1b[38;5;153m' + '─'.repeat(this.cols) + '\x1b[0m', '   \x1b[1mSelect model\x1b[0m', '   Switch between Claude models.', '', ...rows,
+        ...(w + WIN < PICK.length ? [`      … +${PICK.length - w - WIN} models`] : []), '', `   ● ${EFF[this.eff]} effort \x1b[2m←/→ to adjust\x1b[0m`, '',
+        '   Enter to set as default · s to use this', '   session only · Esc to cancel', TMUX];
+    }
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
     else {
       // the input line: what is typed in the default colour; empty, the last prompt as Claude's dimmed suggestion under its inverse cursor
@@ -451,11 +473,30 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} M1 with "bypass permissions": both chips on the row, the model's name whole, nothing overflows`, c.shown && c.whole && c.left >= c.modeRight && c.right <= c.sendLeft && c.top === c.modeTop && c.sw === c.iw, c);
   await shot(P, `${tag}-M1-bypass`);
   MODES.pop(); F.mode = m0; F.redraw(); await sleep(400);
-  await P.page.locator('#ccmodel').click(); await sleep(500); s = await st(P);
-  check(`${tag} M2 a tap opens Claude's /model picker: the field asks for a number`, F.scene === 'model' && s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown, [F.scene, s]);
-  await shot(P, `${tag}-M2-picker`);
-  await P.page.fill('#ccmsg', '2'); await P.page.press('#ccmsg', 'Enter'); await sleep(600); c = await chips();
-  check(`${tag} M3 "2" switches to Sonnet: the chip follows`, F.scene === 'idle' && F.model.startsWith('Sonnet') && c.shown && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.model, c]);
+  // P Claude's /model picker comes up as a sheet in the page's look: its rows, the highlight moved by a tap, the effort, its keys as buttons
+  const sheet = () => P.page.evaluate(() => { const w = document.getElementById('ccpick'); if (!w) return { open: false }; const pan = w.querySelector('.pan'), r = pan.getBoundingClientRect(), on = w.querySelector('.opt.on .ol'), cur = w.querySelector('.opt.cur');
+    return { open: w.classList.contains('open') && getComputedStyle(w).display !== 'none', title: w.querySelector('.hd b')?.textContent, rows: [...w.querySelectorAll('.opt .ol')].map(x => x.textContent), on: on?.textContent, cur: cur?.querySelector('.ol').textContent, tick: !!cur?.querySelector('svg'),
+      more: [...w.querySelectorAll('.more')].map(x => x.textContent), adj: w.querySelector('.adj span')?.textContent, acts: [...w.querySelectorAll('.acts button')].map(x => x.textContent + (x.classList.contains('pri') ? '*' : '')),
+      rect: [r.top, r.bottom, innerHeight], inView: r.top >= 0 && r.bottom <= innerHeight + 1 && r.left >= 0 && r.right <= innerWidth + 1, sw: document.scrollingElement.scrollWidth, iw: innerWidth, kb: document.activeElement?.id === 'ccmsg' }; });
+  const tapIn = async sel => { await P.page.locator('#ccpick ' + sel).click(); await sleep(450); };
+  await P.page.locator('#ccmodel').click(); await sleep(900); let k = await sheet(); // past the slide in
+  check(`${tag} P1 a tap on the chip opens the picker as a sheet: its title, the first four models, Opus 5.5 highlighted and ticked, the keyboard down`, F.scene === 'model' && k.open && k.title === 'Select model' && k.rows.join() === 'Opus 5.5,Fable 5.1,Sonnet 5.5,Haiku 5.5' && k.on === 'Opus 5.5' && k.cur === 'Opus 5.5' && k.tick && !k.kb, k);
+  check(`${tag} P1 the rest of it: 2 more models, the effort, its keys (Enter the primary), on screen, nothing overflows`, k.more.join() === 'Show 2 more' && k.adj === 'high effort' && k.acts.join() === 'Use this session only,Set as default*' && k.inView && k.sw === k.iw, k);
+  await shot(P, `${tag}-P1-picker`);
+  let i0 = (F.inputs || []).length;
+  await tapIn('.opt:has-text("Sonnet 5.5")'); k = await sheet();
+  check(`${tag} P2 a tap on Sonnet 5.5 moves Claude's highlight (two ↓), nothing is chosen yet`, F.scene === 'model' && F.hl === 3 && k.open && k.on === 'Sonnet 5.5' && (F.inputs || []).slice(i0).join('') === '\x1b[B\x1b[B', [F.hl, k, (F.inputs || []).slice(i0)]);
+  await tapIn('.more'); k = await sheet();
+  check(`${tag} P3 "Show 2 more" moves past the window: Claude scrolls, the sheet follows (Opus 4.8 highlighted, earlier ones behind "Show earlier")`, F.hl === 5 && k.on === 'Opus 4.8' && k.rows.at(-1) === 'Opus 4.8' && k.more[0] === 'Show earlier', k);
+  await tapIn('.adj button:last-child'); k = await sheet();
+  check(`${tag} P4 › raises the effort`, F.eff === 3 && k.adj === 'xhigh effort', [F.eff, k.adj]);
+  await shot(P, `${tag}-P4-scrolled`);
+  await tapIn('.acts button:not(.pri)'); k = await sheet(); c = await chips();
+  check(`${tag} P5 "Use this session only" is Claude's s: Opus 4.8 at xhigh, the sheet gone, the chip follows`, F.scene === 'idle' && F.how === 'session' && F.model === 'Opus 4.8 (xhigh)' && !k.open && c.name === 'Opus 4.8' && c.effort === 'xhigh', [F.scene, F.how, F.model, k.open, c]);
+  await P.page.locator('#ccmodel').click(); await sleep(600); await tapIn('.hd button'); k = await sheet();
+  check(`${tag} P6 Cancel is Claude's esc: nothing changes`, F.scene === 'idle' && F.model === 'Opus 4.8 (xhigh)' && !k.open, [F.scene, F.model, k.open]);
+  await P.page.locator('#ccmodel').click(); await sleep(600); await tapIn('.opt:has-text("Sonnet 5.5")'); await tapIn('.adj button:first-child'); await tapIn('.adj button:first-child'); await tapIn('.acts .pri'); k = await sheet(); c = await chips();
+  check(`${tag} P7 "Set as default" is Claude's Enter: Sonnet 5.5 at medium, the default, the sheet gone`, F.scene === 'idle' && F.how === 'default' && F.model === 'Sonnet 5.5 (medium)' && !k.open && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.how, F.model, k.open, c]);
   await key(P, 'UP'); await sleep(600); c = await chips(); const n1 = (F.inputs || []).join('').split('/model').length;
   check(`${tag} M4 while Claude holds a draft the chip gives its place to the draft chip (a /model typed after it would be text)`, !c.shown && (await st(P)).draft !== '', c);
   await key(P, 'Esc'); await sleep(400);
@@ -465,7 +506,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 0 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
-  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown && !s.chip && s.two === 0, s);
+  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip, no sheet (Claude's words, as drawn)`, s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown && !s.chip && s.two === 0 && !(await sheet()).open, s);
   await shot(P, `${tag}-10-dialog`);
   await P.page.fill('#ccmsg', ''); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
   check(`${tag} 11 send with nothing typed is the dialog's Enter (after ↑ ↓)`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
