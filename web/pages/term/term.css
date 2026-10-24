@@ -204,7 +204,7 @@ padding:8px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-are
 #ccpick .hd{flex:none;display:flex;align-items:center;gap:12px;padding:0 4px;min-width:0}
 #ccpick .hd b{flex:1;min-width:0;font:600 17px var(--c-sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #ccpick .hd button{flex:none;border:0;background:none;padding:6px 0;color:var(--c-mut);font:500 15px var(--c-sans)}
-#ccpick .tx{flex:none;margin:6px 4px 0;font:13px/1.45 var(--c-sans);color:var(--c-mut)}
+#ccpick .tx{flex:none;margin:6px 4px 0;font:13px/1.45 var(--c-sans);color:var(--c-mut);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden} /* the list keeps the room */
 #ccpick .opts{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;gap:2px;align-content:start;margin:12px -2px 0;padding:0 2px}
 #ccpick .opt{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:3px;width:100%;box-sizing:border-box;
 padding:10px 12px;border:1px solid transparent;border-radius:14px;background:none;text-align:left}

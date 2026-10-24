@@ -102,9 +102,11 @@ class FakeClaude {
         const l = `   ${g} ${n}.  ${(name + (this.model.startsWith(name + ' ') ? ' ✔' : '')).padEnd(13)}  ${what}`;
         return n === this.hl ? `\x1b[38;5;153m${l}\x1b[0m` : l;
       });
-      tail = ['\x1b[38;5;153m' + '─'.repeat(this.cols) + '\x1b[0m', '   \x1b[1mSelect model\x1b[0m', '   Switch between Claude models.', '', ...rows,
+      // prose: rows of it, so the picker can be taller than the screen; then, as Claude does, its top shows and its keys are cut off
+      tail = ['\x1b[38;5;153m' + '▔'.repeat(this.cols) + '\x1b[0m', '   \x1b[1mSelect model\x1b[0m', '   Switch between Claude models.', ...Array(this.prose || 0).fill('   Your pick becomes the default.'), '', ...rows,
         ...(w + WIN < PICK.length ? [`      … +${PICK.length - w - WIN} models`] : []), '', `   ● ${EFF[this.eff]} effort \x1b[2m←/→ to adjust\x1b[0m`, '',
         '   Enter to set as default · s to use this', '   session only · Esc to cancel', TMUX];
+      if (tail.length > this.rows) tail = [...tail.slice(0, this.rows - 2), '                              tasks        ↓', TMUX];
     }
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
     else {
@@ -116,7 +118,8 @@ class FakeClaude {
         `  🤖 ${this.model} | 💰 $17.17 session`, MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
     }
     const all = [...this.log.flatMap(wrap), ...tail];
-    return [...Array(Math.max(0, this.rows - all.length)).fill(''), ...all].slice(-this.rows);
+    // tmux cuts its status line to the width (written whole, a phone's narrow pane wrapped it onto a second row)
+    return [...Array(Math.max(0, this.rows - all.length)).fill(''), ...all].slice(-this.rows).map(l => (l === TMUX ? TMUX.slice(0, 8 + this.cols) + '\x1b[0m' : l));
   }
   paint(lines) {
     this.screen = lines;
@@ -478,8 +481,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     return { open: w.classList.contains('open') && getComputedStyle(w).display !== 'none', title: w.querySelector('.hd b')?.textContent, rows: [...w.querySelectorAll('.opt .ol')].map(x => x.textContent), on: on?.textContent, cur: cur?.querySelector('.ol').textContent, tick: !!cur?.querySelector('svg'),
       more: [...w.querySelectorAll('.more')].map(x => x.textContent), adj: w.querySelector('.adj span')?.textContent, acts: [...w.querySelectorAll('.acts button')].map(x => x.textContent + (x.classList.contains('pri') ? '*' : '')),
       rect: [r.top, r.bottom, innerHeight], inView: r.top >= 0 && r.bottom <= innerHeight + 1 && r.left >= 0 && r.right <= innerWidth + 1, sw: document.scrollingElement.scrollWidth, iw: innerWidth, kb: document.activeElement?.id === 'ccmsg' }; });
+  // open: the sheet up and its slide in over (a resize of the pty comes first)
+  const opened = () => P.page.waitForFunction(() => { const w = document.getElementById('ccpick'); return w?.classList.contains('open') && getComputedStyle(w.querySelector('.pan')).transform === 'none'; }, null, { timeout: 5000 }).catch(() => {});
   const tapIn = async sel => { await P.page.locator('#ccpick ' + sel).click(); await sleep(450); };
-  await P.page.locator('#ccmodel').click(); await sleep(900); let k = await sheet(); // past the slide in
+  F.prose = 40; // taller than every phone's screen, as /model is on a real one: the page gives the pty the rows to draw it whole
+  await P.page.locator('#ccmodel').click(); await opened(); let k = await sheet();
   check(`${tag} P1 a tap on the chip opens the picker as a sheet: its title, the first four models, Opus 5.5 highlighted and ticked, the keyboard down`, F.scene === 'model' && k.open && k.title === 'Select model' && k.rows.join() === 'Opus 5.5,Fable 5.1,Sonnet 5.5,Haiku 5.5' && k.on === 'Opus 5.5' && k.cur === 'Opus 5.5' && k.tick && !k.kb, k);
   check(`${tag} P1 the rest of it: 2 more models, the effort, its keys (Enter the primary), on screen, nothing overflows`, k.more.join() === 'Show 2 more' && k.adj === 'high effort' && k.acts.join() === 'Use this session only,Set as default*' && k.inView && k.sw === k.iw, k);
   await shot(P, `${tag}-P1-picker`);
@@ -493,10 +499,12 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await shot(P, `${tag}-P4-scrolled`);
   await tapIn('.acts button:not(.pri)'); k = await sheet(); c = await chips();
   check(`${tag} P5 "Use this session only" is Claude's s: Opus 4.8 at xhigh, the sheet gone, the chip follows`, F.scene === 'idle' && F.how === 'session' && F.model === 'Opus 4.8 (xhigh)' && !k.open && c.name === 'Opus 4.8' && c.effort === 'xhigh', [F.scene, F.how, F.model, k.open, c]);
-  await P.page.locator('#ccmodel').click(); await sleep(600); await tapIn('.hd button'); k = await sheet();
+  await P.page.locator('#ccmodel').click(); await opened(); await tapIn('.hd button'); k = await sheet();
   check(`${tag} P6 Cancel is Claude's esc: nothing changes`, F.scene === 'idle' && F.model === 'Opus 4.8 (xhigh)' && !k.open, [F.scene, F.model, k.open]);
-  await P.page.locator('#ccmodel').click(); await sleep(600); await tapIn('.opt:has-text("Sonnet 5.5")'); await tapIn('.adj button:first-child'); await tapIn('.adj button:first-child'); await tapIn('.acts .pri'); k = await sheet(); c = await chips();
+  await P.page.locator('#ccmodel').click(); await opened(); await tapIn('.opt:has-text("Sonnet 5.5")'); await tapIn('.adj button:first-child'); await tapIn('.adj button:first-child'); await tapIn('.acts .pri'); k = await sheet(); c = await chips();
   check(`${tag} P7 "Set as default" is Claude's Enter: Sonnet 5.5 at medium, the default, the sheet gone`, F.scene === 'idle' && F.how === 'default' && F.model === 'Sonnet 5.5 (medium)' && !k.open && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.how, F.model, k.open, c]);
+  F.prose = 0; await sleep(800); s = await st(P);
+  check(`${tag} P8 the picker gone, the pty is back to its size: Claude's box under the dock, one input, no strip at the top`, s.shown && s.two === 0 && s.topGap <= 0 && F.rows < 60, [s, F.rows]);
   await key(P, 'UP'); await sleep(600); c = await chips(); const n1 = (F.inputs || []).join('').split('/model').length;
   check(`${tag} M4 while Claude holds a draft the chip gives its place to the draft chip (a /model typed after it would be text)`, !c.shown && (await st(P)).draft !== '', c);
   await key(P, 'Esc'); await sleep(400);
@@ -515,6 +523,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await sleep(1700); s = await st(P);
   check(`${tag} 13 a shell: the field goes after the linger, the terminal is the one input`, !s.shown && s.two === 0 && s.flips === 1, s);
   await shot(P, `${tag}-13-shell`);
+  // a picker drawn with no Claude box just before (a program, a file in the shell, laid out exactly as Claude's): no sheet, nothing sent
+  let i1 = (F.inputs || []).length; Object.assign(F, { scene: 'model', hl: 1, win: 0, eff: 2, prose: 0 }); F.redraw(); await sleep(700);
+  check(`${tag} 13 a picker drawn long after Claude's box was last seen is not taken for Claude's: no sheet, no keys`, !(await sheet()).open && (F.inputs || []).length === i1, [await sheet(), (F.inputs || []).slice(i1)]);
+  F.scene = 'shell'; F.redraw(); await sleep(400);
   check(`${tag} 14 no sideways overflow, no page errors (${s.samples} painted frames sampled)`, s.sw === s.iw && P.errs.length === 0, [s, P.errs]);
   // reopened twice: first after the shell of step 13 (remembered as no Claude, and now Claude is back: its cut box must not show while the
   // page finds out; the field and Claude's rows come as two resizes), then with Claude's rows remembered (the first size the pty gets is the final one: no resize at all after the attach)

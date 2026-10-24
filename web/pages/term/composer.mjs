@@ -20,7 +20,7 @@ import { mods } from './bar.mjs';
 import { picker } from './pick.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
-const LINGER = 1500, SETTLE = 400;
+const LINGER = 1500, SETTLE = 400, TALL = 3000;
 // Claude at work: its spinner line over the box (`· Recombobulating… (4m 18s · ↓ 15.1k tokens)`); a stopped turn: `⎿  Interrupted · …`
 const WORK = /^\s*[^\s\w]\s+\p{Lu}[\p{L}-]*…/u, STOP = /⎿\s+Interrupted\b/;
 
@@ -68,6 +68,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
 
   /** @type {{ t: string, p: number } | null} */ let sent = null;
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
+  // the picker sheet answers with keys, so it is shown only for a picker that came up within LINGER of Claude's own box (or TALL of a slash
+  // command sent from the field, which is only up with Claude), and for as long as it stays up: a shell or a program that prints one is not Claude (security review 2026-10-24). ponytail: a page opened on a picker already
+  // up gets Claude's drawing and the field, as before
+  let boxAt = 0, trusted = false;
+  // a picker taller than the screen (/model on a phone: 43 rows show its title and half its list, not its keys; 2026-10-24) cannot be read
+  // off it: for TALL ms after a slash command, and while a picker is up, the pty gets twice the rows shown, the half more under the dock
+  let tallAt = 0;
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
   const grow = () => {
@@ -112,6 +119,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // ↑ ↓ on the keys); nothing else is sent into it
     if (choice) { if (/^\d{1,2}$/.test(t)) term.input(t); else if (!t) term.input('\r'); return; }
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
+    if (t[0] === '/') tallAt = Date.now();
     sent = held ? null : { t, p: 0 }; // ponytail: a message sent with a draft (an image) is not given back; the draft stays Claude's
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
@@ -129,6 +137,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     scan();
     if (held) { say('Send or remove what is attached first'); return; } // typed after it, /model would be text, not the command
     if (top < 0 || choice) return;
+    tallAt = Date.now();
     term.paste('/model');
     setTimeout(() => term.input('\r'), 60);
   });
@@ -213,7 +222,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (t >= 0 || s.choice) seen = now;
     else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
-    sheet.show(s.picker);
+    if (s.box) boxAt = now;
+    trusted = !!s.picker && (trusted || now - boxAt < LINGER || now - tallAt < TALL);
+    sheet.show(trusted ? s.picker : null);
+    const tall = t < 0 && (trusted || now - tallAt < TALL);
     clearTimeout(linger);
     if (t >= 0) {
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
@@ -231,7 +243,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
         if (s.model && modelName.textContent !== s.model.name) modelName.textContent = s.model.name;
         if (s.model && modelEffort.textContent !== s.model.effort) modelEffort.textContent = s.model.effort;
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; hide(0); } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent || tall) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; hide(tall ? term.rows - extra : 0); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);

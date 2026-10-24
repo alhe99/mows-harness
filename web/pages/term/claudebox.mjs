@@ -54,17 +54,21 @@ export function claudeScreen(rows, typed = rows) {
   return { box, mode, model, choice: 0, picker: null, edge };
 }
 
-// Claude's pickers (/model and the like), as drawn at 46 columns on 2026-10-24: a rule, a title, its prose, the numbered options (❯ the
+// Claude's pickers (/model and the like), as drawn at 46 columns on 2026-10-24: a line (▔), a title, its prose, the numbered options (❯ the
 // highlighted one, ✔ the current one, ↑ / ↓ on the first / last when the list's window hides more, `… +3 models` under it), the
 // descriptions in a column of their own, wrapped; a `←/→ to adjust` line; the keys (`Enter to set as default · s to use this session only ·
-// Esc to cancel`). null for anything else, a permission question included (its words are shown as Claude draws them), and for a list with
-// Claude's box under it: that one is output, not a picker.
+// Esc to cancel`). null for anything else, a permission question included (its words are shown as Claude draws them), for a list with
+// Claude's box under it (output, not a picker), and for anything not laid out as Claude draws it: the title right under the line, nothing
+// under the keys but tmux's status line (a file printed in a shell must not pass for one; composer.mjs also wants Claude on screen first).
+const TOP = /^\s*(?:─{8,}|▔{8,})\s*$/; // the picker's own top line is ▔ (2026-10-24); ─ as a fallback
 const OPT = /^\s*([❯↑↓])?\s*(\d{1,2})\.\s+(\S.*?)(?:\s{2,}(\S.*))?$/, MORE = /^\s*…\s*\+(\d+)\s+(\S.*)$/, ADJ = /^\s*\S?\s*(.+?)\s*←\/→ to adjust/;
 /** @param {string[]} rows */
 export function claudePicker(rows) {
+  rows = rows.map(r => r.trimEnd()); // the lengths measure the column: a row as xterm reads it keeps the spaces tmux cleared it with
   const f = rows.map(r => /Esc to cancel/.test(r)).lastIndexOf(true);
   if (f < rows.length - 16 || f < 0) return null;
-  const r = rows.map((x, i) => i < f && RULE.test(x)).lastIndexOf(true);
+  const r = rows.map((x, i) => i < f && TOP.test(x)).lastIndexOf(true);
+  if (r < 0 || !rows[r + 1]?.trim() || rows.slice(f + 1, -1).some(x => x.trim())) return null;
   for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) || ASK.test(rows[i])) return null;
   const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]) };
   let col = 0, edge = 0, foot = '', head = 0; // head: 0 the title next, 1 its prose, 2 past it (a blank row ends it)
