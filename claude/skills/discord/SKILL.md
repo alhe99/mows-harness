@@ -13,8 +13,8 @@ text, then delivers via the low-level sender. Do NOT write the Discord summary y
 
 ## Rules
 - **Always the bridge**: use `discord-via-agy.sh` for every session-initiated send. The
-  low-level `~/.claude/scripts/discord-send.sh` is plumbing — reserved for hooks
-  (discord-notify.sh) and for the bridge itself.
+  low-level `~/.claude/scripts/discord-send.sh` is plumbing — reserved for the bridge
+  itself.
 - **Intent, not prose**: pass `-i` as a short factual note of what this send is about
   (e.g. `-i "refactor finished, report attached, 3 tests fixed"`). agy turns it into the
   message; text >2000 chars goes in a file, not in `-i`.

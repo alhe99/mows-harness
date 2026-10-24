@@ -205,8 +205,7 @@ layer_claude(){
     rm -rf "$HOME/.claude/$f"
     cp -r "claude/$f" "$HOME/.claude/"
   done
-  # scripts/ are the hook targets settings.template.json wires up (discord-notify on
-  # Notification) plus the discord send/bridge pair.
+  # scripts/ hold the discord send/bridge pair.
   # The Discord ones stay inert until a real webhook URL replaces the placeholder below;
   # seed only if absent, never clobber (same rule as agy's config).
   if [ ! -f "$HOME/.claude/secrets/discord-webhook.env" ]; then
