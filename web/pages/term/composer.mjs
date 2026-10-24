@@ -59,18 +59,23 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // hidden by height, what is left is a row's remainder
     const scr = document.querySelector('.xterm-screen'), wrap = tc.parentElement;
     if (t < 0 || !scr || !wrap) return '';
-    const y = scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cellH();
+    // measured from the top of the space shown: the box starts a row above it (its margin, the row standing over the top edge), and both
+    // rects carry the current shift, which cancels out
+    const y = tc.offsetTop + scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cellH();
     // up as well as down: while tmux has cut the pane (the lines under the cursor go first) and Claude has not redrawn, the box's top rule sits
     // higher than the rows hidden under the dock, and the newest lines with it; moving up, at most by those rows, keeps them in view
     return `translateY(${Math.max(-extraPx, Math.ceil(wrap.clientHeight - y))}px)`;
   };
   // rows hidden under the dock by height: the container grows by them, the pty gets them (one resize per change)
-  let extra = 0, extraPx = 0, resized = 0;
+  let extra = 0, extraPx = 0, resized = 0, cellSet = 0;
   const hide = (/** @type {number} */ n) => {
-    const px = n ? Math.ceil(n * cellH()) : 0;
+    // the rows, and the terminal's bottom padding under them, so the box's top rule lands on the dock's edge with no shift (a shift down would
+    // open a strip at the top)
+    const pad = n && term.element ? parseFloat(getComputedStyle(term.element).paddingBottom) || 0 : 0;
+    const px = n ? Math.ceil(n * cellH() + pad) : 0;
     if (n === extra && px === extraPx) return;
     extra = n; extraPx = px;
-    tc.style.height = px ? `calc(100% + ${px}px)` : '';
+    tc.style.setProperty('--cc-hid', px + 'px');
     fit();
   };
   // the screen, read in the same write that changed it (before the frame is painted: the shift and the content move together), and after
@@ -91,6 +96,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       if (l) for (let x = 0; x < l.length; x++) { const c = l.getCell(x, cell); if (!c || !c.getWidth()) continue; t += c.isFgDefault() && !c.isDim() && !c.isInverse() ? c.getChars() || ' ' : ' '; }
       typed.push(t);
     }
+    // one row more than fits, standing above the top edge (term.css): the screen sits on the bottom of its box, so without it the part of a row
+    // that does not fit was a blank strip under the status bar (the phone, 2026-10-23); with it the top is always text, faded
+    const ch = Math.ceil(cellH());
+    if (ch && ch !== cellSet) { cellSet = ch; tc.style.setProperty('--cc-cell', ch + 'px'); fit(); }
     const s = claudeScreen(rows, typed), now = Date.now();
     // at most 16 rows holding something (box, Claude's status and mode lines, a task list, tmux's line; blank rows a redraw has not reached
     // yet do not count): a misread screen cannot swallow the conversation. Not a share of the rows: with the keyboard up on a small phone the

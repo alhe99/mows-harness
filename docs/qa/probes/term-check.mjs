@@ -163,8 +163,10 @@ async function keybar() {
   const g = await geo();
   check('one key row (42 px keys), the dock flush with the bottom', g.kbH < 50 && g.dockBottom === g.ih, g);
   check('the terminal fills the space from the top to the dock and reaches the right edge', g.wrapTop === 0 && g.wrapBottom === g.dockTop && g.iw - g.scRight <= 20 + g.cell, g);
-  await press(W, 'More', 400);
-  const g2 = await geo();
+  await press(W, 'More', 100);
+  // headless WebKit delivers ResizeObserver when it renders, which it does when it likes (a phone renders every frame): wait for the refit
+  let g2 = await geo();
+  for (let i = 0; i < 15 && !(g2.rows < g.rows); i++) { await sleep(100); g2 = await geo(); }
   check('the chevron opens the second row: the bar doubles and the terminal is refitted to fewer rows', g2.kbH > 80 && g2.rows < g.rows && g2.wrapBottom === g2.dockTop, [g.rows, g2]);
   await press(W, 'More', 300);
   check('window.term exposes the cell width (mobile-journey reads it) and unicode 11', g.cell > 0 && g.u === '11', [g.cell, g.u]);

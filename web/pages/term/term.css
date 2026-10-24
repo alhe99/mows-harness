@@ -40,15 +40,19 @@ color:var(--c-fg2);font:500 12.5px var(--c-mono);display:grid;place-items:center
 @media(pointer:coarse){
 body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-direction:column}
 /* no strip: the terminal starts under the status bar of an installed app */
-#terminal-wrap{flex:1;min-height:0;height:auto;margin-top:env(safe-area-inset-top,0px)}
+#terminal-wrap{flex:1;min-height:0;height:auto;margin-top:env(safe-area-inset-top,0px);
+-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 14px);mask-image:linear-gradient(to bottom,transparent 0,#000 14px)}
 /* iOS never draws xterm's scrollbar, so the fit addon reserves 15 px for it: oversize the container by exactly that */
 #terminal-container{box-sizing:border-box;width:calc(100% + 15px)}
 /* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
-#terminal-container .terminal{padding:6px 10px;height:calc(100% - 12px)}
+#terminal-container .terminal{padding:0 10px 6px;height:calc(100% - 6px)} /* no top padding: that edge is cut and faded (a row stands over it) */
 /* the terminal sits on the bottom of its box: between a new box size and the refit (a frame), and while rows are added or taken away, what
    shows is the newest lines, never the top of an old screen (the phone, 2026-10-23: "in a second I saw old input text"). No transition on its
    shift either: a shift that slides shows the rows it slides past. */
 #terminal-container{display:flex;flex-direction:column;justify-content:flex-end}
+/* the box: the space shown, one row more standing above the top edge (--cc-cell, so the top is never a blank strip), and Claude's rows hidden
+   under the dock (--cc-hid); both set by composer.mjs */
+#terminal-container{height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
 #terminal-container .terminal{flex:none;height:auto}
 
 /* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */

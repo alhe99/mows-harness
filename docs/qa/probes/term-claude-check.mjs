@@ -23,7 +23,7 @@ const MODES = ['⏵⏵ auto mode on', '⏵⏵ accept edits on', '⏸ plan mode o
 const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m';
 
 class FakeClaude {
-  constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: ['\x1b[38;5;246m✻ Welcome back\x1b[0m', ''], draft: '', last: 'it\'s all merged?', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
+  constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
   feed(m) {
     const s = typeof m === 'string' ? m : Buffer.from(m).toString('utf8');
     if (s[0] === '{') { const j = JSON.parse(s); this.rows = j.rows; this.cols = j.columns; this.redraw(); return; }
@@ -152,7 +152,9 @@ const st = P => P.page.evaluate(() => {
     // the blank band: the shift left after the rows went under the dock (less than a row), and the rows the pty has beyond what is shown
     band: +(/translateY\((\d+)px\)/.exec(document.getElementById('terminal-container').style.transform)?.[1] || 0), cell: Math.round(sc.height / window.term.rows),
     under: window.term.rows - Math.floor((document.getElementById('terminal-wrap').getBoundingClientRect().height - 6) / (sc.height / window.term.rows)),
-    dockRight: Math.round(document.getElementById('ccdock').getBoundingClientRect().right) };
+    dockRight: Math.round(document.getElementById('ccdock').getBoundingClientRect().right),
+    // the top: the screen starts at or above the top edge of the space shown (no blank strip under the status bar, the phone 2026-10-23)
+    topGap: Math.round(sc.top - document.getElementById('terminal-wrap').getBoundingClientRect().top) };
 });
 const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
 // the iOS keyboard: it slides for ~300 ms, the visual viewport shrinking (or growing) in steps, each step a resize event
@@ -175,12 +177,15 @@ const twos = P => P.page.evaluate(() => window.__qa.two.slice(0, 3));
 
 for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'promax']]) {
   const P = await phone(w, h), F = P.fake();
+  // the sampler runs on painted frames, and a headless engine paints when it likes: let it start before the first count
+  await P.page.waitForFunction(() => window.__qa.samples >= 5, null, { timeout: 5000 }).catch(() => {});
   let s = await st(P);
   check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 1, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
   // on open the field appears, the terminal refits and settles (SETTLE) before Claude's rows go under the dock: allow that second
   for (let i = 0; i < 20 && !(s.under >= 5 && s.band < s.cell + 8); i++) { await sleep(100); s = await st(P); }
   check(`${tag} 1 no blank band: Claude's rows are under the dock (the pty has them), what is left of the shift is less than a row`, s.under >= 5 && s.band < s.cell + 8, s);
+  check(`${tag} 1 no blank strip at the top: the text starts at or above the top edge`, s.topGap <= 0, s);
   await shot(P, `${tag}-1-idle`);
   // no strip: the terminal starts at the top; ⋯, the bar's first key, opens the menu (the keyboard drops for it) and a backdrop tap closes it
   const top = await P.page.evaluate(() => ({ strip: !!document.getElementById('ccstrip'), wrapTop: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().top), first: document.querySelector('#cckb > button:not(.mr)')?.dataset.k }));
@@ -197,7 +202,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 2 a tap on the terminal: the focus is in the field`, await P.page.evaluate(() => document.activeElement?.id === 'ccmsg'), await P.page.evaluate(() => document.activeElement?.className));
   await kb(P, Math.round(h * 0.52)); await sleep(1200);
   s = await st(P);
-  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5, [s, await twos(P)]);
+  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
   await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
@@ -256,7 +261,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);
-  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash`, s.two === 0 && s.flips === 1 && s.shown, [s, await twos(P)]);
+  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 1 && s.shown && s.topGap <= 0, [s, await twos(P)]);
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
   check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Type 1–3 to choose…' && s.shown && !s.chip && s.two === 0, s);
   await shot(P, `${tag}-10-dialog`);
