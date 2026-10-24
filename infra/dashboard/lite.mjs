@@ -293,10 +293,17 @@ if (args.includes('--selftest')) {
     mk('home/commands/team/ship.md', '---\ndescription: ship it\n---\n');
     mk('elsewhere/linked.md', '---\ndescription: a linked command\n---\n');
     fs.symlinkSync(path.join(t, 'elsewhere/linked.md'), path.join(t, 'home/commands/linked.md'));
-    const l = await commandsFor(path.join(t, 'home'), '/nowhere'), by = n => l.find(c => c[0] === n);
+    // root reads nothing a link takes out of the user's home: a skill and a command linked to outside the root are not read
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'cmds-out-'));
+    fs.mkdirSync(path.join(out, 'evil')); fs.writeFileSync(path.join(out, 'evil', 'SKILL.md'), '---\nname: evil\ndescription: outside\n---\n');
+    fs.writeFileSync(path.join(out, 'evil.md'), '---\ndescription: outside\n---\n');
+    fs.symlinkSync(path.join(out, 'evil'), path.join(t, 'home/skills/evil')); fs.symlinkSync(path.join(out, 'evil.md'), path.join(t, 'home/commands/evil.md'));
+    const l = await commandsFor(path.join(t, 'home'), '/nowhere', t), by = n => l.find(c => c[0] === n);
+    fs.rmSync(out, { recursive: true, force: true });
     const ok = front('---\na: "q"\nb: >\n  x\n  y\n---').a === 'q' && front('---\nb: >\n  x\n  y\n---').b === 'x y'
       && l.length === BUILTIN.length + 5 && by('alpha')?.[2] === 'first line second line' && !by('quiet') && by('beta')?.[1] === '[n]'
-      && by('go')?.[1] === '[where]' && by('team:ship')?.[2] === 'ship it' && by('linked')?.[2] === 'a linked command' && by('compact')?.[3] === 'built-in';
+      && by('go')?.[1] === '[where]' && by('team:ship')?.[2] === 'ship it' && by('linked')?.[2] === 'a linked command' && by('compact')?.[3] === 'built-in'
+      && !by('evil');
     fs.rmSync(t, { recursive: true, force: true });
     if (!ok) { console.error('commands discovery: FAIL', JSON.stringify(l.slice(BUILTIN.length))); process.exit(1); }
     console.log(`commands discovery: OK (${BUILTIN.length} built-in)`);

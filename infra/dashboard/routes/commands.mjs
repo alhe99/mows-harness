@@ -4,8 +4,11 @@
 // reads them, the skills and commands of the session's account (<home>/skills/*/SKILL.md, <home>/commands/**/*.md), of its project (.claude/
 // in the pane's directory and its parents up to the user's home) and of the account's enabled plugins (named plugin:name). Only names,
 // argument hints and descriptions, from the files' frontmatter; a skill marked user-invocable: false is left out. Cached 60 s per account
-// and directory. The dashboard runs as root: it reads only under the tmux user's own homes.
-import { promises as fsp } from 'node:fs';
+// and directory.
+// The dashboard runs as root, so every path is resolved first (links followed, .. folded) and used only if its real place is under the tmux
+// user's home: a link in a skills folder cannot make root read elsewhere. Only regular files are opened (no FIFO to hang on, opened
+// O_NOFOLLOW|O_NONBLOCK on the resolved path), and a scan stops at a deadline (security review 2026-10-24).
+import { constants, promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { ACCTS, TMUX_HOME, TMUX_USER, fleetState, sh, tmuxLive, userCmd } from '../core.mjs';
 
@@ -145,15 +148,40 @@ export function front(text) {
   }
   return out;
 }
-const head = async f => { try { const h = await fsp.open(f); const b = Buffer.alloc(4096); const { bytesRead } = await h.read(b, 0, 4096, 0); await h.close(); return b.subarray(0, bytesRead).toString('utf8'); } catch { return ''; } };
-// directories, and links to directories (skills are often linked in from elsewhere)
-const dirs = async d => {
-  let ents = [];
-  try { ents = await fsp.readdir(d, { withFileTypes: true }); } catch { return []; }
+let ROOT = TMUX_HOME; // where reads may go (commandsFor's last argument; the selftest's fixture)
+const inside = p => p === ROOT || p.startsWith(ROOT + '/');
+/** the real path (links followed, .. folded), or null when it does not exist or lies outside the tmux user's home */
+const real = async p => { try { const r = await fsp.realpath(path.resolve(p)); return inside(r) ? r : null; } catch { return null; } };
+let deadline = 0;
+const late = () => Date.now() > deadline;
+/** the first 4 KB of a regular file under the home */
+const head = async f => {
+  const r = await real(f);
+  if (!r || late()) return '';
+  let h;
+  try {
+    if (!(await fsp.stat(r)).isFile()) return '';
+    h = await fsp.open(r, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const b = Buffer.alloc(4096), { bytesRead } = await h.read(b, 0, 4096, 0);
+    return b.subarray(0, bytesRead).toString('utf8');
+  } catch { return ''; } finally { await h?.close().catch(() => {}); }
+};
+/** the entries of a directory under the home, each with its real path and kind (skills are often linked in from elsewhere in the home) */
+const list = async d => {
+  const r = await real(d);
+  if (!r || late()) return [];
+  let names = [];
+  try { names = await fsp.readdir(r); } catch { return []; }
   const out = [];
-  for (const e of ents) if (e.isDirectory() || (e.isSymbolicLink() && await fsp.stat(path.join(d, e.name)).then(s => s.isDirectory(), () => false))) out.push(e.name);
+  for (const n of names.slice(0, 400)) {
+    const p = await real(path.join(r, n));
+    if (!p) continue;
+    const st = await fsp.stat(p).catch(() => null);
+    if (st) out.push({ n, p, dir: st.isDirectory(), file: st.isFile() });
+  }
   return out;
 };
+const dirs = async d => (await list(d)).filter(e => e.dir).map(e => e.n);
 const short = s => { const d = String(s || '').replace(/\s+/g, ' ').trim(); return d.length > 110 ? d.slice(0, 108).replace(/\s+\S*$/, '') + '…' : d; };
 
 /** skills/<name>/SKILL.md and commands/**\/*.md under one .claude-like root; `pre` names a plugin's */
@@ -166,16 +194,12 @@ async function scan(root, kind, pre, out) {
     if (NAME.test(n)) out.push([n, fm['argument-hint'] || '', short(fm.description), kind]);
   }
   const walk = async (d, ns, depth) => {
-    let ents = [];
-    try { ents = await fsp.readdir(d, { withFileTypes: true }); } catch { return; }
-    for (const e of ents) {
-      if (out.length > 600) return;
-      const st = e.isSymbolicLink() ? await fsp.stat(path.join(d, e.name)).catch(() => null) : e; // a linked file or folder counts as itself
-      if (!st) continue;
-      if (st.isDirectory() && depth < 3) await walk(path.join(d, e.name), ns + e.name + ':', depth + 1);
-      else if (st.isFile() && e.name.endsWith('.md')) {
-        const fm = front(await head(path.join(d, e.name)));
-        const n = pre + ns + e.name.slice(0, -3);
+    for (const e of await list(d)) {
+      if (out.length > 600 || late()) return;
+      if (e.dir && depth < 3) await walk(e.p, ns + e.n + ':', depth + 1);
+      else if (e.file && e.n.endsWith('.md')) {
+        const fm = front(await head(e.p));
+        const n = pre + ns + e.n.slice(0, -3);
         if (NAME.test(n)) out.push([n, fm['argument-hint'] || '', short(fm.description), kind]);
       }
     }
@@ -190,9 +214,11 @@ async function plugins(home, cwd, out) {
   for (const [id, v] of Object.entries(inst.plugins || inst)) {
     if (enabled[id] === false) continue;
     for (const p of [].concat(v)) {
-      if (!p || typeof p.installPath !== 'string' || !p.installPath.startsWith(TMUX_HOME + '/')) continue;
-      if (p.scope === 'project' && p.projectPath && !(cwd + '/').startsWith(p.projectPath.replace(/\/$/, '') + '/')) continue;
-      await scan(p.installPath, 'plugin', id.split('@')[0] + ':', out);
+      if (!p || typeof p.installPath !== 'string') continue;
+      const ip = await real(p.installPath); // resolved: no .. or link can lead the scan out of the home
+      if (!ip) continue;
+      if (p.scope === 'project' && typeof p.projectPath === 'string' && !(cwd + '/').startsWith(path.resolve(p.projectPath) + '/')) continue;
+      await scan(ip, 'plugin', id.split('@')[0] + ':', out);
       break;
     }
   }
@@ -200,10 +226,12 @@ async function plugins(home, cwd, out) {
 
 const cache = new Map();
 /** the commands for one account home and pane directory: BUILTIN, then the account's, the project's and the plugins' */
-export async function commandsFor(home, cwd) {
-  const key = home + '\0' + cwd, hit = cache.get(key);
+export async function commandsFor(home, cwd, root = TMUX_HOME) {
+  ROOT = root;
+  const key = root + '\0' + home + '\0' + cwd, hit = cache.get(key);
   if (hit && Date.now() - hit.t < 60000) return hit.list;
   const found = [];
+  deadline = Date.now() + 3000; // a slow or huge tree gives what it found by then
   await scan(home, 'skill', '', found);
   // the project: .claude/ in the pane's directory and its parents, up to the user's own home
   if (cwd.startsWith(TMUX_HOME + '/') || cwd === TMUX_HOME) for (let d = cwd; d.startsWith(TMUX_HOME); d = path.dirname(d)) {
