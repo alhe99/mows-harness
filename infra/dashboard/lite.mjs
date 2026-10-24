@@ -282,7 +282,7 @@ if (args.includes('--selftest')) {
     if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
   console.log('md renderer: OK');
   { // the "/" menu's discovery (routes/commands.mjs): frontmatter, linked skills, hidden skills, nested and linked commands
-    const { front, commandsFor, BUILTIN } = await import('./routes/commands.mjs');
+    const { BUILTIN } = await import('./routes/commands.mjs'), { front, discover } = await import('./routes/cmdscan.mjs');
     const fs = await import('node:fs'), path = (await import('node:path')).default, os = (await import('node:os')).default;
     const t = fs.mkdtempSync(path.join(os.tmpdir(), 'cmds-')), mk = (f, txt) => { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.writeFileSync(path.join(t, f), txt); };
     mk('home/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: >\n  first line\n  second line\n---\n');
@@ -298,14 +298,14 @@ if (args.includes('--selftest')) {
     fs.mkdirSync(path.join(out, 'evil')); fs.writeFileSync(path.join(out, 'evil', 'SKILL.md'), '---\nname: evil\ndescription: outside\n---\n');
     fs.writeFileSync(path.join(out, 'evil.md'), '---\ndescription: outside\n---\n');
     fs.symlinkSync(path.join(out, 'evil'), path.join(t, 'home/skills/evil')); fs.symlinkSync(path.join(out, 'evil.md'), path.join(t, 'home/commands/evil.md'));
-    const l = await commandsFor(path.join(t, 'home'), '/nowhere', t), by = n => l.find(c => c[0] === n);
+    const l = await discover(path.join(t, 'home'), '/nowhere', t), by = n => l.find(c => c[0] === n);
     fs.rmSync(out, { recursive: true, force: true });
     const ok = front('---\na: "q"\nb: >\n  x\n  y\n---').a === 'q' && front('---\nb: >\n  x\n  y\n---').b === 'x y'
-      && l.length === BUILTIN.length + 5 && by('alpha')?.[2] === 'first line second line' && !by('quiet') && by('beta')?.[1] === '[n]'
-      && by('go')?.[1] === '[where]' && by('team:ship')?.[2] === 'ship it' && by('linked')?.[2] === 'a linked command' && by('compact')?.[3] === 'built-in'
+      && l.length === 5 && by('alpha')?.[2] === 'first line second line' && !by('quiet') && by('beta')?.[1] === '[n]'
+      && by('go')?.[1] === '[where]' && by('team:ship')?.[2] === 'ship it' && by('linked')?.[2] === 'a linked command' && BUILTIN.some(c => c[0] === 'compact')
       && !by('evil');
     fs.rmSync(t, { recursive: true, force: true });
-    if (!ok) { console.error('commands discovery: FAIL', JSON.stringify(l.slice(BUILTIN.length))); process.exit(1); }
+    if (!ok) { console.error('commands discovery: FAIL', JSON.stringify(l)); process.exit(1); }
     console.log(`commands discovery: OK (${BUILTIN.length} built-in)`);
   }
   // push suppression: typed into 1 min ago -> watched; grid tab untouched for an hour -> not; blank line ignored

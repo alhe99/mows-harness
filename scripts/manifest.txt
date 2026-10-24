@@ -239,6 +239,7 @@ infra/dashboard/mdv.template
 infra/dashboard/routes/actions.mjs
 infra/dashboard/routes/agents.mjs
 infra/dashboard/routes/api.mjs
+infra/dashboard/routes/cmdscan.mjs
 infra/dashboard/routes/commands.mjs
 infra/dashboard/routes/device.mjs
 infra/dashboard/routes/documents.mjs

@@ -4,11 +4,9 @@
 // reads them, the skills and commands of the session's account (<home>/skills/*/SKILL.md, <home>/commands/**/*.md), of its project (.claude/
 // in the pane's directory and its parents up to the user's home) and of the account's enabled plugins (named plugin:name). Only names,
 // argument hints and descriptions, from the files' frontmatter; a skill marked user-invocable: false is left out. Cached 60 s per account
-// and directory.
-// The dashboard runs as root, so every path is resolved first (links followed, .. folded) and used only if its real place is under the tmux
-// user's home: a link in a skills folder cannot make root read elsewhere. Only regular files are opened (no FIFO to hang on, opened
-// O_NOFOLLOW|O_NONBLOCK on the resolved path), and a scan stops at a deadline (security review 2026-10-24).
-import { constants, promises as fsp } from 'node:fs';
+// and directory. The dashboard runs as root; the reading itself does not: cmdscan.mjs runs as the tmux user (see its header).
+import { promises as fsp } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { ACCTS, TMUX_HOME, TMUX_USER, fleetState, sh, tmuxLive, userCmd } from '../core.mjs';
 
@@ -132,115 +130,17 @@ export const BUILTIN = [
   ["workflows", "", "Open the workflow progress view to watch, pause, resume, or save running and completed…"]
 ];
 
-const NAME = /^[a-z0-9][\w.:-]{0,80}$/i;
-/** the YAML frontmatter's flat keys (a folded or literal block value is joined into one line) */
-export function front(text) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  const out = {};
-  if (!m) return out;
-  const lines = m[1].split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const kv = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(lines[i]);
-    if (!kv) continue;
-    let v = kv[2].trim();
-    if (/^[>|][-+]?$/.test(v)) { const more = []; while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) more.push(lines[++i].trim()); v = more.join(' '); }
-    out[kv[1]] = v.replace(/^(["'])(.*)\1$/, '$2');
-  }
-  return out;
-}
-let ROOT = TMUX_HOME; // where reads may go (commandsFor's last argument; the selftest's fixture)
-const inside = p => p === ROOT || p.startsWith(ROOT + '/');
-/** the real path (links followed, .. folded), or null when it does not exist or lies outside the tmux user's home */
-const real = async p => { try { const r = await fsp.realpath(path.resolve(p)); return inside(r) ? r : null; } catch { return null; } };
-let deadline = 0;
-const late = () => Date.now() > deadline;
-/** the first 4 KB of a regular file under the home */
-const head = async f => {
-  const r = await real(f);
-  if (!r || late()) return '';
-  let h;
-  try {
-    if (!(await fsp.stat(r)).isFile()) return '';
-    h = await fsp.open(r, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const b = Buffer.alloc(4096), { bytesRead } = await h.read(b, 0, 4096, 0);
-    return b.subarray(0, bytesRead).toString('utf8');
-  } catch { return ''; } finally { await h?.close().catch(() => {}); }
-};
-/** the entries of a directory under the home, each with its real path and kind (skills are often linked in from elsewhere in the home) */
-const list = async d => {
-  const r = await real(d);
-  if (!r || late()) return [];
-  let names = [];
-  try { names = await fsp.readdir(r); } catch { return []; }
-  const out = [];
-  for (const n of names.slice(0, 400)) {
-    const p = await real(path.join(r, n));
-    if (!p) continue;
-    const st = await fsp.stat(p).catch(() => null);
-    if (st) out.push({ n, p, dir: st.isDirectory(), file: st.isFile() });
-  }
-  return out;
-};
-const dirs = async d => (await list(d)).filter(e => e.dir).map(e => e.n);
-const short = s => { const d = String(s || '').replace(/\s+/g, ' ').trim(); return d.length > 110 ? d.slice(0, 108).replace(/\s+\S*$/, '') + '…' : d; };
-
-/** skills/<name>/SKILL.md and commands/**\/*.md under one .claude-like root; `pre` names a plugin's */
-async function scan(root, kind, pre, out) {
-  for (const s of await dirs(path.join(root, 'skills'))) {
-    const fm = front(await head(path.join(root, 'skills', s, 'SKILL.md')));
-    if (!fm.name && !fm.description) continue;
-    if (String(fm['user-invocable']) === 'false') continue;
-    const n = pre + (fm.name || s);
-    if (NAME.test(n)) out.push([n, fm['argument-hint'] || '', short(fm.description), kind]);
-  }
-  const walk = async (d, ns, depth) => {
-    for (const e of await list(d)) {
-      if (out.length > 600 || late()) return;
-      if (e.dir && depth < 3) await walk(e.p, ns + e.n + ':', depth + 1);
-      else if (e.file && e.n.endsWith('.md')) {
-        const fm = front(await head(e.p));
-        const n = pre + ns + e.n.slice(0, -3);
-        if (NAME.test(n)) out.push([n, fm['argument-hint'] || '', short(fm.description), kind]);
-      }
-    }
-  };
-  await walk(path.join(root, 'commands'), '', 0);
-}
-
-async function plugins(home, cwd, out) {
-  let inst = {}, enabled = {};
-  try { inst = JSON.parse(await fsp.readFile(path.join(home, 'plugins', 'installed_plugins.json'), 'utf8')); } catch {}
-  try { enabled = JSON.parse(await fsp.readFile(path.join(home, 'settings.json'), 'utf8')).enabledPlugins || {}; } catch {}
-  for (const [id, v] of Object.entries(inst.plugins || inst)) {
-    if (enabled[id] === false) continue;
-    for (const p of [].concat(v)) {
-      if (!p || typeof p.installPath !== 'string') continue;
-      const ip = await real(p.installPath); // resolved: no .. or link can lead the scan out of the home
-      if (!ip) continue;
-      if (p.scope === 'project' && typeof p.projectPath === 'string' && !(cwd + '/').startsWith(path.resolve(p.projectPath) + '/')) continue;
-      await scan(ip, 'plugin', id.split('@')[0] + ':', out);
-      break;
-    }
-  }
-}
-
 const cache = new Map();
-/** the commands for one account home and pane directory: BUILTIN, then the account's, the project's and the plugins' */
-export async function commandsFor(home, cwd, root = TMUX_HOME) {
-  ROOT = root;
-  const key = root + '\0' + home + '\0' + cwd, hit = cache.get(key);
+const SCANNER = fileURLToPath(new URL('./cmdscan.mjs', import.meta.url));
+/** the commands for one account home and pane directory: BUILTIN, then what the scanner finds, run as the tmux user (cmdscan.mjs) */
+export async function commandsFor(home, cwd) {
+  const key = home + '\0' + cwd, hit = cache.get(key);
   if (hit && Date.now() - hit.t < 60000) return hit.list;
-  const found = [];
-  deadline = Date.now() + 3000; // a slow or huge tree gives what it found by then
-  await scan(home, 'skill', '', found);
-  // the project: .claude/ in the pane's directory and its parents, up to the user's own home
-  if (cwd.startsWith(TMUX_HOME + '/') || cwd === TMUX_HOME) for (let d = cwd; d.startsWith(TMUX_HOME); d = path.dirname(d)) {
-    if (path.join(d, '.claude') !== home) await scan(path.join(d, '.claude'), 'project', '', found);
-    if (d === TMUX_HOME) break;
-  }
-  await plugins(home, cwd, found);
+  let found = [];
+  try { found = JSON.parse(await sh(...userCmd([process.execPath, SCANNER, '--scan', home, cwd, TMUX_HOME])) || '[]'); } catch {}
   const seen = new Set(), list = [];
-  for (const c of [...BUILTIN.map(([n, a, d, k]) => [n, a, d, k || 'built-in']), ...found]) if (!seen.has(c[0])) { seen.add(c[0]); list.push(c); }
+  for (const c of [...BUILTIN.map(([n, a, d, k]) => [n, a, d, k || 'built-in']), ...(Array.isArray(found) ? found : [])])
+    if (Array.isArray(c) && typeof c[0] === 'string' && !seen.has(c[0])) { seen.add(c[0]); list.push(c.slice(0, 4).map(x => String(x ?? ''))); }
   cache.set(key, { t: Date.now(), list });
   return list;
 }
