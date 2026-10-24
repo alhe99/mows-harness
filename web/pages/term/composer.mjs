@@ -31,7 +31,17 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, mode, draft, send));
 
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; form.classList.toggle('has', !!ta.value.trim() || !!held); };
+  // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
+  // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
+  const grow = () => {
+    form.classList.toggle('has', !!ta.value.trim() || !!held);
+    if (!ta.offsetParent) return;
+    ta.style.height = 'auto';
+    const h = ta.scrollHeight;
+    ta.style.height = h ? Math.min(h, 120) + 'px' : '';
+  };
+  // a field resized while it could not be measured is measured again once it can
+  new ResizeObserver(() => { if (ta.offsetParent && ta.style.height === '') grow(); }).observe(form);
   const submit = () => {
     scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
     const t = ta.value.replace(/\s+$/, '');

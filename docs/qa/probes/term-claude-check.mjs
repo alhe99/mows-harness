@@ -157,7 +157,9 @@ const st = P => P.page.evaluate(() => {
     under: window.term.rows - Math.floor((document.getElementById('terminal-wrap').getBoundingClientRect().height - 6) / (sc.height / window.term.rows)),
     dockRight: Math.round(document.getElementById('ccdock').getBoundingClientRect().right),
     // the top: the screen starts at or above the top edge of the space shown (no blank strip under the status bar, the phone 2026-10-23)
-    topGap: Math.round(sc.top - document.getElementById('terminal-wrap').getBoundingClientRect().top) };
+    topGap: Math.round(sc.top - document.getElementById('terminal-wrap').getBoundingClientRect().top),
+    // the field's own text area: one line at least whenever the field shows (the phone, 2026-10-24: 0 px after an attach)
+    taH: Math.round(document.getElementById('ccmsg').getBoundingClientRect().height) };
 });
 const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
 // the iOS keyboard: it slides for ~300 ms, the visual viewport shrinking (or growing) in steps, each step a resize event
@@ -205,7 +207,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 2 a tap on the terminal: the focus is in the field`, await P.page.evaluate(() => document.activeElement?.id === 'ccmsg'), await P.page.evaluate(() => document.activeElement?.className));
   await kb(P, Math.round(h * 0.52)); await sleep(1200);
   s = await st(P);
-  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0, [s, await twos(P)]);
+  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
   await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
@@ -229,9 +231,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
   await P.page.locator('#cckb > button[data-k="Menu"]').click(); await kbAnim(P, Math.round(h * 0.52), h); await sleep(200);
   await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await sleep(100);
-  await P.page.evaluate(() => { dispatchEvent(new Event('blur')); });
-  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') });
-  await P.page.evaluate(() => { dispatchEvent(new Event('focus')); }); await sleep(900);
+  // the picker covers the page: blur, and the page is not rendered meanwhile, so a text area measures 0 (its scrollHeight, stubbed; the layout
+  // itself does not move); the upload and Claude's [Image #1] arrive while it is up; then the page comes back
+  await P.page.evaluate(() => { dispatchEvent(new Event('blur')); Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { get: () => 0, configurable: true }); });
+  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(600);
+  await P.page.evaluate(() => { delete (/** @type {any} */ (HTMLTextAreaElement.prototype)).scrollHeight; dispatchEvent(new Event('focus')); }); await sleep(600);
   {
     const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
     const g = glitches(rec).filter(x => x[0] !== 'the last line changes text mid-transition'); // the upload itself adds a line
@@ -242,6 +246,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   }
   s = await st(P);
   check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 1, [s, F.draft, await twos(P)]);
+  check(`${tag} 4 after the picker the field's text area is a whole line, not collapsed`, s.taH >= 36, s);
   await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);
   await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
@@ -300,7 +305,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     await tapTerm(); n0 = sent();
     await P.page.keyboard.type('after ' + way, { delay: 5 }); await sleep(250);
     s = await st(P);
-    check(`${tag} W3 after the menu (${way}): a tap and typing go into the field, nothing to the terminal, no box`, (await P.page.inputValue('#ccmsg')).endsWith('after ' + way) && sent() === n0 && s.two === two0, [await P.page.inputValue('#ccmsg'), sent() - n0, s.focus, s]);
+    check(`${tag} W3 after the menu (${way}): a tap and typing go into the field, nothing to the terminal, no box`, (await P.page.inputValue('#ccmsg')).endsWith('after ' + way) && sent() === n0 && s.two === two0 && s.taH >= 36, [await P.page.inputValue('#ccmsg'), sent() - n0, s.focus, s]);
     await P.page.fill('#ccmsg', '');
   }
   check(`${tag} W3 the attached image is Claude's draft, shown as the chip`, (await st(P)).draft.startsWith('[Image #'), await st(P));
@@ -309,7 +314,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   F.last = 'a recalled prompt long enough to wrap over several rows of Claude Code\'s own input box on a phone, the way a long message does when it is typed straight into the terminal';
   await key(P, 'UP'); await sleep(1000);
   s = await st(P);
-  check(`${tag} W4 a draft over several rows: hidden, on the chip, never two inputs`, s.draft.startsWith('a recalled prompt') && s.two === two0 && s.shown, [s, await twos(P)]);
+  check(`${tag} W4 a draft over several rows: hidden, on the chip, never two inputs`, s.draft.startsWith('a recalled prompt') && s.two === two0 && s.shown && s.taH >= 36, [s, await twos(P)]);
   await key(P, 'Esc'); await sleep(400);
   // W5 typing the next message while Claude works on the last one
   await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(60);
@@ -320,7 +325,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);
-  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 1 && s.shown && s.topGap <= 0, [s, await twos(P)]);
+  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 1 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
   check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Type 1–3 to choose…' && s.shown && !s.chip && s.two === 0, s);
   await shot(P, `${tag}-10-dialog`);

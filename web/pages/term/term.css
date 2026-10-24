@@ -68,7 +68,7 @@ body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 #cccomp{min-width:0;display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
 #cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
 /* 16 px: iOS zooms the page into a smaller field on focus */
-#ccmsg{width:100%;box-sizing:border-box;height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
+#ccmsg{width:100%;box-sizing:border-box;height:36px;min-height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
 #ccmsg::placeholder{color:var(--c-dim)}
 #cccomp .cbar{min-width:0;display:flex;align-items:center;gap:8px;margin-left:-8px}
 #ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
