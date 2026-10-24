@@ -61,6 +61,7 @@ import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamV
 import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
 import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
+import { commandsJson } from './routes/commands.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
@@ -187,6 +188,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/app') return await appView(req, res, url, UI === 'next');
     if (p === '/app/live.json') return await liveJson(req, res, url);
+    if (p === '/app/commands.json') return await commandsJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
     if (p === '/md') return await mdView(req, res, url, UI === 'next');
     // ↻ button: force usage re-collect, then bounce back to the same page (PRG) with
@@ -279,6 +281,33 @@ if (args.includes('--selftest')) {
                       '<blockquote>', '<strong>b</strong>', '<a href="https://x/">l</a>', '<a href="#">j</a>'])
     if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
   console.log('md renderer: OK');
+  { // the "/" menu's discovery (routes/commands.mjs): frontmatter, linked skills, hidden skills, nested and linked commands
+    const { BUILTIN } = await import('./routes/commands.mjs'), { front, discover } = await import('./routes/cmdscan.mjs');
+    const fs = await import('node:fs'), path = (await import('node:path')).default, os = (await import('node:os')).default;
+    const t = fs.mkdtempSync(path.join(os.tmpdir(), 'cmds-')), mk = (f, txt) => { fs.mkdirSync(path.dirname(path.join(t, f)), { recursive: true }); fs.writeFileSync(path.join(t, f), txt); };
+    mk('home/skills/alpha/SKILL.md', '---\nname: alpha\ndescription: >\n  first line\n  second line\n---\n');
+    mk('home/skills/quiet/SKILL.md', '---\nname: quiet\ndescription: x\nuser-invocable: false\n---\n');
+    mk('elsewhere/beta/SKILL.md', '---\nname: beta\ndescription: "linked in"\nargument-hint: [n]\n---\n');
+    fs.symlinkSync(path.join(t, 'elsewhere/beta'), path.join(t, 'home/skills/beta'));
+    mk('home/commands/go.md', '---\ndescription: go now\nargument-hint: [where]\n---\nbody');
+    mk('home/commands/team/ship.md', '---\ndescription: ship it\n---\n');
+    mk('elsewhere/linked.md', '---\ndescription: a linked command\n---\n');
+    fs.symlinkSync(path.join(t, 'elsewhere/linked.md'), path.join(t, 'home/commands/linked.md'));
+    // root reads nothing a link takes out of the user's home: a skill and a command linked to outside the root are not read
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'cmds-out-'));
+    fs.mkdirSync(path.join(out, 'evil')); fs.writeFileSync(path.join(out, 'evil', 'SKILL.md'), '---\nname: evil\ndescription: outside\n---\n');
+    fs.writeFileSync(path.join(out, 'evil.md'), '---\ndescription: outside\n---\n');
+    fs.symlinkSync(path.join(out, 'evil'), path.join(t, 'home/skills/evil')); fs.symlinkSync(path.join(out, 'evil.md'), path.join(t, 'home/commands/evil.md'));
+    const l = await discover(path.join(t, 'home'), '/nowhere', t), by = n => l.find(c => c[0] === n);
+    fs.rmSync(out, { recursive: true, force: true });
+    const ok = front('---\na: "q"\nb: >\n  x\n  y\n---').a === 'q' && front('---\nb: >\n  x\n  y\n---').b === 'x y'
+      && l.length === 5 && by('alpha')?.[2] === 'first line second line' && !by('quiet') && by('beta')?.[1] === '[n]'
+      && by('go')?.[1] === '[where]' && by('team:ship')?.[2] === 'ship it' && by('linked')?.[2] === 'a linked command' && BUILTIN.some(c => c[0] === 'compact')
+      && !by('evil');
+    fs.rmSync(t, { recursive: true, force: true });
+    if (!ok) { console.error('commands discovery: FAIL', JSON.stringify(l)); process.exit(1); }
+    console.log(`commands discovery: OK (${BUILTIN.length} built-in)`);
+  }
   // push suppression: typed into 1 min ago -> watched; grid tab untouched for an hour -> not; blank line ignored
   const sec = Math.floor(now / 1000), w = watchedSessions(`typing\t${sec - 60}\ngrid\t${sec - 3600}\n`, now);
   if (!w.has('typing') || w.has('grid') || w.has('')) { console.error(`FAIL: watchedSessions got ${JSON.stringify([...w])}`); process.exit(1); }

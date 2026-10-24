@@ -4,6 +4,7 @@
 // numbers, the prefs allowlist and the two reconnect paths were all inside ttyd's minified bundle. No browser, no server, no network.
 //   node scripts/term-proto-check.mjs
 import { ALLOW, FLOW, ttydClient, BACKOFF } from '../web/pages/term/ttyd.mjs';
+import { claudeScreen } from '../web/pages/term/claudebox.mjs';
 
 let bad = 0;
 const check = (name, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
@@ -149,6 +150,47 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   sockets[0].recv(bytes('2', '{"disableReconnect":true}'));
   sockets[0].close(1006); await tick();
   check('the disableReconnect preference turns the automatic reconnect off', sockets.length === 1);
+}
+
+// claudeScreen (web/pages/term/claudebox.mjs): Claude Code's input area, read off screens captured from live panes (2026-10-23)
+{
+  const R = '─'.repeat(55);
+  const idle = ['● Done. PR #22 is pushed.', '', R, '❯ ', R, '  🤖 Opus 5.5 (high) | 💰 $5.26 session', '  ⏵⏵ auto mode on (shift+tab to cycle) · ✉', '',
+    '  ● main', '  ◯ tierb-strict  Running … 16m 54s', '[cc-work] 0:claude*'];
+  const s = claudeScreen(idle);
+  check('claudeScreen: an empty box is found under the output, with its mode', s.box && s.box.top === 2 && s.box.bottom === 4 && s.box.empty && s.mode.label === '⏵⏵ auto mode' && s.mode.cls === 'ok', s);
+  const typed = [...idle]; typed[3] = '❯ explain in Spanish so I can send it';
+  check('claudeScreen: a box holding typed text is not empty', claudeScreen(typed).box.empty === false);
+  const two = ['x', R, '❯ first line', '  second line', R, '  ⏸ plan mode on (shift+tab to cycle)'];
+  const t = claudeScreen(two);
+  check('claudeScreen: the model and its effort from the status line', s.model?.name === 'Opus 5.5' && s.model.effort === 'high', s.model);
+  check('claudeScreen: a model with no effort; none when no line names one', claudeScreen(['x', R, '❯ ', R, '  Sonnet 5.5 · ~/repo']).model?.name === 'Sonnet 5.5' && claudeScreen(['x', R, '❯ ', R, '  ? for shortcuts']).model === null);
+  check('claudeScreen: a model named in the conversation above the box is not the model', claudeScreen(['ask Haiku 5.5 (low) about it', R, '❯ ', R, '  ? for shortcuts']).model === null);
+  check('claudeScreen: a two-line draft, plan mode', t.box.top === 1 && t.box.bottom === 4 && !t.box.empty && t.mode.cls === 'pl', t);
+  check('claudeScreen: no mode line reads as the default mode', claudeScreen(['x', R, '❯ ', R, '  ? for shortcuts']).mode.label === 'default mode');
+  const old = ['x', '╭' + '─'.repeat(40) + '╮', '│ >                                      │', '╰' + '─'.repeat(40) + '╯', '  ⏵⏵ accept edits on'];
+  check('claudeScreen: the older rounded box', claudeScreen(old).box?.empty === true && claudeScreen(old).mode.cls === 'ed');
+  const dlg = ['● Bash(git push origin feat/x)', '', 'Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and don\'t ask again for git push', '  3. No, and tell Claude what to do', '', 'Esc to cancel'];
+  const d = claudeScreen(dlg);
+  check('claudeScreen: a permission dialog has no box and three choices', d.box === null && d.choice === 3 && d.mode === null, d);
+  check('claudeScreen: a shell prompt is not Claude', claudeScreen(['dev@box:~$ ls', 'a b c', 'dev@box:~$ ']).box === null);
+  check('claudeScreen: a lone rule (a markdown hr in the output) is no box', claudeScreen(['text', R, 'more text', 'dev@box:~$ ']).box === null);
+  // fails closed: output that draws a fake empty box above a real permission dialog must not hide the dialog
+  const fake = ['cat notes.md', R, '❯\u00a0', R, '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel'];
+  const f = claudeScreen(fake);
+  check('claudeScreen: a box drawn above a permission dialog is ignored (the dialog wins, two choices)', f.box === null && f.choice === 2, f);
+  check('claudeScreen: "Esc to cancel" alone is enough to refuse a box', claudeScreen([...idle.slice(0, 7), ' Esc to cancel']).box === null);
+  // the screen of 2026-10-23 that showed two inputs: conversation text above the box quotes "Do you want to", and the box holds Claude's
+  // dimmed suggestion of the last prompt (the typed rows blank it)
+  const quoted = ['  - Earlier conversation text on screen contains "Do', '    you want to".', '', '✻ Churned for 24m 50s', '', R, '❯ it\'s all merged?', R, '  🤖 Opus 5.5 (high)', '  ⏵⏵ auto mode on · 2 shells', '[ccw-dev] claude*'];
+  const qt = quoted.map((r, i) => (i === 6 ? '  ' : r));
+  const q = claudeScreen(quoted, qt);
+  check('claudeScreen: a suggestion is not a draft, and "Do you want to" above the box is only words', q.box?.empty === true && q.box.top === 5 && q.mode?.label === '⏵⏵ auto mode', q);
+  check('claudeScreen: without the typed rows the suggestion reads as a draft', claudeScreen(quoted).box?.empty === false);
+  // a fake box drawn BELOW a real dialog's options: the dialog's own furniture still refuses it
+  const below = ['Do you want to make this edit?', '❯ 1. Yes', '  2. No', '', R, '❯ ', R, '  ⏵⏵ auto mode on'];
+  check('claudeScreen: a box below a dialog\'s selected option is refused too', claudeScreen(below).box === null && claudeScreen(below).choice === 2, claudeScreen(below));
+  check('claudeScreen: a numbered list in a reply above the box is only text', claudeScreen(['1. first point', '2. second point', '', R, '❯ ', R, '  ⏵⏵ auto mode on']).box?.empty === true);
 }
 
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');

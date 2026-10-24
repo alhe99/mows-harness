@@ -4,7 +4,7 @@
 // Precedence: localStorage.cctheme -> the global /settings/term-theme.json (polled every 30 s) -> the default. ?theme=<Name> saves one
 // (an unknown name such as "default" clears it), ?theme=off turns the picker and the theming off, window.cctheme(name) does the same by hand.
 import NAMES from 'themes:names';
-import { el, param, store } from './dom.mjs';
+import { coarse, el, param, store } from './dom.mjs';
 // Android in a light system theme keeps the light status bar term.mjs set (its icons follow the system theme there): the theme must not repaint it
 const LIGHT_BAR = /Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches;
 
@@ -32,7 +32,8 @@ export function themes(/** @type {import('@xterm/xterm').Terminal} */ term) {
     const cs = getComputedStyle(root), t = {};
     for (const k of KEYS) t[k] = cs.getPropertyValue('--t-' + k).trim();
     if (t.selectionBackground.length === 7) t.selectionBackground += '80'; // the ports assume Windows Terminal's 50 % selection alpha
-    if (FRAMED && dark(t.background)) t.background = SHELL_BG; // a pane of /grid: one canvas with the shell; a light theme keeps its own paper (2026-10-12)
+    // a pane of /grid, or a phone (its strip and dock are the shell's chrome): one canvas with the shell; a light theme keeps its own paper (2026-10-12, 2026-10-23)
+    if ((FRAMED || coarse()) && dark(t.background)) t.background = SHELL_BG;
     term.options.theme = t;
     document.body.style.background = t.background; // the safe-area edges around the terminal
     if (!LIGHT_BAR) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', t.background);

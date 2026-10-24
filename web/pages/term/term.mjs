@@ -1,7 +1,8 @@
 // term.mjs — the /term document (ARCHITECTURE section 6; phase 04). xterm.js 6 on the same ttyd socket (ttyd.mjs), the key bar and its
-// features as modules of their own, themed from themes.json (theme.mjs). window.term stays exposed: mobile-journey.mjs reads
+// features as modules of their own, themed from themes.json (theme.mjs). On a phone the page is a column: the terminal, then the dock (the
+// composer, composer.mjs, over the key bar, bar.mjs); the menu sheet (menu.mjs), behind the bar's ⋯, holds the rest. window.term stays exposed: mobile-journey.mjs reads
 // term._core._renderService.dimensions.css.cell.width. Assets come from /assets/, never /term/ (Caddy sends every /term* path to ttyd).
-// Kill switches, as URL params: ?ime=off ?clip=off ?rst=off ?paint=off ?theme=off.
+// Kill switches, as URL params: ?ime=off ?clip=off ?comp=off ?paint=off ?theme=off.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -9,15 +10,16 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import './term.css';
 import 'themes:css'; // after term.css: a theme block and the :root default have the same specificity, so the later one wins
-import { baseKeys, fontKeys, touchScroll, viewportFit } from './bar.mjs';
+import { baseKeys, detach, fontKeys, modChip, touchScroll, viewportFit } from './bar.mjs';
 import { attach } from './attach.mjs';
 import { clipboard } from './clip.mjs';
 import { diag, paint } from './paint.mjs';
 import { ime } from './ime.mjs';
-import { sessions } from './sess.mjs';
+import { composer } from './composer.mjs';
+import { menu } from './menu.mjs';
 import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
-import { el, key, off } from './dom.mjs';
+import { coarse, el } from './dom.mjs';
 import { gridKeys } from './gridkeys.mjs';
 // Android, light system theme: a light status bar so its dark icons read — the reasoning is in web/standalone.mjs, next to the same line.
 if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
@@ -39,6 +41,13 @@ if (window.parent !== window) { addEventListener('focus', () => term.focus()); i
 const fit = (now = false) => { clearTimeout(ft); const run = () => { try { fitAddon.fit(); } catch { /* not laid out yet */ } }; now ? run() : (ft = setTimeout(run, 150)); };
 fit(true);
 addEventListener('resize', () => fit());
+// the box the terminal lives in changes with the dock (a second key row, a growing composer) and the keyboard: refit on any of them. On a phone
+// at once (the keyboard handler already coalesces its events; a refit left for later showed the old grid in the new box for 150 ms); on a
+// desktop a window drag is a burst, coalesced as before
+const wrap = /** @type {HTMLElement} */ (document.getElementById('terminal-wrap'));
+new ResizeObserver(() => fit(coarse())).observe(wrap);
+// an engine without overflow:clip can still scroll the box (term.css): put it back at once
+wrap.addEventListener('scroll', () => { if (wrap.scrollTop || wrap.scrollLeft) { wrap.scrollTop = 0; wrap.scrollLeft = 0; } });
 
 // the status overlay (ttyd's): connection closed, reconnecting, press Enter
 const ovl = document.body.appendChild(el('div', { id: 'ccovl' }));
@@ -65,25 +74,33 @@ const client = ttydClient({
 let socketN = 0;
 const stat = new WeakMap(); // per socket: its number and the bytes it received, for the /z beacons
 
-// keys, in the final child order of the bar on a phone: back, pill, attach, copy, paste, restart, Esc ... KB, A- size A+, theme select
+// the chrome on a phone: the dock (composer + key bar) under the terminal, the menu sheet; a desktop gets the hidden key bar only
 const fonts = fontKeys(term, fit);
-const back = key('‹', () => { location.href = '/'; });
-back.setAttribute('aria-label', 'sessions');
-back.id = 'ccback';
-const restart = off('rst') ? null : key('⟳', () => {
-  if (!confirm('Restart this pane? Claude reloads (picks up new MCP/config). Whatever is running right now is killed.')) return;
-  // staged: tmux's assume-paste-time treats a burst as a paste and skips its key bindings (prefix is C-q)
+// staged: tmux's assume-paste-time treats a burst as a paste and skips its key bindings (prefix is C-q)
+const restart = () => {
   term.input('\x11');
   setTimeout(() => term.input(':'), 120);
   setTimeout(() => term.input('respawn-pane -k'), 260);
   setTimeout(() => term.input('\r'), 420);
-}, 'pointerup');
+};
 const theme = themes(term);
-const clip = clipboard(term);
-const bar = el('div', { id: 'cckb' }, back, sessions(), attach(term), ...clip.keys, ...baseKeys(term), restart, fonts.down, fonts.span, fonts.up, theme.select);
-document.body.append(bar);
+// text from the menu's Paste: into the composer while it is the input, else into the terminal. An attached file's path always goes to the
+// terminal: in Claude's box an image path becomes a real attachment ([Image #1]), which the composer then shows as its draft chip.
+const put = t => { if (!comp?.insert(t)) term.paste(t); };
+const clip = clipboard(term, put);
+const att = attach(term);
+const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
+const comp = composer(term, tc, () => fit(true), att.recent, att.pick);
+// the session of the URL names the menu's header (?arg=attach&arg=<session>)
+const args = new URLSearchParams(location.search).getAll('arg');
+const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') } : null;
+const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session }) : null;
+const bar = el('div', { id: 'cckb' }, ...baseKeys(term, { typing: () => !!comp?.typing(), type: t => comp?.insert(t), menu: () => sheet?.open() }));
+document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
+fit(true); // now, not from the observer a frame later: the socket may open first, and the size it sends is the pty's (one redraw, not two)
+if (coarse()) wrap.append(modChip());
 touchScroll();
-viewportFit(bar, fit);
+viewportFit(fit);
 ime(term, client);
 paint(term, client);
 

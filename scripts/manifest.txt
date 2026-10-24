@@ -184,6 +184,7 @@ docs/qa/probes/run.sh
 docs/qa/probes/sessions-check.mjs
 docs/qa/probes/shell-check.mjs
 docs/qa/probes/term-check.mjs
+docs/qa/probes/term-claude-check.mjs
 docs/qa/probes/twofa-check.mjs
 docs/qa/probes/views-check.mjs
 docs/superpowers/plans/2026-08-10-agy-delegation.md
@@ -237,6 +238,8 @@ infra/dashboard/mdv.template
 infra/dashboard/routes/actions.mjs
 infra/dashboard/routes/agents.mjs
 infra/dashboard/routes/api.mjs
+infra/dashboard/routes/cmdscan.mjs
+infra/dashboard/routes/commands.mjs
 infra/dashboard/routes/device.mjs
 infra/dashboard/routes/documents.mjs
 infra/dashboard/routes/md.mjs
@@ -357,13 +360,15 @@ web/md.mjs
 web/pages/md/md.css
 web/pages/term/attach.mjs
 web/pages/term/bar.mjs
+web/pages/term/claudebox.mjs
 web/pages/term/clip.mjs
+web/pages/term/composer.mjs
 web/pages/term/dom.mjs
 web/pages/term/gridkeys.mjs
 web/pages/term/ime.mjs
 web/pages/term/index.html
+web/pages/term/menu.mjs
 web/pages/term/paint.mjs
-web/pages/term/sess.mjs
 web/pages/term/term.css
 web/pages/term/term.mjs
 web/pages/term/theme.mjs

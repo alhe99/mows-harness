@@ -1,74 +1,195 @@
-/* term.css — the /term document's own rules: page geometry, the key bar #cckb, the standalone-app geometry, the copy overlay, the session sheet.
-   The terminal colours are NOT here but in the --t-<key> properties: the default below, and one [data-theme] block per theme generated from
-   infra/webconsole/themes.json at build time (theme.mjs reads them into xterm). Chrome colours stay hardcoded and unthemed, as before. */
+/* term.css — the /term document's own rules: page geometry, the dock #ccdock (composer #cccomp, key bar #cckb), the copy
+   overlay, the menu sheet. The terminal colours are NOT here but in the --t-<key> properties: the default below, and one [data-theme] block per theme
+   generated from infra/webconsole/themes.json at build time (theme.mjs reads them into xterm). The chrome draws from the --c-<key> tokens, the shell's. */
 :root{--t-black:#000;--t-red:#d81e00;--t-green:#5ea702;--t-yellow:#cfae00;--t-blue:#427ab3;--t-magenta:#89658e;--t-cyan:#00a7aa;--t-white:#dbded8;
 --t-brightBlack:#686a66;--t-brightRed:#f54235;--t-brightGreen:#99e343;--t-brightYellow:#fdeb61;--t-brightBlue:#84b0d8;--t-brightMagenta:#bc94b7;
 --t-brightCyan:#37e6e8;--t-brightWhite:#f1f1f0;--t-background:#2b2b2b;--t-foreground:#d9d9d9;--t-cursor:#adadad;--t-selectionBackground:rgba(255,255,255,.3)}
 
-/* canvas bg = key-bar chrome: iOS 26 paints its reserved bottom gesture zone with the page canvas colour, so #161b22 fuses that zone with the bar */
-html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#161b22;color-scheme:dark} /* a desktop with a mouse draws xterm's viewport scrollbar; dark, not a white bar */
-body{overscroll-behavior:none}
+/* the chrome is the shell's (web/tokens.css), one canvas with it: the same zinc greys, emerald and amber, Inter and JetBrains Mono. A dark
+   terminal theme takes the shell's black on a phone (theme.mjs), so strip, terminal and dock read as one surface. 2026-10-23 */
+:root{--c-bg:#09090b;--c-surface:#18181b;--c-raised:#27272a;--c-line:#202024;--c-line2:#3f3f47;--c-fg:#f4f4f5;--c-fg2:#d4d4d8;--c-mut:#9f9fa9;
+--c-dim:#71717b;--c-ok:#00d492;--c-ok-bg:rgba(0,212,146,.12);--c-ok-bd:rgba(0,212,146,.35);--c-warn:#ffb900;--c-bad:#ff6467;
+--c-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;--c-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@font-face{font-family:'Inter';font-style:normal;font-weight:400 700;font-display:swap;src:url(../../fonts/inter-var-latin.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;src:url(../../fonts/jetbrains-mono-var-latin.woff2) format('woff2')}
+
+/* canvas bg = dock chrome: iOS 26 paints its reserved bottom gesture zone with the page canvas colour, so the page black fuses that zone with the dock */
+html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:var(--c-bg);color-scheme:dark} /* a desktop with a mouse draws xterm's viewport scrollbar; dark, not a white bar */
+body{overscroll-behavior:none;-webkit-font-smoothing:antialiased}
+/* clip, not hidden: an overflow:hidden box can still be scrolled by the browser, and iOS scrolls it to bring a focused input into view; xterm's
+   input sits at the cursor, in Claude's box under the dock, so a focus there scrolled the box up into sight (the phone, 2026-10-24) */
+#terminal-wrap{position:relative;height:100%;overflow:hidden;overflow:clip}
 #terminal-container{width:100%;height:100%;margin:0 auto;padding:0}
 #terminal-container .terminal{padding:5px;height:calc(100% - 10px)}
 .xterm .xterm-viewport{background-color:transparent;scrollbar-width:thin;scrollbar-color:#3f3f47 transparent} /* xterm paints the viewport #000 and the theme never repaints it: the 5 px padding and the space under the last row were a black frame on every theme; the body carries the theme background */
+button{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent;cursor:pointer}
+:is(button,select,textarea):focus-visible{outline:2px solid var(--c-ok);outline-offset:2px}
 
-#cckb{display:none;position:fixed;left:0;right:0;bottom:0;height:46px;z-index:50;background:#161b22;border-top:1px solid #30363d;
-padding:5px 6px calc(5px + env(safe-area-inset-bottom));gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
-#cckb button{flex:0 0 auto;min-width:44px;height:36px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:13px ui-monospace,monospace;padding:0 10px}
-#cckb button:active{background:#238636}
-#cckb span{font:11px ui-monospace,monospace;color:#8b949e;align-self:center;min-width:18px;text-align:center}
-#cckb #ccback{font-size:22px;line-height:1;color:#3fb950;font-weight:700}
-#cckb select#ccthemesel{flex:0 0 auto;height:36px;max-width:132px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:13px ui-monospace,monospace;padding:0 8px;-webkit-appearance:none;appearance:none}
+#ccdock,#ccmods{display:none}
+#cckb{display:none}
+#cckb button{min-width:0;height:42px;padding:0;border-radius:10px;border:1px solid var(--c-line);background:var(--c-surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.045);
+color:var(--c-fg2);font:500 12.5px var(--c-mono);display:grid;place-items:center;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+#cckb button:active{background:var(--c-raised)}
+#cckb button[data-k=UP],#cckb button[data-k=DN],#cckb button[data-k=LT],#cckb button[data-k=RT]{font-size:17px;font-weight:400}
+#cckb button.mr{display:none}
+#cckb.open button.mr{display:grid}
+#cckb button[data-mod=armed]{border-color:var(--c-ok-bd);background:var(--c-ok-bg);color:var(--c-ok)}
+#cckb button[data-mod=locked]{border-color:var(--c-ok);background:var(--c-ok);color:#04130d}
+#cckb svg{width:18px;height:18px}
+#cckb.open button[data-k=More] svg{transform:rotate(180deg)}
 
-/* standalone geometry: the insets are MARGINS, not padding, because FitAddon measures the parent's clientHeight, which includes padding */
+/* a phone: the page is a fixed column (terminal / dock), pinned to the visual viewport under the iOS keyboard (bar.mjs viewportFit) */
 @media(pointer:coarse){
-#cckb{display:flex;box-sizing:border-box;height:auto;min-height:46px;padding-left:calc(6px + env(safe-area-inset-left,0px));padding-right:calc(6px + env(safe-area-inset-right,0px))}
-#terminal-container{box-sizing:border-box;height:calc(100% - 48px - env(safe-area-inset-bottom,0px));margin:0 env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px);
+body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-direction:column}
+/* no strip: the terminal starts under the status bar of an installed app */
+#terminal-wrap{flex:1;min-height:0;height:auto;margin-top:env(safe-area-inset-top,0px);
+-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 14px);mask-image:linear-gradient(to bottom,transparent 0,#000 14px)}
 /* iOS never draws xterm's scrollbar, so the fit addon reserves 15 px for it: oversize the container by exactly that */
-width:calc(100% + 15px)}
-/* iOS 26 reserved bottom zone (viewport pinned short of the screen): the home indicator sits in the zone, so env() padding would double-reserve */
-body.nozone #cckb{padding-bottom:5px}
-body.nozone #terminal-container{height:calc(100% - 48px)}
+#terminal-container{box-sizing:border-box;width:calc(100% + 15px)}
+/* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
+#terminal-container .terminal{padding:0 10px 6px;height:calc(100% - 6px)} /* no top padding: that edge is cut and faded (a row stands over it) */
+/* the terminal sits on the bottom of its box: between a new box size and the refit (a frame), and while rows are added or taken away, what
+   shows is the newest lines, never the top of an old screen (the phone, 2026-10-23: "in a second I saw old input text"). No transition on its
+   shift either: a shift that slides shows the rows it slides past. */
+#terminal-container{display:flex;flex-direction:column;justify-content:flex-end}
+/* the box: the space shown, one row more standing above the top edge (--cc-cell, so the top is never a blank strip), and Claude's rows hidden
+   under the dock (--cc-hid); both set by composer.mjs */
+#terminal-container{height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
+#terminal-container .terminal{flex:none;height:auto}
+/* the entry: the terminal out of sight until Claude's rows are under the dock (composer.mjs ready()) */
+body.ccboot #terminal-container{opacity:0}
+/* the loader in its place: the session over its stage and an emerald block cursor, on the gutter where the newest line lands */
+#ccload{display:none}
+body.ccboot #ccload{display:grid;gap:4px;position:absolute;left:10px;right:10px;bottom:14px;font:500 13px/1.4 var(--c-mono);color:var(--c-fg2);pointer-events:none}
+#ccload b{font-weight:600;color:var(--c-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ccload span{color:var(--c-dim);display:flex;align-items:center;gap:6px}
+#ccload i{display:inline-block;flex:none;width:8px;height:15px;background:var(--c-ok);border-radius:1px}
+
+/* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
+#ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
+border-top:1px solid var(--c-line);background:var(--c-bg)}
+#cckb{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px}
+/* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
+body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
+
+#cccomp[hidden]{display:none}
+#cccomp{min-width:0;display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
+#cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
+/* 16 px: iOS zooms the page into a smaller field on focus */
+#ccmsg{width:100%;box-sizing:border-box;height:36px;min-height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
+#ccmsg::placeholder{color:var(--c-dim)}
+/* the "/" menu, over the terminal above the field */
+#cccomp{position:relative}
+#cccmds{position:absolute;left:0;right:0;bottom:calc(100% + 6px);max-height:min(46vh,340px);overflow-y:auto;overscroll-behavior:contain;
+background:var(--c-surface);border:1px solid var(--c-line2);border-radius:16px;padding:4px;box-shadow:0 -12px 32px -12px rgba(0,0,0,.8);z-index:6}
+#cccmds[hidden]{display:none}
+#cccmds .cmd{display:flex;flex-direction:column;gap:2px;width:100%;padding:8px 10px;border:0;border-radius:11px;background:none;text-align:left;min-width:0}
+#cccmds .cmd:active{background:var(--c-raised)}
+#cccmds .cn{font:500 13.5px var(--c-mono);color:var(--c-ok);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cccmds .ca{color:var(--c-dim);font-weight:400}
+#cccmds .ck{margin-left:8px;font:500 10px var(--c-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--c-mut);border:1px solid var(--c-line2);border-radius:6px;padding:1px 5px;vertical-align:1px}
+#cccmds .cd{font:13px/1.35 var(--c-sans);color:var(--c-mut);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#cccmds .none{padding:12px;font:13px var(--c-sans);color:var(--c-dim)}
+#cccomp .cbar{min-width:0;display:flex;align-items:center;gap:8px;margin-left:-8px}
+#ccadd{flex:none;width:32px;height:32px;padding:0;border-radius:50%;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);display:grid;place-items:center}
+#ccadd svg{width:16px;height:16px}
+#ccadd:active{background:var(--c-raised)}
+#ccsheet .tile[hidden]{display:none}
+#ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;flex:none}
+#ccmode[hidden]{display:none}
+/* the model chip: the name, its effort dim, a chevron (it opens a picker); it gives way first when the row is short, and to the draft chip */
+#ccmodel{flex:0 1 auto;min-width:0;height:30px;padding:0 8px 0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);
+font:500 12px var(--c-mono);display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden}
+#ccmodel span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+#ccmodel small{flex:0 100 auto;min-width:0;overflow:hidden;font:400 11px var(--c-mono);color:var(--c-dim)} /* the effort gives way before the name */
+#ccmodel small:empty{display:none}
+#ccmodel svg{flex:none;width:12px;height:12px;color:var(--c-dim)}
+#ccmodel:active{background:var(--c-raised)}
+#ccmodel[hidden],#cccomp:has(.dchip:not([hidden])) #ccmodel{display:none}
+#ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}
+/* the draft chip: the text (tap: the preview) and its × (clear) */
+#cccomp .dchip{flex:1;min-width:0;display:flex;align-items:center;height:30px;border-radius:999px;border:1px solid var(--c-ok-bd);background:var(--c-ok-bg);box-sizing:border-box}
+#cccomp .dchip[hidden]{display:none}
+#ccdraft{flex:1;min-width:0;height:28px;padding:0 4px 0 10px;border:0;background:none;color:var(--c-fg);text-align:left;
+font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ccclear{flex:none;width:30px;height:28px;padding:0;border:0;border-left:1px solid var(--c-ok-bd);background:none;color:var(--c-mut);font:400 18px/1 var(--c-sans)}
+#ccclear:active{color:var(--c-fg)}
+/* the preview of the draft */
+#ccprev{display:none;position:fixed;inset:0;z-index:85;background:var(--c-bg);flex-direction:column}
+#ccprev.on{display:flex}
+#ccprev .pv-bar{flex:none;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;border-bottom:1px solid var(--c-line)}
+#ccprev .pv-t{flex:1;font:600 15px var(--c-sans);color:var(--c-fg)}
+#ccprev .pv-bar button{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--c-line2);background:var(--c-surface);color:var(--c-fg);font:500 14px var(--c-sans)}
+#ccprev .pv-rm{color:var(--c-bad)!important}
+#ccprev .pv-body{flex:1;overflow:auto;padding:12px;display:grid;gap:14px;align-content:start}
+#ccprev figure{margin:0;display:grid;gap:6px}
+#ccprev img{max-width:100%;max-height:60vh;object-fit:contain;border-radius:12px;background:var(--c-surface);justify-self:center}
+#ccprev figcaption,#ccprev .pv-none{font:400 12px var(--c-mono);color:var(--c-mut);text-align:center}
+#ccprev .pv-none{padding:24px;border:1px dashed var(--c-line2);border-radius:12px}
+#ccprev .pv-text{margin:0;font:15px/1.5 var(--c-sans);color:var(--c-fg2);white-space:pre-wrap}
+#ccsend{margin-left:auto;flex:none;width:36px;height:36px;border-radius:50%;border:0;padding:0;background:var(--c-raised);color:var(--c-dim);display:grid;place-items:center}
+#cccomp.has #ccsend{background:var(--c-ok);color:#04130d}
+#ccsend svg{width:17px;height:17px}
+
+#ccmods{display:block;position:absolute;right:10px;bottom:10px;z-index:5;font:500 11.5px var(--c-mono);color:var(--c-ok);background:#0b1f18;border:1px solid var(--c-ok-bd);
+padding:5px 10px;border-radius:999px;opacity:0;pointer-events:none}
+#ccmods.on{opacity:1}
 }
 
 /* status overlay and toast */
-#ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:6px;background:rgba(0,0,0,.75);color:#e6edf3;font:13px ui-monospace,monospace;opacity:0;pointer-events:none;transition:opacity .15s}
-#ccovl{top:12px}
-#cctoast{bottom:60px;color:#9ece6a}
+#ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:999px;background:var(--c-raised);border:1px solid var(--c-line2);
+color:var(--c-fg);font:500 12px var(--c-mono);opacity:0;pointer-events:none;transition:opacity .15s;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis}
+#ccovl,#cctoast{top:calc(12px + env(safe-area-inset-top,0px))}
 #ccovl.on,#cctoast.on{opacity:1}
 
 /* copy overlay */
-#ccclip{display:none;position:fixed;inset:0;z-index:60;background:#0d1117;flex-direction:column}
+#ccclip{display:none;position:fixed;inset:0;z-index:60;background:var(--c-bg);flex-direction:column}
 #ccclip.on{display:flex}
-#ccclip-bar{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:calc(8px + env(safe-area-inset-top,0px)) 10px 8px;background:#161b22;border-bottom:1px solid #30363d}
-#ccclip-bar button{height:40px;padding:0 16px;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;font:14px ui-monospace,monospace}
-#ccclip-bar button:active{background:#238636}
-#ccclip-hint{color:#8b949e;font:11px/1.3 ui-monospace,monospace;margin-left:auto;text-align:right}
-#ccclip-txt{flex:1;overflow:auto;margin:0;padding:10px;color:#e6edf3;font:12px/1.45 ui-monospace,monospace;white-space:pre;-webkit-user-select:text;user-select:text;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#ccclip-bar{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:calc(8px + env(safe-area-inset-top,0px)) 10px 8px;background:var(--c-bg);border-bottom:1px solid var(--c-line)}
+#ccclip-bar button{height:40px;padding:0 16px;background:var(--c-surface);color:var(--c-fg);border:1px solid var(--c-line);border-radius:10px;font:14px ui-monospace,monospace}
+#ccclip-bar button:active{background:var(--c-raised)}
+#ccclip-hint{color:var(--c-mut);font:11px/1.3 ui-monospace,monospace;margin-left:auto;text-align:right}
+#ccclip-txt{flex:1;overflow:auto;margin:0;padding:10px;color:var(--c-fg);font:12px/1.45 ui-monospace,monospace;white-space:pre;-webkit-user-select:text;user-select:text;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 
-/* session pill and bottom sheet */
-#ccsess-pill{max-width:38vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3fb950!important;font-weight:600}
-#ccsess-pill::after{content:' \25BE';color:#8b949e;font-weight:400}
-#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.55);opacity:0}
+/* the menu sheet (menu.mjs) */
+#ccsheet{position:fixed;inset:0;z-index:70;display:none;background:rgba(0,0,0,.6);opacity:0}
 #ccsheet.open{display:block;opacity:1}
-#ccsheet .pan{position:absolute;left:0;right:0;bottom:0;background:#161b22;border-top:1px solid #30363d;border-radius:16px 16px 0 0;
-padding:8px 0 calc(10px + env(safe-area-inset-bottom,0px));max-height:70%;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateY(100%)}
+#ccsheet .pan{position:absolute;left:0;right:0;bottom:0;background:var(--c-surface);border-top:1px solid var(--c-line2);border-radius:22px 22px 0 0;
+padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));max-height:80%;box-sizing:border-box;overflow-y:auto;transform:translateY(100%);
+font:15px var(--c-sans);color:var(--c-fg)}
 #ccsheet.open .pan{transform:translateY(0)}
 /* motion: the backdrop fades, the sheet slides, transform and opacity only. display sits in the transition with allow-discrete so the slide-out plays
    before display flips to none, and @starting-style gives the slide-in a from-state. A browser without either drops these and toggles instantly. */
 @media(prefers-reduced-motion:no-preference){
 #ccsheet{transition:opacity .2s ease,display .25s allow-discrete}
-#ccsheet .pan{transition:transform .25s cubic-bezier(.32,.72,0,1)}
+#ccsheet .pan{transition:transform .28s cubic-bezier(.32,.72,0,1)}
 @starting-style{#ccsheet.open{opacity:0}#ccsheet.open .pan{transform:translateY(100%)}}
-#cckb button{transition:transform .1s ease,opacity .1s ease}
-#cckb button:active{transform:scale(.9);opacity:.6}
+#cckb button{transition:background .12s,transform .08s}
+#cckb button:active{transform:translateY(1px)}
+#cckb svg{transition:transform .2s}
+#cccomp{transition:border-color .15s,box-shadow .15s}
+#ccmods{transition:opacity .15s}
+body:not(.ccboot) #terminal-container{transition:opacity .14s ease-out} /* on the way in only: into .ccboot it is instant */
+body.ccboot #ccload{animation:ccload-in .2s ease-out .15s both}
+#ccload i{animation:ccload-blink 1.06s steps(1) infinite}
+@keyframes ccload-in{from{opacity:0;transform:translateY(4px)}}
+@keyframes ccload-blink{60%{opacity:0}}
 }
-#ccsheet .hd{color:#8b949e;font:600 11px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:8px 18px 6px}
-#ccsheet .row{display:flex;align-items:center;gap:12px;min-height:52px;padding:0 18px;color:#e6edf3;font:15px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-#ccsheet .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#ccsheet .row .nm small{display:block;color:#8b949e;font-size:12px;font-family:ui-monospace,monospace}
-#ccsheet .row.on{color:#3fb950}
-#ccsheet .row.on::after{content:'\2713';font-weight:700}
-#ccsheet .row:active{background:#21262d}
-#ccsheet .sep{border-top:1px solid #30363d;margin:6px 0}
-#ccsheet .row.act{color:#c9d1d9}
+#ccsheet .grab{width:36px;height:4px;border-radius:2px;background:var(--c-line2);margin:0 auto 14px}
+#ccsheet .hd{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;min-width:0}
+#ccsheet .hd b{font:600 16px var(--c-sans);white-space:nowrap}
+#ccsheet .hd span{font:400 11.5px var(--c-mono);color:var(--c-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .tiles{display:flex;gap:8px;margin-bottom:10px}
+#ccsheet .tile{flex:1;min-width:0;height:74px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+font:500 12.5px var(--c-sans);color:var(--c-fg2);padding:0}
+#ccsheet .tile svg{width:20px;height:20px;color:var(--c-fg)}
+#ccsheet .tile:active{background:#323236}
+#ccsheet .ln{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:0 2px;border:0;border-bottom:1px solid var(--c-line);
+background:none;width:100%;box-sizing:border-box;text-align:left;font:15px var(--c-sans);color:var(--c-fg)}
+#ccsheet .ln:last-child{border-bottom:0}
+#ccsheet .ln small{font:400 12px var(--c-mono);color:var(--c-dim)}
+#ccsheet .ln.danger{color:var(--c-bad)}
+#ccsheet .step{display:flex;align-items:center;gap:4px}
+#ccsheet .step button{width:40px;height:36px;border-radius:9px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:500 16px var(--c-mono);padding:0}
+#ccsheet .step span{min-width:34px;text-align:center;font:500 14px var(--c-mono);font-variant-numeric:tabular-nums}
+select#ccthemesel{height:36px;max-width:60%;background:var(--c-raised);color:var(--c-fg);border:1px solid var(--c-line2);border-radius:9px;font:14px var(--c-sans);padding:0 10px}

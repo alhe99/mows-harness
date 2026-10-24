@@ -103,40 +103,31 @@ try {
     await ctx.close();
   }
 
-  // ───────────── B. terminal page: bar, pill, sheet, in-place switch, navigation — per phone ─────────────
+  // ───────────── B. terminal page: dock, menu, navigation — per phone (no session switching on a phone since 2026-10-23) ─────────────
   for (const name of Object.keys(PHONES)) {
     const { ctx, page, p, errs } = await phone(name);
     const sw = []; page.on('response', r => { if (r.url().includes('/a/switch')) sw.push(r.status()); });
     // harness health is asserted separately from product behaviour: a client that died mid-run
     // must read as a broken harness, never as a product 409
     ok(await ensureClient(A), `[${name}] harness: client alive on ${A} (${tty})`);
-    await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    const g = await page.evaluate(() => { const kb = document.getElementById('cckb').getBoundingClientRect(), tc = document.getElementById('terminal-container').getBoundingClientRect(), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), pad = parseFloat(getComputedStyle(document.querySelector('.xterm')).paddingRight) || 0, cell = window.term._core._renderService.dimensions.css.cell.width;
-      const keys = [...document.querySelectorAll('#cckb > button')].slice(0, 2).map(b => b.textContent.trim());
-      return { kbH: kb.height, kbBottom: Math.round(kb.bottom), ih: innerHeight, iw: innerWidth, tcBottom: Math.round(tc.bottom), kbTop: Math.round(kb.top), scRight: sc.right, pad, cell, cols: window.term.cols, keys, pill: getComputedStyle(document.getElementById('ccsess-pill')).display }; });
-    ok(g.keys[0] === '‹' && g.pill !== 'none', `[${name}] ‹ first, pill visible (${g.keys.join(' ')})`);
-    ok(g.kbH < 50 && g.kbBottom === g.ih, `[${name}] one key bar, ${Math.round(g.kbH)}px, flush with the bottom`);
-    ok(g.tcBottom <= g.kbTop + 1, `[${name}] terminal ends above the key bar (${g.tcBottom} ≤ ${g.kbTop})`);
-    ok(g.iw - g.scRight <= g.pad + g.cell && g.scRight <= g.iw, `[${name}] glyph area reaches the edge: ${Math.round(g.scRight)}/${g.iw}px, ${g.cols} cols`);
-    // sheet
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    const sh = await page.evaluate(() => { const pan = document.querySelector('#ccsheet .pan').getBoundingClientRect(); return { bottom: Math.round(pan.bottom), ih: innerHeight, h: pan.height, rows: [...document.querySelectorAll('#ccsheet .row')].map(r => (r.classList.contains('on') ? '*' : '') + r.querySelector('.nm').firstChild.textContent.trim()), rowH: Math.min(...[...document.querySelectorAll('#ccsheet .row')].map(r => r.getBoundingClientRect().height)) }; });
-    ok(sh.bottom === sh.ih && sh.h <= sh.ih * 0.7 + 1, `[${name}] sheet anchored at the bottom, ≤70% tall (${Math.round(sh.h)}px)`);
-    ok(sh.rows.includes('*' + A) && sh.rows.includes(B) && sh.rowH >= 52, `[${name}] rows: ${sh.rows.join(', ')} (min ${sh.rowH}px)`);
-    // switch
-    await page.click(`#ccsheet .row:has-text("${B}")`);
-    await page.waitForFunction(b => document.getElementById('ccsess-pill').textContent.startsWith(b), B, { timeout: 8000 }).catch(() => {});
-    ok(sw[0] === 200 && page.url() === url && clients().includes(`${tty} ${B}`),
-      `[${name}] switch → POST ${sw[0]}, url ${page.url() === url ? 'unchanged' : 'CHANGED to ' + page.url()}, clients [${clients().replace(/\n/g, ' | ')}] want ${tty} ${B}`);
-    ok((await page.$('#ccdrawer')) === null, `[${name}] no iframe drawer exists`);
-    // "all sessions" row: a plain navigation to the real console
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.click('#ccsheet .row:has-text("all sessions")')])
-      .then(() => ok(true, `[${name}] "all sessions" navigates to the console`), e => ok(false, `[${name}] "all sessions": ${e.message.split('\n')[0]}`));
+    await page.goto(url); await page.waitForSelector('#cckb'); await page.waitForTimeout(600);
+    const g = await page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(), dock = r('ccdock'), wrap = r('terminal-wrap'), sc = document.querySelector('.xterm-screen').getBoundingClientRect(), pad = parseFloat(getComputedStyle(document.querySelector('.xterm')).paddingRight) || 0, cell = window.term._core._renderService.dimensions.css.cell.width;
+      return { dockBottom: Math.round(dock.bottom), dockTop: Math.round(dock.top), ih: innerHeight, iw: innerWidth, wrapTop: Math.round(wrap.top), wrapBottom: Math.round(wrap.bottom), scRight: sc.right, pad, cell, cols: window.term.cols, strip: !!document.getElementById('ccstrip'), first: document.querySelector('#cckb > button:not(.mr)')?.dataset.k, kb: getComputedStyle(document.getElementById('cckb')).display }; });
+    ok(!g.strip && g.first === 'Menu' && g.kb === 'grid', `[${name}] no strip, ⋯ is the key bar's first key`);
+    ok(g.dockBottom === g.ih, `[${name}] the dock is flush with the bottom`);
+    ok(g.wrapTop === 0 && g.wrapBottom === g.dockTop, `[${name}] terminal from the top to the dock (${g.wrapTop}..${g.wrapBottom})`);
+    ok(g.iw - g.scRight <= g.pad + g.cell && g.scRight <= g.iw, `[${name}] glyph area reaches the gutter: ${Math.round(g.scRight)}/${g.iw}px, ${g.cols} cols`);
+    void sw; void tty;
+    // the menu sheet: anchored at the bottom; "All sessions" is a plain navigation to the real console
+    await page.click('#cckb > button[data-k="Menu"]'); await page.waitForSelector('#ccsheet.open .pan');
+    const sh = await page.evaluate(() => { const pan = document.querySelector('#ccsheet .pan').getBoundingClientRect(); return { bottom: Math.round(pan.bottom), ih: innerHeight, h: pan.height }; });
+    ok(sh.bottom === sh.ih && sh.h <= sh.ih * 0.8 + 1, `[${name}] menu anchored at the bottom, ≤80% tall (${Math.round(sh.h)}px)`);
+    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.click('#ccsheet .ln:has-text("All sessions")')])
+      .then(() => ok(true, `[${name}] "All sessions" navigates to the console`), e => ok(false, `[${name}] "All sessions": ${e.message.split('\n')[0]}`));
     // and the console is the same page as the home screen, tab bar and all
     await page.waitForSelector('.tabs', { state: 'attached' });
     const dg = await page.evaluate(() => ({ h1: !!document.querySelector('h1'), embed: document.body.classList.contains('embed'), tabs: getComputedStyle(document.querySelector('.tabs')).display }));
-    ok(dg.h1 && !dg.embed && (p.w >= 700 ? dg.tabs === 'none' : dg.tabs === 'flex'), `[${name}] console after ‹ is the plain dashboard`);
+    ok(dg.h1 && !dg.embed && (p.w >= 700 ? dg.tabs === 'none' : dg.tabs === 'flex'), `[${name}] console after All sessions is the plain dashboard`);
     // BUG 2 (2026-08-26): attach on the session this tab is ALREADY on must still get you back in.
     // As a navigation it always does; as an in-page switch it no-opped (to === cur) and looked dead.
     // the shell lists only live claude sessions, so it has no attach link for a bare tmux session
@@ -145,75 +136,38 @@ try {
     if (back) { await Promise.all([page.waitForURL(new RegExp(`/term/\\?arg=attach&arg=${B}&arg=[0-9a-f]{8}&v=3$`), { timeout: 8000 }), page.click(`a.ab[href*="arg=attach&arg=${B}"]`)])
       .then(() => ok(true, `[${name}] attach on the already-attached session lands in the terminal`), e => ok(false, `[${name}] attach on current session: ${e.message.split('\n')[0]}`)); }
     if (!back) await page.goto(`${DASH}/term/?arg=attach&arg=${B}&arg=${TAB}&v=3`); // shell: no attach link to click, enter the terminal directly
-    await page.waitForSelector('#ccsess-pill');
-    ok((await page.$eval('#ccsess-pill', b => b.textContent)).startsWith(B), `[${name}] and the pill names it`);
-    // ‹ from the terminal: a plain navigation, no overlay
-    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 8000 }), page.dispatchEvent('#cckb > button:first-child', 'pointerdown')])
-      .then(() => ok(true, `[${name}] ‹ navigates to the console`), e => ok(false, `[${name}] ‹: ${e.message.split('\n')[0]}`));
+    await page.waitForSelector('#cckb');
+    ok(new URL(page.url()).searchParams.getAll('arg')[1] === B, `[${name}] and the terminal is on it`);
     ok(errs.length === 0, `[${name}] no page errors ${JSON.stringify(errs).slice(0, 200)}`);
     await ctx.close();
   }
 
   // ───────────── C. edge scenarios ─────────────
-  { // menu page: no tabid → pill says "sessions", choosing one reloads with attach + a fresh tabid
-    const { ctx, page } = await phone('iPhone 15');
-    await page.goto(`${DASH}/term/?v=3`); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    ok((await page.$eval('#ccsess-pill', b => b.textContent)) === 'sessions', 'menu page: pill reads "sessions"');
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    await Promise.all([page.waitForURL(new RegExp(`/term/\\?arg=attach&arg=${B}&arg=[0-9a-f]{8}&v=3$`), { timeout: 8000 }), page.click(`#ccsheet .row:has-text("${B}")`)]).then(() => ok(true, 'menu page: choosing a session reloads into attach with a minted tabid'), e => ok(false, 'menu page: expected reload into attach: ' + e.message.split('\n')[0]));
-    await ctx.close();
-  }
-  { // tab file missing (ttyd never registered this tab) → 409 → one reload into attach, same tabid
-    const { ctx, page } = await phone('iPhone 15');
-    const dead = `${DASH}/term/?arg=attach&arg=${A}&arg=ffffffff&v=3`;
-    await page.goto(dead); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    await Promise.all([page.waitForURL(new RegExp(`/term/\\?arg=attach&arg=${B}&arg=ffffffff&v=3$`), { timeout: 8000 }), page.click(`#ccsheet .row:has-text("${B}")`)]).then(() => ok(true, 'unregistered tab: 409 falls back to one reload, same tabid'), e => ok(false, 'unregistered tab fallback: ' + e.message.split('\n')[0]));
-    await ctx.close();
-  }
-  { // no live sessions at all → sheet says so, still offers new / all
-    const { ctx, page } = await phone('iPhone 15');
-    await ctx.route('**/app/live.json*', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-    await page.goto(`${DASH}/term/?v=3`); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    const rows = await page.$$eval('#ccsheet .row', r => r.map(x => x.textContent.trim()));
-    ok(rows[0] === 'none running' && rows.some(r => /new session/.test(r)) && rows.some(r => /all sessions/.test(r)), 'no live sessions: ' + rows.join(' | '));
-    await ctx.close();
-  }
-  { // the current session vanished underneath → pill keeps a name, sheet has no ✓, no errors
-    const { ctx, page, errs } = await phone('iPhone 15');
-    await ctx.route('**/app/live.json*', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ name: B, label: '', current: false }]) }));
-    await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
-    ok((await page.$$('#ccsheet .row.on')).length === 0 && (await page.$eval('#ccsess-pill', b => b.textContent)) === A && errs.length === 0, 'current session gone: no ✓, pill still named, no errors');
-    await ctx.close();
-  }
   { // short viewport (what the layout sees while the keyboard is up): everything still reachable
     const ctx = await br.newContext({ viewport: { width: 440, height: 520 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, reducedMotion: 'reduce' }); await ctx.route('**/term/**', route);
-    const page = await ctx.newPage(); await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
-    const g = await page.evaluate(() => ({ kbBottom: Math.round(document.getElementById('cckb').getBoundingClientRect().bottom), ih: innerHeight, tcH: document.getElementById('terminal-container').getBoundingClientRect().height, rows: window.term.rows }));
-    ok(g.kbBottom === g.ih && g.tcH > 300 && g.rows >= 10, `short viewport 520px: key bar at the bottom, terminal ${Math.round(g.tcH)}px / ${g.rows} rows`);
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
+    const page = await ctx.newPage(); await page.goto(url); await page.waitForSelector('#cckb'); await page.waitForTimeout(600);
+    const g = await page.evaluate(() => ({ dockBottom: Math.round(document.getElementById('ccdock').getBoundingClientRect().bottom), ih: innerHeight, tcH: document.getElementById('terminal-wrap').getBoundingClientRect().height, rows: window.term.rows }));
+    ok(g.dockBottom === g.ih && g.tcH > 200 && g.rows >= 10, `short viewport 520px: dock at the bottom, terminal ${Math.round(g.tcH)}px / ${g.rows} rows`);
+    await page.click('#cckb > button[data-k="Menu"]'); await page.waitForSelector('#ccsheet.open .pan');
     const sh = await page.evaluate(() => { const r = document.querySelector('#ccsheet .pan').getBoundingClientRect(); return { h: r.height, ih: innerHeight, scroll: getComputedStyle(document.querySelector('#ccsheet .pan')).overflowY }; });
-    ok(sh.h <= sh.ih * 0.7 + 1 && sh.scroll === 'auto', `short viewport: sheet capped at 70% (${Math.round(sh.h)}px) and scrolls`);
+    ok(sh.h <= sh.ih * 0.8 + 1 && sh.scroll === 'auto', `short viewport: menu capped at 80% (${Math.round(sh.h)}px) and scrolls`);
     await ctx.close();
   }
-  { // desktop / fine pointer: no pill, no sheet; ‹ leaves for the dashboard
+  { // desktop / fine pointer: no strip, no dock, no sheet (a desktop browser uses one window per session)
     const ctx = await br.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' }); await ctx.route('**/term/**', route);
     const page = await ctx.newPage(); await page.goto(url); await page.waitForTimeout(800);
-    ok((await page.$('#ccsess-pill')) === null && (await page.$('#ccsheet')) === null, 'desktop: no pill, no sheet');
-    await Promise.all([page.waitForURL(u => new URL(u).pathname === '/', { timeout: 5000 }), page.dispatchEvent('#cckb > button:first-child', 'pointerdown')]).then(() => ok(true, 'desktop: ‹ navigates to the dashboard'), e => ok(false, 'desktop ‹: ' + e.message.split('\n')[0]));
+    ok((await page.$('#ccstrip')) === null && (await page.$('#ccsheet')) === null && (await page.$eval('#ccdock', e => getComputedStyle(e).display)) === 'none', 'desktop: no strip, no sheet, the dock hidden');
     await ctx.close();
   }
   { // motion enabled (every other context runs reducedMotion:'reduce' so geometry asserts the
     // SETTLED state): the sheet must slide in and end flush, and slide out back to display:none.
-    // Guards the allow-discrete/@starting-style block in 75-ccsess.html — if a parse error ever
+    // Guards the allow-discrete/@starting-style block in term.css — if a parse error ever
     // drops it, the transitionProperty check fails; if the geometry breaks mid-flight, settle fails.
     const { ctx, page, errs } = await phone('iPhone 15', { reducedMotion: 'no-preference' });
-    await page.goto(url); await page.waitForSelector('#ccsess-pill'); await page.waitForTimeout(600);
+    await page.goto(url); await page.waitForSelector('#cckb'); await page.waitForTimeout(600);
     const t = await page.$eval('#ccsheet .pan', el => getComputedStyle(el).transitionProperty).catch(() => '');
     ok(/transform/.test(t), `motion on: pan slide transition wired (${t})`);
-    await page.click('#ccsess-pill'); await page.waitForSelector('#ccsheet.open .row');
+    await page.click('#cckb > button[data-k="Menu"]'); await page.waitForSelector('#ccsheet.open .pan');
     const settled = await page.waitForFunction(() => Math.abs(document.querySelector('#ccsheet .pan').getBoundingClientRect().bottom - innerHeight) < 1, null, { timeout: 1500 }).then(() => true, () => false);
     ok(settled, 'motion on: sheet slides in and settles flush with the bottom edge');
     await page.mouse.click(10, 10); // backdrop, far from the pan
@@ -232,7 +186,7 @@ try {
     await page.goto(DASH + '/'); await page.waitForSelector('.tabs', { state: 'attached' });
     const g = await page.evaluate(() => ({ tabs: getComputedStyle(document.querySelector('.tabs')).display, term: !!document.querySelector('.tabs a[href="/app"]') }));
     ok(g.tabs === 'flex' && (SHELL || g.term), 'phone dashboard: tab bar with the terminal tab → /app');
-    await page.goto(url); await page.waitForSelector('#ccsess-pill');
+    await page.goto(url); await page.waitForSelector('#cckb');
     // the DOM, not the source: the words "iframe"/"drawer" still appear in the blocks' history comments
     const machinery = await page.evaluate(() => ({ frames: document.querySelectorAll('iframe').length, drawer: !!document.getElementById('ccdrawer'), inner: window.parent !== window }));
     ok(machinery.frames === 0 && !machinery.drawer && !machinery.inner, `terminal page: no iframe, no drawer (${JSON.stringify(machinery)})`);
