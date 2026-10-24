@@ -20,6 +20,8 @@ import { mods } from './bar.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
 const LINGER = 1500, SETTLE = 400;
+// Claude at work: its spinner line over the box (`· Recombobulating… (4m 18s · ↓ 15.1k tokens)`); a stopped turn: `⎿  Interrupted · …`
+const WORK = /^\s*[^\s\w]\s+\p{Lu}[\p{L}-]*…/u, STOP = /⎿\s+Interrupted\b/;
 
 /** @param {{ url: string, name: string, path: string }[]} uploads images sent from this page, in order (attach.mjs)
  *  @param {() => void} pick opens the file picker (attach.mjs) */
@@ -62,6 +64,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   tc.parentElement?.append(el('div', { id: 'ccload', role: 'status' },
     el('b', {}, args[0] === 'attach' && args[1] ? args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') : 'terminal'), el('span', {}, stage, el('i', { 'aria-hidden': 'true' }))));
 
+  /** @type {{ t: string, p: number } | null} */ let sent = null;
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
@@ -107,6 +110,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // ↑ ↓ on the keys); nothing else is sent into it
     if (choice) { if (/^\d{1,2}$/.test(t)) term.input(t); else if (!t) term.input('\r'); return; }
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
+    sent = held ? null : { t, p: 0 }; // ponytail: a message sent with a draft (an image) is not given back; the draft stays Claude's
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
   };
@@ -126,6 +130,25 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     term.paste('/model');
     setTimeout(() => term.input('\r'), 60);
   });
+
+  // esc while Claude works on a message sent from here gives the message back in the field, to edit, as the terminal would (the phone,
+  // 2026-10-24). Claude puts it back in its own box when stopped before it answered (then it moves to the field), and nowhere once it had
+  // begun (it says Interrupted over the box). sent.p: 1 echoed in the box, 2 taken, 3 Claude at work; a turn that just ends forgets it.
+  function track(/** @type {string[]} */ rows, /** @type {number} */ t) {
+    if (!sent) return;
+    const same = held.replace(/\s/g, '') === sent.t.replace(/\s/g, ''), above = rows.slice(Math.max(0, t - 12), t);
+    if (sent.p === 0) { if (same) sent.p = 1; return; }
+    if (sent.p === 1) { if (!held) sent.p = 2; return; }
+    if (above.some(r => WORK.test(r))) { sent.p = 3; return; }
+    if (sent.p < 3 && !same) return; // taken, not started yet
+    // stopped: Interrupted is the last thing over the box (on a phone it wraps: what follows it is its own rest, no new ● or ❯ line)
+    const i = above.findLastIndex(r => STOP.test(r)), stopped = i >= 0 && above.slice(i + 1).every(r => !/^\s*[●❯⎿✻✢✳✶✽·*]/.test(r));
+    const back = sent.t;
+    sent = null;
+    if (ta.value.trim() || !(same || !held && stopped)) return;
+    if (same) term.input('\x03'); // out of Claude's box (one ctrl+c clears it), so it is in one place
+    ta.value = back; grow();
+  }
 
   // the cell height: a DOM row's (the renderer iOS uses), else the screen's height over the rows. Right after a resize the screen keeps its
   // old height until xterm renders, so that ratio is stale for a frame: the rAF pass after a resize corrects it
@@ -197,6 +220,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       top = t; shift = place(t);
       if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
         held = s.box.draft || '';
+        if (sent) track(rows, t);
         mode.hidden = !s.mode;
         // the chip says it short (its colour says which mode; the model chip needs the room), its label in full
         if (s.mode) { mode.textContent = s.mode.label.replace(/ (mode|permissions)$/, ''); mode.className = s.mode.cls; mode.setAttribute('aria-label', s.mode.label + ', tap to cycle'); }

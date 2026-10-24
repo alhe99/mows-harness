@@ -49,6 +49,7 @@ class FakeClaude {
       if (d.startsWith('\x1b[A') || d.startsWith('\x1bOA')) { this.draft = this.last; d = d.slice(3); continue; }
       if (d.startsWith('\x1b')) { // esc: cancels a dialog, clears the input
         if (this.scene === 'model') this.scene = 'idle';
+        else if (this.scene === 'working') this.interrupt();
         else if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
         d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
       }
@@ -68,7 +69,14 @@ class FakeClaude {
     const p = this.draft.trim(); this.last = p; this.draft = '';
     this.log.push(`\x1b[48;5;237m\x1b[38;5;246m❯ \x1b[38;5;231m${p}\x1b[0m`, '');
     this.scene = 'working'; this.redraw();
-    setTimeout(() => { this.log.push('\x1b[32m●\x1b[0m Done: ' + p.slice(0, 60), ''); this.scene = 'idle'; this.redraw(); }, 400);
+    this.job = setTimeout(() => { this.log.push('\x1b[32m●\x1b[0m Done: ' + p.slice(0, 60), ''); this.scene = 'idle'; this.redraw(); }, this.work || 400);
+  }
+  // esc while it works, as Claude Code does: before it answered, the prompt goes back into the box and out of the conversation; once it
+  // has begun, the box stays empty and the turn ends "Interrupted"
+  interrupt() {
+    clearTimeout(this.job); this.scene = 'idle';
+    if (this.early) { this.log.splice(-2, 2); this.draft = this.last; return; }
+    this.log.push('\x1b[32m●\x1b[0m That looks like a p', '  \x1b[2m⎿  Interrupted · What should Claude do instead?\x1b[0m', '');
   }
   frame() {
     const R = '\x1b[38;5;244m' + '─'.repeat(this.cols) + '\x1b[0m';
@@ -414,6 +422,24 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
   await P.page.fill('#ccmsg', ''); await sleep(700);
+  // E esc while Claude works gives the message back in the field, to edit: once it has begun answering (Claude keeps nothing) and before it
+  // has (Claude puts it back in its own box: it moves to the field, one ctrl+c out of Claude's box)
+  F.work = 3000;
+  for (const early of [false, true]) {
+    F.early = early;
+    await tapTerm(); await P.page.keyboard.type('a message sent by mistake', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
+    const busy = F.scene, c0 = (F.inputs || []).length;
+    await key(P, 'Esc'); await sleep(700);
+    s = await st(P);
+    check(`${tag} E esc ${early ? 'before Claude answered' : 'while Claude answers'}: the message is back in the field, Claude's input empty, no chip, no box`,
+      busy === 'working' && (await P.page.inputValue('#ccmsg')) === 'a message sent by mistake' && F.draft === '' && !s.draft && s.two === two0 && !F.exitWarn,
+      [busy, await P.page.inputValue('#ccmsg'), F.draft, s, (F.inputs || []).slice(c0)]);
+    await P.page.fill('#ccmsg', ''); await sleep(300);
+  }
+  // a turn that ends by itself gives nothing back
+  await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(3600);
+  check(`${tag} E a turn that ends by itself: the field stays empty`, (await P.page.inputValue('#ccmsg')) === '' && F.last === 'a finished one', [await P.page.inputValue('#ccmsg'), F.last]);
+  F.work = 0; F.early = false;
   // M the model, from Claude's status line, on a chip next to the mode; a tap opens Claude's own /model picker, a number switches
   const chips = () => P.page.evaluate(() => { const m = document.getElementById('ccmodel'), r = m.getBoundingClientRect(), sd = document.getElementById('ccsend').getBoundingClientRect(), md = document.getElementById('ccmode').getBoundingClientRect();
     const sp = m.querySelector('span'); return { shown: getComputedStyle(m).display !== 'none', whole: (() => { const rg = document.createRange(); rg.selectNodeContents(sp); return rg.getBoundingClientRect().width <= sp.getBoundingClientRect().width + 0.5; })(), name: sp.textContent, effort: m.querySelector('small').textContent, right: Math.round(r.right), sendLeft: Math.round(sd.left), modeRight: Math.round(md.right), left: Math.round(r.left), top: Math.round(r.top), modeTop: Math.round(md.top), sw: document.scrollingElement.scrollWidth, iw: innerWidth }; });
