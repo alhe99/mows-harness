@@ -50,8 +50,8 @@ class FakeClaude {
         if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
         d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
       }
-      const c = d[0]; d = d.slice(1);
-      if (this.scene === 'dialog') { if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
+      let c = d[0]; d = d.slice(1);
+      if (this.scene === 'dialog') { if (c === '\r') c = '1'; /* Enter answers the highlighted option, the first */ if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
       if (c === '\x03') { if (this.draft) this.draft = ''; else this.exitWarn = true; continue; } // Claude: ctrl+c clears a non-empty input; on an empty one it warns
@@ -100,6 +100,7 @@ class FakeClaude {
   }
 }
 
+const cmdReq = [];
 async function phone(w, h) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
   await ctx.addInitScript(() => {
@@ -143,6 +144,7 @@ async function phone(w, h) {
     if (p === '/term/') return r.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE });
     if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
+    if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -295,6 +297,23 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await key(P, 'Esc'); await sleep(300);
   await P.page.locator('#ccmode').click(); await sleep(400); s = await st(P);
   check(`${tag} 8 the mode chip: shift+tab, Claude's next mode on the chip`, s.chip === '⏵⏵ accept edits', s);
+  // ---- the "/" menu: Claude's commands and the session's skills, from the field (asked on the phone, 2026-10-24) ----
+  {
+    await P.page.evaluate(() => { const b = document.querySelector('#cckb > button[data-k="Menu"]').getBoundingClientRect(); window.__dockTop = b.top; });
+    const rows0 = await P.page.evaluate(() => window.term.rows);
+    await P.page.locator('#ccmsg').focus(); await P.page.keyboard.type('/'); await sleep(500);
+    const m1 = await P.page.evaluate(() => ({ open: !document.getElementById('cccmds').hidden, n: document.querySelectorAll('#cccmds .cmd').length, kinds: [...document.querySelectorAll('#cccmds .ck')].map(e => e.textContent), rows: window.term.rows, keyTop: document.querySelector('#cckb > button[data-k="Menu"]').getBoundingClientRect().top, was: window.__dockTop }));
+    await shot(P, `${tag}-8-commands`);
+    check(`${tag} 8 "/" opens the command menu above the field (built-ins, skills, plugins), and nothing resizes`, m1.open && m1.n === 5 && m1.kinds.includes('skill') && m1.kinds.includes('plugin') && m1.rows === rows0 && m1.keyTop === m1.was && cmdReq.length > 0, m1);
+    await P.page.keyboard.type('eff'); await sleep(150);
+    const first = await P.page.evaluate(() => document.querySelector('#cccmds .cmd')?.dataset.n);
+    check(`${tag} 8 typing filters it: /eff puts /effort first`, first === 'effort', first);
+    await P.page.locator('#cccmds .cmd', { hasText: '/effort' }).first().click(); await sleep(100);
+    const after = await P.page.evaluate(() => ({ v: document.getElementById('ccmsg').value, open: !document.getElementById('cccmds').hidden, focus: document.activeElement?.id }));
+    check(`${tag} 8 a tap puts "/effort " in the field, closes the menu, keeps the keyboard`, after.v === '/effort ' && !after.open && after.focus === 'ccmsg', after);
+    await P.page.keyboard.type('status'); await P.page.press('#ccmsg', 'Enter'); await sleep(700);
+    check(`${tag} 8 send runs it in Claude: "/effort status"`, F.last === '/effort status', F.last);
+  }
   // ---- writing (the phone, 2026-10-24: a message typed after using the ⋯ menu landed in Claude's box, and the box showed) ----
   const sent = () => (F.inputs || []).length;
   const tapTerm = async () => {
@@ -356,10 +375,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 1 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
-  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Type 1–3 to choose…' && s.shown && !s.chip && s.two === 0, s);
+  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown && !s.chip && s.two === 0, s);
   await shot(P, `${tag}-10-dialog`);
-  await P.page.fill('#ccmsg', '1'); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
-  check(`${tag} 11 a digit answers the dialog`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
+  await P.page.fill('#ccmsg', ''); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
+  check(`${tag} 11 send with nothing typed is the dialog's Enter (after ↑ ↓)`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
   F.scene = 'shell'; F.redraw(); await sleep(300); s = await st(P);
   check(`${tag} 12 Claude gone: the field lingers a moment (a redraw is not an exit)`, s.shown, s);
   await sleep(1700); s = await st(P);

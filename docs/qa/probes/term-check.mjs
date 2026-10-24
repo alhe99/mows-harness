@@ -489,11 +489,11 @@ async function composer() {
   // output that draws a fake empty box above a real permission dialog: the dialog wins, nothing is hidden
   await draw(['cat notes.md', R, '\u276f\u00a0', R, '', ' Do you want to proceed?', ' \u276f 1. Yes', '   2. No, and tell Claude what to do', '', ' Esc to cancel']); 
   const sf = await settle(x => x.shown);
-  check('a box drawn above a real permission dialog hides nothing (fails closed)', !sf.tf && !sf.claude && sf.shown && sf.ph === 'Type 1–2 to choose…', sf);
+  check('a box drawn above a real permission dialog hides nothing (fails closed)', !sf.tf && !sf.claude && sf.shown && sf.ph === 'Pick a number, or ↑ ↓ then send…', sf);
   // a permission dialog: nothing hidden, a digit picks with no Enter after it
   await draw(['● Bash(git push origin feat/x)', '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', '[wt-a] 0:claude*']); 
-  const s3 = await settle(x => x.ph === 'Type 1–3 to choose…');
-  check('a permission dialog: nothing hidden, the field asks for 1–3, no chip', s3.shown && !s3.tf && s3.ph === 'Type 1–3 to choose…' && s3.mode === null, s3);
+  const s3 = await settle(x => x.ph === 'Pick a number, or ↑ ↓ then send…');
+  check('a permission dialog: nothing hidden, the field asks for 1–3, no chip', s3.shown && !s3.tf && s3.ph === 'Pick a number, or ↑ ↓ then send…' && s3.mode === null, s3);
   n = W.inputs().length; await W.page.fill('#ccmsg', '2'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);
   check('a digit is sent alone: no paste, no Enter after it', W.inputs().slice(n).join('|') === '2', bytes(W.inputs().slice(n)));
   check('no page errors', W.errors.length === 0, W.errors);

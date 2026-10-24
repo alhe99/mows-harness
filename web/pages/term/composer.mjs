@@ -38,7 +38,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // screen where the ⋯ sheet's tile was (the phone, 2026-10-24). A plain click: the picker needs a full user activation
   const add = el('button', { type: 'button', id: 'ccadd', 'aria-label': 'attach a photo or file' }, icon('<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'));
   add.addEventListener('click', () => pick());
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
+  // the "/" menu: Claude's commands, the session's skills and custom commands (/app/commands.json), filtered as the field is typed; it opens
+  // above the field, over the terminal (no layout change: nothing resizes); a tap puts the command in the field
+  const cmds = el('div', { id: 'cccmds', role: 'listbox', 'aria-label': 'commands', hidden: true });
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, cmds, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
 
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
@@ -52,17 +55,45 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   };
   // a field resized while it could not be measured is measured again once it can
   new ResizeObserver(() => { if (ta.offsetParent && ta.style.height === '') grow(); }).observe(form);
+  /** @type {any[] | null} */ let cmdList = null, cmdLoad = null;
+  const args = new URLSearchParams(location.search).getAll('arg');
+  const loadCmds = () => (cmdLoad ||= fetch('/app/commands.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : ''))
+    .then(r => (r.ok ? r.json() : { cmds: [] })).then(j => { cmdList = j.cmds || []; setTimeout(() => { cmdLoad = null; }, 300000); showCmds(); }, () => { cmdLoad = null; }));
+  const KIND = { 'built-in': '', skill: 'skill', project: 'project', plugin: 'plugin', workflow: 'workflow' };
+  function showCmds() {
+    const m = /^\/(\S*)$/.exec(ta.value);
+    if (!m || form.hidden || choice) { cmds.hidden = true; return; }
+    if (!cmdList) { loadCmds(); cmds.hidden = true; return; }
+    const q = m[1].toLowerCase();
+    const rank = c => (c[0].toLowerCase().startsWith(q) ? 0 : c[0].toLowerCase().includes(q) ? 1 : (c[2] || '').toLowerCase().includes(q) ? 2 : 9);
+    const hits = cmdList.map(c => [rank(c), c]).filter(([r]) => r < 9).sort((x, y) => x[0] - y[0] || x[1][0].localeCompare(y[1][0])).slice(0, 60).map(([, c]) => c);
+    cmds.textContent = '';
+    for (const [n, a, d, k] of hits) {
+      const b = el('button', { type: 'button', className: 'cmd', role: 'option' },
+        el('span', { className: 'cn' }, '/' + n, a ? el('span', { className: 'ca' }, ' ' + a) : null, KIND[k] ? el('span', { className: 'ck' }, KIND[k]) : null),
+        d ? el('span', { className: 'cd' }, d) : null);
+      b.dataset.n = n;
+      b.addEventListener('pointerdown', e => e.preventDefault()); // keep the keyboard on the field
+      b.addEventListener('click', () => { ta.value = '/' + n + ' '; grow(); showCmds(); ta.focus(); });
+      cmds.append(b);
+    }
+    if (!hits.length) cmds.append(el('div', { className: 'none' }, 'No command matches /' + m[1]));
+    cmds.hidden = false;
+  }
   const submit = () => {
     scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
     const t = ta.value.replace(/\s+$/, '');
     ta.value = ''; grow();
-    if (choice) { if (/^\d$/.test(t)) term.input(t); return; } // a permission dialog: a digit picks, and nothing else is sent into it
+    cmds.hidden = true;
+    // a dialog or a picker (Claude's /model, /config, a permission question): a number picks; send with nothing typed is its Enter (after
+    // ↑ ↓ on the keys); nothing else is sent into it
+    if (choice) { if (/^\d{1,2}$/.test(t)) term.input(t); else if (!t) term.input('\r'); return; }
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
   };
   form.addEventListener('submit', e => { e.preventDefault(); submit(); });
-  ta.addEventListener('input', grow);
+  ta.addEventListener('input', () => { grow(); showCmds(); });
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } });
   // a latched ctrl/alt turns the next typed character into a key for the terminal, not text for the field
   ta.addEventListener('beforeinput', (/** @type {any} */ e) => {
@@ -147,7 +178,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
     if (draftText.textContent !== held) { draft.hidden = !held; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
-    const ph = choice ? `Type 1–${choice} to choose…` : held ? 'Add a message, or send as it is…' : 'Message Claude…';
+    const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
     const show = top >= 0 || choice > 0 || recent;
     if (form.hidden === show) {
