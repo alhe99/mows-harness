@@ -52,6 +52,11 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   let booting = true, got = false, cap = 0;
   document.body.classList.add('ccboot');
   const ready = () => { if (booting) { booting = false; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
+  // meanwhile, where the newest line will appear: the session and what is happening, under a blinking cursor (the phone, 2026-10-24: a black
+  // screen read as stuck). Shown only past 150 ms (term.css), so a quick entry never flashes it
+  const stage = el('span', { className: 'st' }, 'connecting');
+  tc.parentElement?.append(el('div', { id: 'ccload', role: 'status' },
+    el('b', {}, args[0] === 'attach' && args[1] ? args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') : 'terminal'), el('span', {}, stage, el('i', { 'aria-hidden': 'true' }))));
 
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
@@ -215,7 +220,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const later = () => { pend ||= setTimeout(scan, 30); };
   // the first output starts the entry's clock (a slow network must not use it up): Claude is taken as just seen, and the terminal shows within
   // 2.5 s whatever the screen holds. The refits before it never reached the pty (the socket sends its size when it opens): nothing to settle
-  term.onWriteParsed(() => { if (!got) { got = true; resized = 0; if (last) seen = Date.now(); cap = setTimeout(ready, 2500); } scan(); });
+  term.onWriteParsed(() => { if (!got) { got = true; resized = 0; stage.textContent = 'opening'; if (last) seen = Date.now(); cap = setTimeout(ready, 2500); } scan(); });
   term.onScroll(later);
   // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there. From the touch itself (a user gesture,
   // which iOS needs to raise the keyboard), cancelled so xterm never takes the focus; a drag is a scroll, not a tap. The focus redirect stays

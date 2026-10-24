@@ -118,6 +118,9 @@ async function phone(w, h) {
         // the time from the first output (any row written) to the terminal in sight
         if (!window.__qa.out) for (let i = 0; i < t.rows; i++) if (t.buffer.active.getLine(i)?.translateToString(true)) { window.__qa.out = performance.now(); break; }
         if (window.__qa.out && !document.body.classList.contains('ccboot')) window.__qa.shownAt ??= Math.round(performance.now() - window.__qa.out);
+        // the loader: in sight while the terminal is not (the phone, 2026-10-24: a black screen read as stuck)
+        const ld = document.getElementById('ccload');
+        if (ld && document.body.classList.contains('ccboot') && +getComputedStyle(ld).opacity > 0.9 && ld.getBoundingClientRect().height) (window.__qa.loader ||= []).push(ld.textContent);
         let o = 1; for (let e = sc; e; e = e.parentElement) { const cs = getComputedStyle(e); o *= +cs.opacity; if (cs.visibility === 'hidden' || cs.display === 'none') o = 0; }
         const r = sc.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), b = t.buffer.active, cell = r.height / t.rows, line = i => b.getLine(b.viewportY + i)?.translateToString(true) || '';
         const vis = i => r.top + (i + 1) * cell <= wr.bottom + 1 && r.top + i * cell >= wr.top - 1;
@@ -172,6 +175,7 @@ async function phone(w, h) {
   const page = await ctx.newPage(); const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
   await page.goto('http://mows.test/term/?arg=attach&arg=ccw-dev&arg=ab12cd34&v=3');
+  if (OUT) await page.waitForFunction(() => window.__qa.loader?.length, null, { timeout: 3000 }).then(() => page.screenshot({ path: join(OUT, `${w}-0-loader.png`) })).catch(() => {});
   await page.waitForFunction(() => /** @type {any} */ (window).term && document.getElementById('cckb'));
   await sleep(700);
   return { ctx, page, errs, fake: () => fake };
@@ -220,8 +224,8 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // box and its rows go under the dock, two resizes, both while the terminal is out of sight. From here on the field must never flip.
   for (let i = 0; i < 20 && !(s.under >= 5); i++) { await sleep(100); s = await st(P); }
   await P.page.waitForFunction(() => !document.body.classList.contains('ccboot'), null, { timeout: 4000 }).catch(() => {});
-  const ent = await P.page.evaluate(() => { window.__qa.entryOn = false; const f = window.__qa.flips; window.__qa.flips = 0; return { e: window.__qa.entry, f, boot: document.body.classList.contains('ccboot'), shownAt: window.__qa.shownAt }; });
-  check(`${tag} 0 first open: the new UI from the first frame, never Claude's own box or tmux's line, at most two resizes (${(F.sizes || []).length}; in sight ${ent.shownAt} ms after the first output)`, !ent.e.length && !ent.boot && (F.sizes || []).length <= 2, [ent.e.length, ent.e.slice(0, 3), ent, F.sizes]);
+  const ent = await P.page.evaluate(() => { window.__qa.entryOn = false; const f = window.__qa.flips; window.__qa.flips = 0; return { e: window.__qa.entry, f, boot: document.body.classList.contains('ccboot'), shownAt: window.__qa.shownAt, loader: [...new Set(window.__qa.loader || [])], loaderGone: !document.getElementById('ccload')?.getBoundingClientRect().height }; });
+  check(`${tag} 0 first open: the new UI from the first frame, never Claude's own box or tmux's line, at most two resizes (${(F.sizes || []).length}; in sight ${ent.shownAt} ms after the first output), the loader meanwhile`, !ent.e.length && !ent.boot && (F.sizes || []).length <= 2 && ent.loader.some(t => /^ccw-dev(connecting|opening)$/.test(t)) && ent.loaderGone, [ent.e.length, ent.e.slice(0, 3), ent, F.sizes]);
   s = await st(P);
   check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 0, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
