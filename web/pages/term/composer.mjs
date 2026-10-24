@@ -41,7 +41,17 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // the "/" menu: Claude's commands, the session's skills and custom commands (/app/commands.json), filtered as the field is typed; it opens
   // above the field, over the terminal (no layout change: nothing resizes); a tap puts the command in the field
   const cmds = el('div', { id: 'cccmds', role: 'listbox', 'aria-label': 'commands', hidden: true });
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, cmds, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
+  // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line, cut mid-resize, before the field took over).
+  // The page starts as it will look: the field up, and Claude's rows already under the dock (as many as this session had last time, so the
+  // pty's first size is its final one: no resize, no second redraw); the terminal stays out of sight until Claude has redrawn with its box
+  // hidden (ready() in scan), a dialog is up, or the session turns out to be no Claude at all. A session not known as Claude (a first visit,
+  // a shell last time) opens without the field: it comes with Claude's box, while the terminal is still out of sight.
+  const args = new URLSearchParams(location.search).getAll('arg'), KEY = 'cchid:' + (args[0] === 'attach' ? args[1] || '' : '');
+  let last = 0; try { last = +(localStorage.getItem(KEY) || 0); } catch { /* storage off: a first visit every time */ }
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
+  let booting = true, got = false, cap = 0;
+  document.body.classList.add('ccboot');
+  const ready = () => { if (booting) { booting = false; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
 
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
@@ -56,7 +66,6 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // a field resized while it could not be measured is measured again once it can
   new ResizeObserver(() => { if (ta.offsetParent && ta.style.height === '') grow(); }).observe(form);
   /** @type {any[] | null} */ let cmdList = null, cmdLoad = null;
-  const args = new URLSearchParams(location.search).getAll('arg');
   const loadCmds = () => (cmdLoad ||= fetch('/app/commands.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : ''))
     .then(r => (r.ok ? r.json() : { cmds: [] })).then(j => { cmdList = j.cmds || []; setTimeout(() => { cmdLoad = null; }, 300000); showCmds(); }, () => { cmdLoad = null; }));
   const KIND = { 'built-in': '', skill: 'skill', project: 'project', plugin: 'plugin', workflow: 'workflow' };
@@ -127,6 +136,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (n === extra && px === extraPx) return;
     extra = n; extraPx = px;
     tc.style.setProperty('--cc-hid', px + 'px');
+    try { localStorage.setItem(KEY, String(n)); } catch { /* the next entry measures again */ }
     fit();
   };
   // the screen, read in the same write that changed it (before the frame is painted: the shift and the content move together), and after
@@ -136,6 +146,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   /** @type {any} */ let settle = 0;
   const scan = () => {
     clearTimeout(pend); pend = 0;
+    if (!got) return; // nothing on screen yet: the entry's state stands
     const b = term.buffer.active;
     if (b.viewportY !== b.baseY) return; // scrolled back in xterm's own history: nothing to read, nothing changes
     const rows = [], typed = [], cell = b.getNullCell();
@@ -181,6 +192,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
     const show = top >= 0 || choice > 0 || recent;
+    // the terminal comes into sight once what it shows is final: Claude's whole box, hidden, after any resize has settled; a dialog (nothing is
+    // hidden); or no Claude, and not a box tmux has cut mid-resize either (that one is Claude, about to redraw)
+    if (booting && (s.box && t >= 0 && now - resized > SETTLE && extra === Math.min(16, term.rows - t) || choice || !show && s.edge < 0)) ready();
     if (form.hidden === show) {
       form.hidden = !show;
       if (!show && document.activeElement === ta) term.focus(); // the keyboard carries on in the terminal, the one input left
@@ -196,8 +210,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       if (!show && document.activeElement === ta) term.focus();
     }
   };
+  // before the socket opens: the row over the top edge and the rows this session's Claude had, so the first size sent is the final one
+  { const ch = Math.ceil(cellH()); if (ch) { cellSet = ch; tc.style.setProperty('--cc-cell', ch + 'px'); } if (last) hide(last); }
   const later = () => { pend ||= setTimeout(scan, 30); };
-  term.onWriteParsed(scan); term.onScroll(later);
+  // the first output starts the entry's clock (a slow network must not use it up): Claude is taken as just seen, and the terminal shows within
+  // 2.5 s whatever the screen holds. The refits before it never reached the pty (the socket sends its size when it opens): nothing to settle
+  term.onWriteParsed(() => { if (!got) { got = true; resized = 0; if (last) seen = Date.now(); cap = setTimeout(ready, 2500); } scan(); });
+  term.onScroll(later);
   // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there. From the touch itself (a user gesture,
   // which iOS needs to raise the keyboard), cancelled so xterm never takes the focus; a drag is a scroll, not a tap. The focus redirect stays
   // for any other way xterm gets the focus.

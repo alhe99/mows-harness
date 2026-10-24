@@ -56,6 +56,8 @@ body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-directio
    under the dock (--cc-hid); both set by composer.mjs */
 #terminal-container{height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
 #terminal-container .terminal{flex:none;height:auto}
+/* the entry: the terminal out of sight until Claude's rows are under the dock (composer.mjs ready()) */
+body.ccboot #terminal-container{opacity:0}
 
 /* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
 #ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
@@ -152,6 +154,7 @@ font:15px var(--c-sans);color:var(--c-fg)}
 #cckb svg{transition:transform .2s}
 #cccomp{transition:border-color .15s,box-shadow .15s}
 #ccmods{transition:opacity .15s}
+body:not(.ccboot) #terminal-container{transition:opacity .14s ease-out} /* on the way in only: into .ccboot it is instant */
 }
 #ccsheet .grab{width:36px;height:4px;border-radius:2px;background:var(--c-line2);margin:0 auto 14px}
 #ccsheet .hd{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;min-width:0}

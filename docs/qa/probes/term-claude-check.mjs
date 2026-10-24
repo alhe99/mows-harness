@@ -35,7 +35,8 @@ class FakeClaude {
   constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
   feed(m) {
     const s = typeof m === 'string' ? m : Buffer.from(m).toString('utf8');
-    if (s[0] === '{') { const j = JSON.parse(s); this.rows = j.rows; this.cols = j.columns; this.redraw(); return; }
+    // the attach: tmux's window still has the size of the last client (a desktop, 60 rows); it cuts the pane to this one, Claude redraws after
+    if (s[0] === '{') { const j = JSON.parse(s); this.rows = 60; this.cols = j.columns; this.screen = [...this.frame()]; this.resize(j.rows, j.columns); this.sizes = []; return; }
     if (s[0] === '1') { const j = JSON.parse(s.slice(1)); this.resize(j.rows, j.columns); return; }
     if (s[0] !== '0') return;
     let d = s.slice(1);
@@ -93,7 +94,7 @@ class FakeClaude {
     const old = this.screen.slice(0, -1), d = old.length - (rows - 1);
     let cut = old;
     if (d > 0) { const cur = old.findLastIndex(l => /^(\x1b\[[0-9;]*m)*❯/.test(l)) /* the cursor: on Claude's input line, the last ❯ row */, below = cur < 0 ? 0 : Math.max(0, old.length - 1 - cur); cut = old.slice(0, old.length - Math.min(d, below)).slice(-(rows - 1)); }
-    this.rows = rows; this.cols = cols;
+    this.rows = rows; this.cols = cols; (this.sizes ||= []).push(rows);
     if (d < 0) cut = [...this.frame().slice(0, rows - 1 - old.length), ...old];
     if (old.length) this.paint([...cut, TMUX]);
     clearTimeout(this.t); this.t = setTimeout(() => this.redraw(), 120);
@@ -107,7 +108,24 @@ async function phone(w, h) {
     // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
     const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
     Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
-    window.__qa = { two: [], flips: 0, samples: 0, rec: null, watch: null };
+    window.__qa = { two: [], flips: 0, samples: 0, rec: null, watch: null, entry: [], entryOn: true };
+    // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line for a moment, then the composer took over):
+    // from the first frame, any of Claude's chrome on screen while the terminal is visible is the old UI showing through
+    const entry = () => {
+      if (!window.__qa.entryOn) return;
+      const t = /** @type {any} */ (window).term, sc = document.querySelector('.xterm-screen'), wrap = document.getElementById('terminal-wrap');
+      if (t && sc && wrap) {
+        // the time from the first output (any row written) to the terminal in sight
+        if (!window.__qa.out) for (let i = 0; i < t.rows; i++) if (t.buffer.active.getLine(i)?.translateToString(true)) { window.__qa.out = performance.now(); break; }
+        if (window.__qa.out && !document.body.classList.contains('ccboot')) window.__qa.shownAt ??= Math.round(performance.now() - window.__qa.out);
+        let o = 1; for (let e = sc; e; e = e.parentElement) { const cs = getComputedStyle(e); o *= +cs.opacity; if (cs.visibility === 'hidden' || cs.display === 'none') o = 0; }
+        const r = sc.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), b = t.buffer.active, cell = r.height / t.rows, line = i => b.getLine(b.viewportY + i)?.translateToString(true) || '';
+        const vis = i => r.top + (i + 1) * cell <= wr.bottom + 1 && r.top + i * cell >= wr.top - 1;
+        if (o > 0.05) for (let i = 0; i < t.rows; i++) if (vis(i) && (/^❯/.test(line(i)) && /^─{8,}$/.test(line(i - 1)) || /^\[ccw-dev\]/.test(line(i)))) { window.__qa.entry.push({ at: Math.round(performance.now()), row: i, txt: line(i).slice(0, 24), o: +o.toFixed(2) }); break; }
+      }
+      setTimeout(entry, 4);
+    };
+    addEventListener('DOMContentLoaded', entry);
     // the watch: every 4 ms, regardless of painting (a headless engine paints when it likes; a phone paints every 16 ms), the longest stretch
     // the newest conversation line is out of view, the longest stretch Claude's input line shows with the field, the largest band
     addEventListener('load', () => setInterval(() => {
@@ -192,12 +210,20 @@ const key = (P, k) => P.page.locator(`#cckb > button[data-k="${k}"]`).dispatchEv
 const shot = (P, n) => (OUT ? P.page.screenshot({ path: join(OUT, `${n}.png`) }) : null);
 const twos = P => P.page.evaluate(() => window.__qa.two.slice(0, 3));
 
-for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'promax']]) {
+// PHONES=se,15 runs only those
+for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'promax']].filter(p => !process.env.PHONES || process.env.PHONES.split(',').includes(p[2]))) {
   const P = await phone(w, h), F = P.fake();
   // the sampler runs on painted frames, and a headless engine paints when it likes: let it start before the first count
   await P.page.waitForFunction(() => window.__qa.samples >= 5, null, { timeout: 5000 }).catch(() => {});
   let s = await st(P);
-  check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 1, s);
+  // the first entry (nothing remembered): Claude's box and tmux's line never on screen while the page finds out; the field comes with Claude's
+  // box and its rows go under the dock, two resizes, both while the terminal is out of sight. From here on the field must never flip.
+  for (let i = 0; i < 20 && !(s.under >= 5); i++) { await sleep(100); s = await st(P); }
+  await P.page.waitForFunction(() => !document.body.classList.contains('ccboot'), null, { timeout: 4000 }).catch(() => {});
+  const ent = await P.page.evaluate(() => { window.__qa.entryOn = false; const f = window.__qa.flips; window.__qa.flips = 0; return { e: window.__qa.entry, f, boot: document.body.classList.contains('ccboot'), shownAt: window.__qa.shownAt }; });
+  check(`${tag} 0 first open: the new UI from the first frame, never Claude's own box or tmux's line, at most two resizes (${(F.sizes || []).length}; in sight ${ent.shownAt} ms after the first output)`, !ent.e.length && !ent.boot && (F.sizes || []).length <= 2, [ent.e.length, ent.e.slice(0, 3), ent, F.sizes]);
+  s = await st(P);
+  check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 0, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
   // on open the field appears, the terminal refits and settles (SETTLE) before Claude's rows go under the dock: allow that second
   for (let i = 0; i < 20 && !(s.under >= 5 && s.band < s.cell + 8); i++) { await sleep(100); s = await st(P); }
@@ -219,11 +245,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 2 a tap on the terminal: the focus is in the field`, await P.page.evaluate(() => document.activeElement?.id === 'ccmsg'), await P.page.evaluate(() => document.activeElement?.className));
   await kb(P, Math.round(h * 0.52)); await sleep(1200);
   s = await st(P);
-  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 1 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
+  check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 0 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
   await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
-  check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 1, [s, await twos(P)]);
+  check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 0, [s, await twos(P)]);
   // the keyboard down and up again as iOS animates it, every painted frame recorded (the phone, 2026-10-23: "a glitch where in a second I saw
   // old input text")
   for (const [name, a, b] of [['down', Math.round(h * 0.52), h], ['up', h, Math.round(h * 0.52)]]) {
@@ -264,7 +290,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     check(`${tag} 4 attach as on the phone (keyboard down, picker, upload): no band, no box, nothing out of view (${rec.length} frames)`, !g.length, [g, rec.filter((f, i) => i % 4 === 0).slice(0, 10)]);
   }
   s = await st(P);
-  check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 1, [s, F.draft, await twos(P)]);
+  check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 0, [s, F.draft, await twos(P)]);
   check(`${tag} 4 after the picker the field's text area is a whole line, not collapsed`, s.taH >= 36, s);
   // tap the chip: the preview shows the image itself (this phone's own copy), named by Claude's token
   await P.page.locator('#ccdraft').click(); await sleep(200);
@@ -373,7 +399,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await key(P, 'More'); await sleep(700); await key(P, 'More'); await sleep(700);
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);
-  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 1 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
+  check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 0 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
   check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip`, s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown && !s.chip && s.two === 0, s);
   await shot(P, `${tag}-10-dialog`);
@@ -382,9 +408,19 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   F.scene = 'shell'; F.redraw(); await sleep(300); s = await st(P);
   check(`${tag} 12 Claude gone: the field lingers a moment (a redraw is not an exit)`, s.shown, s);
   await sleep(1700); s = await st(P);
-  check(`${tag} 13 a shell: the field goes after the linger, the terminal is the one input`, !s.shown && s.two === 0 && s.flips === 2, s);
+  check(`${tag} 13 a shell: the field goes after the linger, the terminal is the one input`, !s.shown && s.two === 0 && s.flips === 1, s);
   await shot(P, `${tag}-13-shell`);
   check(`${tag} 14 no sideways overflow, no page errors (${s.samples} painted frames sampled)`, s.sw === s.iw && P.errs.length === 0, [s, P.errs]);
+  // reopened twice: first after the shell of step 13 (remembered as no Claude, and now Claude is back: its cut box must not show while the
+  // page finds out; the field and Claude's rows come as two resizes), then with Claude's rows remembered (the first size the pty gets is the final one: no resize at all after the attach)
+  for (const [n, maxSizes] of [['after a shell', 2], ['Claude remembered', 0]]) {
+    await P.page.reload(); await P.page.waitForFunction(() => /** @type {any} */ (window).term && document.getElementById('cckb'));
+    for (let i = 0; i < 30 && !(await P.page.evaluate(() => !document.body.classList.contains('ccboot'))); i++) await sleep(100);
+    await sleep(700);
+    const re = await P.page.evaluate(() => { window.__qa.entryOn = false; return { shownAt: window.__qa.shownAt, ent: window.__qa.entry, boot: document.body.classList.contains('ccboot'), shown: !document.getElementById('cccomp').hidden }; });
+    const sz = P.fake().sizes || [];
+    check(`${tag} 15 reopened ${n}: the new UI from the first frame, at most ${maxSizes} resize after the attach (${sz.length}; in sight ${re.shownAt} ms after the first output)`, !re.ent.length && !re.boot && re.shown && sz.length <= maxSizes, [re.ent.slice(0, 3), re, sz]);
+  }
   await P.ctx.close();
 }
 await browser.close();

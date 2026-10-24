@@ -97,6 +97,7 @@ const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1
 const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session }) : null;
 const bar = el('div', { id: 'cckb' }, ...baseKeys(term, { typing: () => !!comp?.typing(), type: t => comp?.insert(t), menu: () => sheet?.open() }));
 document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
+fit(true); // now, not from the observer a frame later: the socket may open first, and the size it sends is the pty's (one redraw, not two)
 if (coarse()) wrap.append(modChip());
 touchScroll();
 viewportFit(fit);
