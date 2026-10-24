@@ -60,7 +60,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     const scr = document.querySelector('.xterm-screen'), wrap = tc.parentElement;
     if (t < 0 || !scr || !wrap) return '';
     const y = scr.getBoundingClientRect().top - tc.getBoundingClientRect().top + t * cellH();
-    return `translateY(${Math.max(0, Math.ceil(wrap.clientHeight - y))}px)`; // mid-refit the rule can already sit below the edge
+    // up as well as down: while tmux has cut the pane (the lines under the cursor go first) and Claude has not redrawn, the box's top rule sits
+    // higher than the rows hidden under the dock, and the newest lines with it; moving up, at most by those rows, keeps them in view
+    return `translateY(${Math.max(-extraPx, Math.ceil(wrap.clientHeight - y))}px)`;
   };
   // rows hidden under the dock by height: the container grows by them, the pty gets them (one resize per change)
   let extra = 0, extraPx = 0, resized = 0;
@@ -75,6 +77,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // every resize
   /** @type {any} */ let pend = 0;
   /** @type {any} */ let linger = 0;
+  /** @type {any} */ let settle = 0;
   const scan = () => {
     clearTimeout(pend); pend = 0;
     const b = term.buffer.active;
@@ -103,6 +106,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
       // still settling)
       if (s.box && now - resized > SETTLE) hide(Math.min(16, term.rows - t));
+      else if (s.box) { clearTimeout(settle); settle = setTimeout(scan, SETTLE - (now - resized) + 10); } // look again once the resize has settled
       top = t; shift = place(t);
       if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
         held = s.box.draft || '';
@@ -136,7 +140,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   });
   term.textarea?.addEventListener('focus', () => { if (top >= 0 && !form.hidden) ta.focus(); });
   // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: place the shift again
-  term.onResize(() => { resized = Date.now(); scan(); requestAnimationFrame(() => scan()); });
+  // xterm can leave its viewport off the bottom after a resize that pushed rows into its scrollback, showing an older view until the next
+  // output; under tmux that scrollback is never read (the finger scrolls tmux), so the view goes back to the bottom at once
+  term.onResize(() => { resized = Date.now(); term.scrollToBottom(); scan(); requestAnimationFrame(() => scan()); });
   // from the observer: the shift is placed at once (a transform: it cannot resize what is observed, and the frame paints with it), the full
   // scan a tick later (it can show or hide the field, which inside the callback would be a ResizeObserver loop: WebKit reports it)
   if (tc.parentElement) new ResizeObserver(() => { if (top >= 0) tc.style.transform = shift = place(top); clearTimeout(pend); pend = setTimeout(scan, 0); }).observe(tc.parentElement);

@@ -79,7 +79,7 @@ class FakeClaude {
     // tmux first (screen_resize_y), its status line staying the last row; then, 120 ms later, Claude's own redraw for the new size
     const old = this.screen.slice(0, -1), d = old.length - (rows - 1);
     let cut = old;
-    if (d > 0) { const cur = old.findIndex(l => l.includes('❯')), below = cur < 0 ? 0 : Math.max(0, old.length - 1 - cur); cut = old.slice(0, old.length - Math.min(d, below)).slice(-(rows - 1)); }
+    if (d > 0) { const cur = old.findLastIndex(l => /^(\x1b\[[0-9;]*m)*❯/.test(l)) /* the cursor: on Claude's input line, the last ❯ row */, below = cur < 0 ? 0 : Math.max(0, old.length - 1 - cur); cut = old.slice(0, old.length - Math.min(d, below)).slice(-(rows - 1)); }
     this.rows = rows; this.cols = cols;
     if (d < 0) cut = [...this.frame().slice(0, rows - 1 - old.length), ...old];
     if (old.length) this.paint([...cut, TMUX]);
@@ -88,12 +88,25 @@ class FakeClaude {
 }
 
 async function phone(w, h) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
   await ctx.addInitScript(() => {
     // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
     const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
     Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
-    window.__qa = { two: [], flips: 0, samples: 0 };
+    window.__qa = { two: [], flips: 0, samples: 0, rec: null, watch: null };
+    // the watch: every 4 ms, regardless of painting (a headless engine paints when it likes; a phone paints every 16 ms), the longest stretch
+    // the newest conversation line is out of view, the longest stretch Claude's input line shows with the field, the largest band
+    addEventListener('load', () => setInterval(() => {
+      const w = window.__qa.watch, t = /** @type {any} */ (window).term, sc = document.querySelector('.xterm-screen'), wrap = document.getElementById('terminal-wrap'), comp = document.getElementById('cccomp');
+      if (!w || !t || !sc) return;
+      const r = sc.getBoundingClientRect(), wr = wrap.getBoundingClientRect(), b = t.buffer.active, line = i => b.getLine(b.viewportY + i)?.translateToString(true) || '', cell = r.height / t.rows, now = performance.now();
+      let lastRow = -1; for (let i = t.rows - 1; i >= 0; i--) if (/Done:|Welcome/.test(line(i))) { lastRow = i; break; }
+      const y = r.top + (lastRow + 1) * cell, seen = lastRow >= 0 && y <= wr.bottom + 1 && y - cell >= wr.top - 1;
+      let box = false; for (let i = 0; i < t.rows - 1; i++) if (/^─{8,}$/.test(line(i)) && /^❯/.test(line(i + 1)) && r.top + (i + 2) * cell <= wr.bottom + 1 && r.top + i * cell >= wr.top - 1 && !comp.hidden) box = true;
+      const band = +(/translateY\(([\d.]+)px\)/.exec(getComputedStyle(document.getElementById('terminal-container')).transform.replace(/matrix\(1, 0, 0, 1, 0, ([\d.]+)\)/, 'translateY($1px)'))?.[1] || 0);
+      for (const [k, on] of [['gone', !seen], ['box', box]]) { if (on) { w[k + 'At'] ??= now; w[k] = Math.max(w[k], now - w[k + 'At']); } else w[k + 'At'] = null; }
+      w.band = Math.max(w.band, band - cell - 8);
+    }, 4));
     addEventListener('load', () => setTimeout(function tick() {
       const comp = document.getElementById('cccomp'), sc = document.querySelector('.xterm-screen'), wrap = document.getElementById('terminal-wrap'), t = /** @type {any} */ (window).term;
       if (comp && sc && t) {
@@ -101,6 +114,12 @@ async function phone(w, h) {
         const r = sc.getBoundingClientRect(), wb = wrap.getBoundingClientRect().bottom, b = t.buffer.active, line = i => b.getLine(b.viewportY + i)?.translateToString(true) || '';
         for (let i = 0; i < t.rows - 1; i++) if (/^─{8,}$/.test(line(i)) && /^❯/.test(line(i + 1)) && r.top + (i + 2) * r.height / t.rows <= wb + 1 && !comp.hidden) { window.__qa.two.push({ at: Math.round(performance.now()), row: i, rows: t.rows, tf: document.getElementById('terminal-container').style.transform }); break; }
         window.__qa.samples++;
+        if (window.__qa.rec) { // a recording: per painted frame, the blank band, the last conversation line's place and text, Claude's box
+          const tf = +(/translateY\((\d+)px\)/.exec(document.getElementById('terminal-container').style.transform)?.[1] || 0), cell = r.height / t.rows;
+          let last = null;
+          for (let i = t.rows - 1; i >= 0; i--) { const y = r.top + (i + 1) * cell; const txt = line(i).trim(); if (txt && y <= wb + 1 && !/^─|^❯|Opus|mode on|\[ccw/.test(txt)) { last = { y: Math.round(y), txt: txt.slice(0, 30) }; break; } }
+          window.__qa.rec.push({ at: Math.round(performance.now()), band: tf, cell: Math.round(cell), last, two: window.__qa.two.length, rows: t.rows, wrapH: Math.round(wb - wrap.getBoundingClientRect().top) });
+        }
       }
       requestAnimationFrame(() => setTimeout(tick, 0));
     }, 16));
@@ -136,6 +155,20 @@ const st = P => P.page.evaluate(() => {
     dockRight: Math.round(document.getElementById('ccdock').getBoundingClientRect().right) };
 });
 const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
+// the iOS keyboard: it slides for ~300 ms, the visual viewport shrinking (or growing) in steps, each step a resize event
+const kbAnim = async (P, from, to) => { for (let i = 1; i <= 8; i++) { await kb(P, Math.round(from + (to - from) * i / 8)); await sleep(36); } };
+// a glitch, from a recording: a band of more than a row, Claude's box on screen, or the last conversation line jumping away and back
+const glitches = rec => {
+  const out = [];
+  for (const f of rec) { if (f.band > f.cell + 8) out.push(['band', f.at, f.band]); }
+  if (rec.length && rec.at(-1).two > rec[0].two) out.push(['two inputs', rec.at(-1).two - rec[0].two]);
+  const ys = rec.filter(f => f.last).map(f => f.last.y), moves = [];
+  for (let i = 1; i < ys.length; i++) if (Math.abs(ys[i] - ys[i - 1]) > 2) moves.push(ys[i] - ys[i - 1]);
+  for (let i = 1; i < moves.length; i++) if (Math.sign(moves[i]) !== Math.sign(moves[i - 1])) { out.push(['the last line jumps away and back', moves.join(',')]); break; }
+  const texts = [...new Set(rec.filter(f => f.last).map(f => f.last.txt))];
+  if (texts.length > 1) out.push(['the last line changes text mid-transition', texts]);
+  return out;
+};
 const key = (P, k) => P.page.locator(`#cckb > button[data-k="${k}"]`).dispatchEvent('pointerdown');
 const shot = (P, n) => (OUT ? P.page.screenshot({ path: join(OUT, `${n}.png`) }) : null);
 const twos = P => P.page.evaluate(() => window.__qa.two.slice(0, 3));
@@ -145,6 +178,8 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   let s = await st(P);
   check(`${tag} 1 Claude idle with its suggestion: the field is the input, Claude's box hidden, the mode on the chip`, s.shown && !s.draft && s.chip === '⏵⏵ auto mode' && s.two === 0 && s.flips === 1, s);
   check(`${tag} 1 the dashboard's gutter: text 9+ px from both edges, no sideways scroll`, s.left >= 9 && s.right >= 9 && s.sw === s.iw, s);
+  // on open the field appears, the terminal refits and settles (SETTLE) before Claude's rows go under the dock: allow that second
+  for (let i = 0; i < 20 && !(s.under >= 5 && s.band < s.cell + 8); i++) { await sleep(100); s = await st(P); }
   check(`${tag} 1 no blank band: Claude's rows are under the dock (the pty has them), what is left of the shift is less than a row`, s.under >= 5 && s.band < s.cell + 8, s);
   await shot(P, `${tag}-1-idle`);
   // no strip: the terminal starts at the top; ⋯, the bar's first key, opens the menu (the keyboard drops for it) and a backdrop tap closes it
@@ -167,7 +202,36 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
   s = await st(P);
   check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 1, [s, await twos(P)]);
-  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') }); await sleep(700);
+  // the keyboard down and up again as iOS animates it, every painted frame recorded (the phone, 2026-10-23: "a glitch where in a second I saw
+  // old input text")
+  for (const [name, a, b] of [['down', Math.round(h * 0.52), h], ['up', h, Math.round(h * 0.52)]]) {
+    await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
+    await kbAnim(P, a, b); await sleep(1100);
+    const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
+    const g = glitches(rec);
+    // a phone paints every 16 ms: a state that lasts 3 frames is seen
+    if (wt.gone > 48) g.push(['the newest line out of view for ms', Math.round(wt.gone)]);
+    if (wt.box > 48) g.push(["Claude's input line on screen for ms", Math.round(wt.box)]);
+    if (wt.band > 0) g.push(['a band taller than a row, px over', Math.round(wt.band)]);
+    check(`${tag} 3 keyboard ${name} (animated): no band, no box, the last line moves once to its place (${rec.length} frames)`, !g.length, [g, rec.filter((f, i) => i % 4 === 0).slice(0, 12)]);
+  }
+  // attach as on the phone, recorded: the keyboard is up in the field; ⋯ (the keyboard drops), Attach file, the picker takes the window (blur)
+  // and gives it back (focus: the page repaints), the upload, Claude's [Image #1]
+  await P.page.focus('#ccmsg'); await kbAnim(P, h, Math.round(h * 0.52)); await sleep(900);
+  await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await kbAnim(P, Math.round(h * 0.52), h); await sleep(200);
+  await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await sleep(100);
+  await P.page.evaluate(() => { dispatchEvent(new Event('blur')); });
+  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: Buffer.from('PNG') });
+  await P.page.evaluate(() => { dispatchEvent(new Event('focus')); }); await sleep(900);
+  {
+    const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
+    const g = glitches(rec).filter(x => x[0] !== 'the last line changes text mid-transition'); // the upload itself adds a line
+    if (wt.gone > 48) g.push(['the newest line out of view for ms', Math.round(wt.gone)]);
+    if (wt.box > 48) g.push(["Claude's input line on screen for ms", Math.round(wt.box)]);
+    if (wt.band > 0) g.push(['a band taller than a row, px over', Math.round(wt.band)]);
+    check(`${tag} 4 attach as on the phone (keyboard down, picker, upload): no band, no box, nothing out of view (${rec.length} frames)`, !g.length, [g, rec.filter((f, i) => i % 4 === 0).slice(0, 10)]);
+  }
   s = await st(P);
   check(`${tag} 4 attach an image: Claude holds [Image #1], the field shows it as the draft chip, the box stays hidden`, F.draft.startsWith('[Image #1]') && s.draft === '[Image #1]' && s.shown && s.two === 0 && s.flips === 1, [s, F.draft, await twos(P)]);
   await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);

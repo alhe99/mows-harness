@@ -41,9 +41,11 @@ if (window.parent !== window) { addEventListener('focus', () => term.focus()); i
 const fit = (now = false) => { clearTimeout(ft); const run = () => { try { fitAddon.fit(); } catch { /* not laid out yet */ } }; now ? run() : (ft = setTimeout(run, 150)); };
 fit(true);
 addEventListener('resize', () => fit());
-// the box the terminal lives in changes with the dock (a second key row, a growing composer) and the keyboard: refit on any of them
+// the box the terminal lives in changes with the dock (a second key row, a growing composer) and the keyboard: refit on any of them. On a phone
+// at once (the keyboard handler already coalesces its events; a refit left for later showed the old grid in the new box for 150 ms); on a
+// desktop a window drag is a burst, coalesced as before
 const wrap = /** @type {HTMLElement} */ (document.getElementById('terminal-wrap'));
-new ResizeObserver(() => fit()).observe(wrap);
+new ResizeObserver(() => fit(coarse())).observe(wrap);
 
 // the status overlay (ttyd's): connection closed, reconnecting, press Enter
 const ovl = document.body.appendChild(el('div', { id: 'ccovl' }));

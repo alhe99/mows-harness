@@ -45,6 +45,11 @@ body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-directio
 #terminal-container{box-sizing:border-box;width:calc(100% + 15px)}
 /* the gutter of the dashboard: 10 px each side (FitAddon subtracts the padding) */
 #terminal-container .terminal{padding:6px 10px;height:calc(100% - 12px)}
+/* the terminal sits on the bottom of its box: between a new box size and the refit (a frame), and while rows are added or taken away, what
+   shows is the newest lines, never the top of an old screen (the phone, 2026-10-23: "in a second I saw old input text"). No transition on its
+   shift either: a shift that slides shows the rows it slides past. */
+#terminal-container{display:flex;flex-direction:column;justify-content:flex-end}
+#terminal-container .terminal{flex:none;height:auto}
 
 /* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
 #ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
@@ -108,7 +113,6 @@ font:15px var(--c-sans);color:var(--c-fg)}
 #cckb svg{transition:transform .2s}
 #cccomp{transition:border-color .15s,box-shadow .15s}
 #ccmods{transition:opacity .15s}
-#terminal-container{transition:transform .12s ease-out}
 }
 #ccsheet .grab{width:36px;height:4px;border-radius:2px;background:var(--c-line2);margin:0 auto 14px}
 #ccsheet .hd{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;min-width:0}
