@@ -170,14 +170,15 @@ async function keybar() {
   check('the chevron opens the second row: the bar doubles and the terminal is refitted to fewer rows', g2.kbH > 80 && g2.rows < g.rows && g2.wrapBottom === g2.dockTop, [g.rows, g2]);
   await press(W, 'More', 300);
   check('window.term exposes the cell width (mobile-journey reads it) and unicode 11', g.cell > 0 && g.u === '11', [g.cell, g.u]);
-  // the keyboard: height shrinks, 120/520 ms debounce, the bar rides above it, the terminal box is refitted
+  // the keyboard: height shrinks, the page is pinned in the event itself (a pin left for later showed a keyboard-tall band, the phone
+  // 2026-10-24), the bar rides above it, the terminal box is refitted
   const before = await W.page.evaluate(() => document.body.style.height);
   await W.page.evaluate(() => { const vv = /** @type {any} */ (window.visualViewport); vv.height = 500; vv.dispatchEvent(new Event('resize')); window.__t0 = performance.now(); });
   await sleep(40);
   const early = await W.page.evaluate(() => document.body.style.height);
-  await sleep(400);
+  await sleep(160);
   const mid = await W.page.evaluate(() => ({ h: document.body.style.height, kbup: document.body.classList.contains('kbup'), dockBottom: Math.round(document.getElementById('ccdock').getBoundingClientRect().bottom), wrapBottom: Math.round(document.getElementById('terminal-wrap').getBoundingClientRect().bottom), dockTop: Math.round(document.getElementById('ccdock').getBoundingClientRect().top), rows: window.term.rows }));
-  check('the viewport handler is debounced (nothing at 40 ms, applied by 200 ms)', before === '' && early === '' && mid.h === '500px' && mid.kbup, [before, early, mid]);
+  check('the viewport handler pins the page at once (applied by 40 ms)', before === '' && early === '500px' && mid.h === '500px' && mid.kbup, [before, early, mid]);
   check('the page is pinned to the visual viewport: the dock ends at its bottom, the terminal refitted above it', mid.dockBottom === 500 && mid.wrapBottom === mid.dockTop && mid.rows < g.rows, mid);
   await W.page.evaluate(() => { const vv = /** @type {any} */ (window.visualViewport); vv.height = innerHeight; vv.dispatchEvent(new Event('resize')); });
   await sleep(700);

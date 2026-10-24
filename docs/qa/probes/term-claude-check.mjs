@@ -108,6 +108,9 @@ async function phone(w, h) {
     // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
     const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
     Object.defineProperty(window, 'visualViewport', { value: vv, configurable: true });
+    // iOS: with the keyboard up the visual viewport is panned (kb() below); a scroll of the window to the top takes the pan back, and says so
+    // with a scroll event (the phone, 2026-10-24: the page pinned to the old pan, a keyboard-tall black band at the top, the field under it)
+    window.scrollTo = () => { if (vv.offsetTop) { vv.offsetTop = 0; setTimeout(() => vv.dispatchEvent(new Event('scroll')), 0); } };
     window.__qa = { two: [], flips: 0, samples: 0, rec: null, watch: null, entry: [], entryOn: true };
     // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line for a moment, then the composer took over):
     // from the first frame, any of Claude's chrome on screen while the terminal is visible is the old UI showing through
@@ -141,6 +144,9 @@ async function phone(w, h) {
       const band = +(/translateY\(([\d.]+)px\)/.exec(getComputedStyle(document.getElementById('terminal-container')).transform.replace(/matrix\(1, 0, 0, 1, 0, ([\d.]+)\)/, 'translateY($1px)'))?.[1] || 0);
       for (const [k, on] of [['gone', !seen], ['box', box]]) { if (on) { w[k + 'At'] ??= now; w[k] = Math.max(w[k], now - w[k + 'At']); } else w[k + 'At'] = null; }
       w.band = Math.max(w.band, band - cell - 8);
+      // the page covers exactly what the phone shows (the visual viewport): not lower, not taller
+      const bt = document.body.getBoundingClientRect(), v = window.visualViewport, off = Math.abs(bt.top - v.offsetTop) > 2 || Math.abs(bt.bottom - v.offsetTop - v.height) > 2;
+      if (off) { w.offAt ??= now; w.off = Math.max(w.off, now - w.offAt); } else w.offAt = null;
     }, 4));
     addEventListener('load', () => setTimeout(function tick() {
       const comp = document.getElementById('cccomp'), sc = document.querySelector('.xterm-screen'), wrap = document.getElementById('terminal-wrap'), t = /** @type {any} */ (window).term;
@@ -152,7 +158,7 @@ async function phone(w, h) {
         if (window.__qa.rec) { // a recording: per painted frame, the blank band, the last conversation line's place and text, Claude's box
           const tf = +(/translateY\((\d+)px\)/.exec(document.getElementById('terminal-container').style.transform)?.[1] || 0), cell = r.height / t.rows;
           let last = null;
-          for (let i = t.rows - 1; i >= 0; i--) { const y = r.top + (i + 1) * cell; const txt = line(i).trim(); if (txt && y <= wb + 1 && !/^─|^❯|Opus|mode on|\[ccw/.test(txt)) { last = { y: Math.round(y), txt: txt.slice(0, 30) }; break; } }
+          for (let i = t.rows - 1; i >= 0; i--) { const y = r.top + (i + 1) * cell; const txt = line(i).trim(); if (txt && y <= wb + 1 && !/^─|^❯|Opus|mode on|\[ccw/.test(txt)) { last = { y: Math.round(y - window.visualViewport.offsetTop), txt: txt.slice(0, 30) }; break; } }
           window.__qa.rec.push({ at: Math.round(performance.now()), band: tf, cell: Math.round(cell), last, two: window.__qa.two.length, rows: t.rows, wrapH: Math.round(wb - wrap.getBoundingClientRect().top) });
         }
       }
@@ -195,7 +201,8 @@ const st = P => P.page.evaluate(() => {
     // the field's own text area: one line at least whenever the field shows (the phone, 2026-10-24: 0 px after an attach)
     taH: Math.round(document.getElementById('ccmsg').getBoundingClientRect().height) };
 });
-const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.dispatchEvent(new Event('resize')); }, h);
+// the keyboard, as iOS raises it: the visual viewport shorter, and panned so the focused field at the bottom stays above the keyboard
+const kb = (P, h) => P.page.evaluate(h2 => { const vv = /** @type {any} */ (window.visualViewport); vv.height = h2; vv.offsetTop = innerHeight - h2; vv.dispatchEvent(new Event('resize')); vv.dispatchEvent(new Event('scroll')); }, h);
 // the iOS keyboard: it slides for ~300 ms, the visual viewport shrinking (or growing) in steps, each step a resize event
 const kbAnim = async (P, from, to) => { for (let i = 1; i <= 8; i++) { await kb(P, Math.round(from + (to - from) * i / 8)); await sleep(36); } };
 // a glitch, from a recording: a band of more than a row, Claude's box on screen, or the last conversation line jumping away and back
@@ -257,7 +264,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // the keyboard down and up again as iOS animates it, every painted frame recorded (the phone, 2026-10-23: "a glitch where in a second I saw
   // old input text")
   for (const [name, a, b] of [['down', Math.round(h * 0.52), h], ['up', h, Math.round(h * 0.52)]]) {
-    await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
+    await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0, off: 0 }; });
     await kbAnim(P, a, b); await sleep(1100);
     const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
     const g = glitches(rec);
@@ -265,12 +272,13 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     if (wt.gone > 48) g.push(['the newest line out of view for ms', Math.round(wt.gone)]);
     if (wt.box > 48) g.push(["Claude's input line on screen for ms", Math.round(wt.box)]);
     if (wt.band > 0) g.push(['a band taller than a row, px over', Math.round(wt.band)]);
+    if (wt.off > 20) g.push(['the page off the visible area (a black band, the field under the keyboard) for ms', Math.round(wt.off)]);
     check(`${tag} 3 keyboard ${name} (animated): no band, no box, the last line moves once to its place (${rec.length} frames)`, !g.length, [g, rec.filter((f, i) => i % 4 === 0).slice(0, 12)]);
   }
   // attach as on the phone, recorded: the keyboard is up in the field; ⋯ (the keyboard drops), Attach file, the picker takes the window (blur)
   // and gives it back (focus: the page repaints), the upload, Claude's [Image #1]
   await P.page.focus('#ccmsg'); await kbAnim(P, h, Math.round(h * 0.52)); await sleep(900);
-  await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
+  await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0, off: 0 }; });
   // iOS anchors its Photo Library / Camera / Files menu to the tap that opens it: attach starts from the field's +, in the bottom bar; the ⋯
   // sheet has no Attach tile while the field shows (its tile sat mid-screen, and so did the menu: the phone 2026-10-24)
   await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan');
@@ -291,6 +299,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     if (wt.gone > 48) g.push(['the newest line out of view for ms', Math.round(wt.gone)]);
     if (wt.box > 48) g.push(["Claude's input line on screen for ms", Math.round(wt.box)]);
     if (wt.band > 0) g.push(['a band taller than a row, px over', Math.round(wt.band)]);
+    if (wt.off > 20) g.push(['the page off the visible area (a black band, the field under the keyboard) for ms', Math.round(wt.off)]);
     check(`${tag} 4 attach as on the phone (keyboard down, picker, upload): no band, no box, nothing out of view (${rec.length} frames)`, !g.length, [g, rec.filter((f, i) => i % 4 === 0).slice(0, 10)]);
   }
   s = await st(P);

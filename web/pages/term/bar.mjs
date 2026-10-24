@@ -148,26 +148,28 @@ export function touchScroll() {
   document.addEventListener('touchcancel', () => { y = null; v = 0; }, { passive: true });
 }
 
-/** The OS keyboard: iOS keeps the layout viewport full-size under it, so the page (a fixed column: strip, terminal, dock) is pinned to the visual
+/** The OS keyboard: iOS keeps the layout viewport full-size under it, so the page (a fixed column: terminal, dock) is pinned to the visual
  *  viewport: body top = its offset, body height = its height (Android resizes the layout itself, interactive-widget=resizes-content). The
- *  terminal is refitted by term.mjs's ResizeObserver. Debounced 120 ms, plus one settle pass at 520 ms: the last viewport event fires mid
- *  keyboard-dismiss, so a single early pass sees transitional geometry. */
+ *  terminal is refitted by term.mjs's ResizeObserver. Pinned in the viewport event itself, every one: a pin left for later (it was debounced
+ *  120 ms) showed the page where iOS had panned it a moment before, a keyboard-tall black band at the top and the field under the keyboard
+ *  (the phone, 2026-10-24). No scroll to the top while the keyboard is up: on iOS that takes the pan back, under a page pinned to it. One
+ *  more pass at 520 ms: the last viewport event can fire mid keyboard-dismiss, with transitional geometry. */
 export function viewportFit(fit) {
   const vv = window.visualViewport;
   if (!vv) return;
+  let pin = '';
   const run = () => {
     if (!matchMedia('(pointer:coarse)').matches) return;
-    const b = document.body;
-    if (window.innerHeight - vv.height > 60 || vv.offsetTop > 2) {
-      b.classList.add('kbup'); b.style.top = vv.offsetTop + 'px'; b.style.height = vv.height + 'px';
-    } else {
-      b.classList.remove('kbup'); b.style.top = ''; b.style.height = '';
-    }
-    window.scrollTo(0, 0); // iOS can leave a stale viewport offset after the keyboard hides
+    const b = document.body, up = window.innerHeight - vv.height > 60 || vv.offsetTop > 2;
+    const next = up ? `${Math.round(vv.offsetTop)} ${Math.round(vv.height)}` : '';
+    if (next === pin) return;
+    pin = next;
+    b.classList.toggle('kbup', up);
+    b.style.top = up ? Math.round(vv.offsetTop) + 'px' : ''; b.style.height = up ? Math.round(vv.height) + 'px' : '';
+    if (!up) window.scrollTo(0, 0); // iOS can leave a stale viewport offset after the keyboard hides
     fit(true);
   };
-  /** @type {any} */ let a = 0;
   /** @type {any} */ let c = 0;
-  const go = () => { clearTimeout(a); a = setTimeout(run, 120); clearTimeout(c); c = setTimeout(run, 520); };
+  const go = () => { run(); clearTimeout(c); c = setTimeout(run, 520); };
   vv.addEventListener('resize', go); vv.addEventListener('scroll', go);
 }
