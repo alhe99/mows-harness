@@ -71,6 +71,10 @@ body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 #ccmsg{width:100%;box-sizing:border-box;height:36px;min-height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
 #ccmsg::placeholder{color:var(--c-dim)}
 #cccomp .cbar{min-width:0;display:flex;align-items:center;gap:8px;margin-left:-8px}
+#ccadd{flex:none;width:32px;height:32px;padding:0;border-radius:50%;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);display:grid;place-items:center}
+#ccadd svg{width:16px;height:16px}
+#ccadd:active{background:var(--c-raised)}
+#ccsheet .tile[hidden]{display:none}
 #ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;flex:none}
 #ccmode[hidden]{display:none}
 #ccmode.ed{color:#af87ff} #ccmode.pl{color:#48968c} #ccmode.bad{color:var(--c-bad)} #ccmode.ok{color:var(--c-ok)}
@@ -141,8 +145,8 @@ font:15px var(--c-sans);color:var(--c-fg)}
 #ccsheet .hd{display:flex;align-items:baseline;gap:8px;margin:0 2px 14px;min-width:0}
 #ccsheet .hd b{font:600 16px var(--c-sans);white-space:nowrap}
 #ccsheet .hd span{font:400 11.5px var(--c-mono);color:var(--c-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#ccsheet .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
-#ccsheet .tile{height:74px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+#ccsheet .tiles{display:flex;gap:8px;margin-bottom:10px}
+#ccsheet .tile{flex:1;min-width:0;height:74px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
 font:500 12.5px var(--c-sans);color:var(--c-fg2);padding:0}
 #ccsheet .tile svg{width:20px;height:20px;color:var(--c-fg)}
 #ccsheet .tile:active{background:#323236}

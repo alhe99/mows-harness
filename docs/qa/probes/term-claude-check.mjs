@@ -239,16 +239,19 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // and gives it back (focus: the page repaints), the upload, Claude's [Image #1]
   await P.page.focus('#ccmsg'); await kbAnim(P, h, Math.round(h * 0.52)); await sleep(900);
   await P.page.evaluate(() => { window.__qa.rec = []; window.__qa.watch = { gone: 0, box: 0, band: 0 }; });
-  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await kbAnim(P, Math.round(h * 0.52), h); await sleep(200);
-  await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await sleep(100);
-  // iOS draws its Photo Library / Camera / Files menu at the file input: it must sit on the ⋯ key the user came from, not off screen
-  const anchor = await P.page.evaluate(() => { const i = document.querySelector('input[type=file]').getBoundingClientRect(), k = document.querySelector('#cckb > button[data-k="Menu"]').getBoundingClientRect();
-    return { x: Math.round(i.left), y: Math.round(i.top), kl: Math.round(k.left), kr: Math.round(k.right), kt: Math.round(k.top), kb: Math.round(k.bottom) }; });
-  check(`${tag} 4 the file picker's menu opens from the ⋯ key (the input sits on it)`, anchor.x >= anchor.kl && anchor.x <= anchor.kr && anchor.y >= anchor.kt - 1 && anchor.y <= anchor.kb, anchor);
+  // iOS anchors its Photo Library / Camera / Files menu to the tap that opens it: attach starts from the field's +, in the bottom bar; the ⋯
+  // sheet has no Attach tile while the field shows (its tile sat mid-screen, and so did the menu: the phone 2026-10-24)
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan');
+  const tiles = await P.page.$$eval('#ccsheet .tile', t => t.filter(x => getComputedStyle(x).display !== 'none').map(x => x.textContent));
+  await P.page.mouse.click(w / 2, 30); await kbAnim(P, Math.round(h * 0.52), h); await sleep(200);
+  const plus = await P.page.evaluate(() => { const a = document.getElementById('ccadd')?.getBoundingClientRect(), d = document.getElementById('ccdock').getBoundingClientRect(); return a ? { top: Math.round(a.top), dockTop: Math.round(d.top), left: Math.round(a.left) } : null; });
+  check(`${tag} 4 attach is the field's + in the bottom bar; the ⋯ sheet has no Attach tile while the field shows`, !!plus && plus.top >= plus.dockTop && JSON.stringify(tiles) === '["Copy text","Paste"]', [plus, tiles]);
+  const chooser = P.page.waitForEvent('filechooser', { timeout: 3000 });
+  await P.page.locator('#ccadd').click(); await sleep(100);
   // the picker covers the page: blur, and the page is not rendered meanwhile, so a text area measures 0 (its scrollHeight, stubbed; the layout
   // itself does not move); the upload and Claude's [Image #1] arrive while it is up; then the page comes back
   await P.page.evaluate(() => { dispatchEvent(new Event('blur')); Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { get: () => 0, configurable: true }); });
-  await P.page.setInputFiles('input[type=file]', { name: 'IMG_8152.png', mimeType: 'image/png', buffer: PNG }); await sleep(600);
+  await (await chooser).setFiles({ name: 'IMG_8152.png', mimeType: 'image/png', buffer: PNG }); await sleep(600);
   await P.page.evaluate(() => { delete (/** @type {any} */ (HTMLTextAreaElement.prototype)).scrollHeight; dispatchEvent(new Event('focus')); }); await sleep(600);
   {
     const [rec, wt] = await P.page.evaluate(() => { const r = [window.__qa.rec, window.__qa.watch]; window.__qa.rec = null; window.__qa.watch = null; return r; });
@@ -322,11 +325,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} W2 xterm's input is disabled: a focus on it does not take, typed keys reach nothing behind the field`, x.disabled && !x.focused && sent() === n0 && !F.draft.includes('zz'), [x, sent() - n0, F.draft]);
   check(`${tag} W2 the terminal's box cannot be scrolled (iOS scrolls a focused input's container into view): Claude's box stays under the dock`, x.scrolled === 0 && (await st(P)).two === two0, [x, await st(P)]);
   // W3 every way out of the ⋯ menu, then a tap on the terminal and typing: the text is in the field
-  for (const way of ['backdrop', 'Copy text', 'Attach file']) {
+  for (const way of ['backdrop', 'Copy text', 'the + (attach)']) {
     await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan');
     if (way === 'backdrop') await P.page.mouse.click(w / 2, 30);
     else if (way === 'Copy text') { await P.page.locator('#ccsheet .tile', { hasText: 'Copy text' }).click(); await sleep(150); await P.page.locator('#ccclip-x').click(); }
-    else { await P.page.locator('#ccsheet .tile', { hasText: 'Attach file' }).click(); await P.page.setInputFiles('input[type=file]', { name: 'w3.png', mimeType: 'image/png', buffer: PNG }); }
+    else { await P.page.mouse.click(w / 2, 30); const fc = P.page.waitForEvent('filechooser', { timeout: 3000 }); await P.page.locator('#ccadd').click(); await (await fc).setFiles({ name: 'w3.png', mimeType: 'image/png', buffer: PNG }); }
     await sleep(500);
     await tapTerm(); n0 = sent();
     await P.page.keyboard.type('after ' + way, { delay: 5 }); await sleep(250);

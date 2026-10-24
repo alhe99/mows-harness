@@ -29,7 +29,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title }) {
     el('div', { className: 'tiles' },
       clip ? tile(I.copy, 'Copy text', clip.open) : null,
       clip ? tile(I.paste, 'Paste', clip.paste) : null,
-      tile(I.attach, 'Attach file', att.pick)),
+      tile(I.attach, 'Attach file', att.pick)), // only while the composer is not shown: its + attaches from the bottom bar (open() below)
     el('div', { className: 'ln' }, el('span', {}, 'Text size'), el('span', { className: 'step' }, fonts.down, fonts.span, fonts.up)),
     theme.select ? el('div', { className: 'ln' }, el('label', { htmlFor: 'ccthemesel' }, 'Theme'), theme.select) : null,
     row('Detach from tmux', () => { close(); detach(); }, '', el('small', {}, '^Q d')),
@@ -41,6 +41,8 @@ export function menu({ clip, att, fonts, theme, detach, restart, title }) {
     const t = title();
     name.textContent = t ? t.label || t.name : 'terminal'; sub.textContent = t && t.label && t.label !== t.name ? 'tmux ' + t.name : '';
     armed = 0; restartRow.firstChild.textContent = RESTART;
+    const cc = document.getElementById('cccomp'), attachTile = [...pan.querySelectorAll('.tile')].find(t => t.textContent === 'Attach file');
+    if (attachTile) attachTile.hidden = !!cc && !cc.hidden;
     sheet.classList.add('open');
   };
   const close = () => sheet.classList.remove('open');

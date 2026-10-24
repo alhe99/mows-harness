@@ -21,8 +21,9 @@ import { mods } from './bar.mjs';
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
 const LINGER = 1500, SETTLE = 400;
 
-/** @param {{ url: string, name: string, path: string }[]} uploads images sent from this page, in order (attach.mjs) */
-export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = []) {
+/** @param {{ url: string, name: string, path: string }[]} uploads images sent from this page, in order (attach.mjs)
+ *  @param {() => void} pick opens the file picker (attach.mjs) */
+export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = [], pick = () => {}) {
   if (!coarse() || off('comp')) return null;
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
@@ -33,7 +34,11 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const clear = el('button', { type: 'button', id: 'ccclear', 'aria-label': 'remove it from the message', textContent: '×' });
   const draft = el('span', { className: 'dchip', hidden: true }, draftText, clear);
   const send = el('button', { type: 'submit', id: 'ccsend', 'aria-label': 'send' }, icon(SEND));
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, mode, draft, send));
+  // + attaches: iOS anchors its Photo Library / Camera / Files menu to the tap, so it opens from here, the bottom bar, not from the middle of the
+  // screen where the ⋯ sheet's tile was (the phone, 2026-10-24). A plain click: the picker needs a full user activation
+  const add = el('button', { type: 'button', id: 'ccadd', 'aria-label': 'attach a photo or file' }, icon('<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'));
+  add.addEventListener('click', () => pick());
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: true }, ta, el('div', { className: 'cbar' }, add, mode, draft, send));
 
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
