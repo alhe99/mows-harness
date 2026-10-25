@@ -561,9 +561,9 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 .fleet-cards .fchd + .muted{font:500 13px var(--sans)!important;color:var(--mut)}
 .fleet-cards .fsnip{font:12px/1.5 var(--mono)!important;color:var(--dim);background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.04);border-radius:12px;padding:8px 10px;margin-top:4px}
 .fleet-cards .fcact{gap:8px}
-.fleet-cards .fcact .ab{width:42px;height:42px;min-height:42px;padding:0;justify-content:center;border-radius:50%}
+.fleet-cards .fcact > .ab,.fleet-cards .fcact > .kx > summary.ab{width:42px;height:42px;min-height:42px;padding:0;justify-content:center;border-radius:50%}
 .fleet-cards .ab.ok,.fleet-cards .ab.ok:hover{background:var(--ok-bg);border-color:var(--ok-bd)}
-.fleet-cards .fcact summary.ab{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.07)}
+.fleet-cards .fcact > .kx > summary.ab{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.07)}
 .kc{border-radius:20px;background:rgba(39,39,42,.92);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 .newcard{border-radius:22px;padding:20px;margin-top:8px}
 .tabs{left:12px;right:12px;bottom:var(--tbo);padding:5px 6px;border:1px solid rgba(255,255,255,.08);border-radius:30px;

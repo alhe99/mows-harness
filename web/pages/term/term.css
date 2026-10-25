@@ -193,3 +193,37 @@ background:none;width:100%;box-sizing:border-box;text-align:left;font:15px var(-
 #ccsheet .step button{width:40px;height:36px;border-radius:9px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:500 16px var(--c-mono);padding:0}
 #ccsheet .step span{min-width:34px;text-align:center;font:500 14px var(--c-mono);font-variant-numeric:tabular-nums}
 select#ccthemesel{height:36px;max-width:60%;background:var(--c-raised);color:var(--c-fg);border:1px solid var(--c-line2);border-radius:9px;font:14px var(--c-sans);padding:0 10px}
+
+/* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */
+#ccpick{position:fixed;inset:0;z-index:72;display:none;background:rgba(0,0,0,.6)}
+#ccpick.open{display:block}
+#ccpick .pan{position:absolute;left:0;right:0;bottom:0;max-height:88%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--c-surface);
+border-top:1px solid var(--c-line2);border-radius:22px 22px 0 0;font:15px var(--c-sans);color:var(--c-fg);
+padding:8px calc(12px + env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) calc(12px + env(safe-area-inset-left,0px))}
+#ccpick .grab{flex:none;width:36px;height:4px;border-radius:2px;background:var(--c-line2);margin:0 auto 12px}
+#ccpick .hd{flex:none;display:flex;align-items:center;gap:12px;padding:0 4px;min-width:0}
+#ccpick .hd b{flex:1;min-width:0;font:600 17px var(--c-sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ccpick .hd button{flex:none;border:0;background:none;padding:6px 0;color:var(--c-mut);font:500 15px var(--c-sans)}
+#ccpick .tx{flex:none;margin:6px 4px 0;font:13px/1.45 var(--c-sans);color:var(--c-mut);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden} /* the list keeps the room */
+#ccpick .opts{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;gap:2px;align-content:start;margin:12px -2px 0;padding:0 2px}
+#ccpick .opt{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;row-gap:3px;width:100%;box-sizing:border-box;
+padding:10px 12px;border:1px solid transparent;border-radius:14px;background:none;text-align:left}
+#ccpick .opt:active{background:var(--c-raised)}
+#ccpick .ol{font:500 14.5px var(--c-mono);color:var(--c-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccpick .od{grid-column:1;font:13px/1.35 var(--c-sans);color:var(--c-mut)}
+#ccpick .opt svg{grid-column:2;grid-row:1/span 2;width:18px;height:18px;color:var(--c-ok)}
+#ccpick .opt.on{background:var(--c-raised);border-color:var(--c-line2)}
+#ccpick .opt.cur .ol{color:var(--c-ok)}
+#ccpick .more{width:100%;padding:10px 12px;border:1px dashed var(--c-line2);border-radius:14px;background:none;color:var(--c-mut);font:500 13px var(--c-sans);margin:4px 0}
+#ccpick .adj{flex:none;display:flex;align-items:center;gap:8px;margin-top:10px;padding:5px;border:1px solid var(--c-line);border-radius:14px;background:var(--c-bg)}
+#ccpick .adj span{flex:1;text-align:center;font:500 13.5px var(--c-mono);color:var(--c-fg2)}
+#ccpick .adj button{flex:none;width:44px;height:36px;padding:0;border-radius:10px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:500 18px var(--c-sans)}
+#ccpick .acts{flex:none;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;margin-top:12px}
+#ccpick .acts button{min-height:46px;padding:6px 10px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:600 14px/1.25 var(--c-sans)}
+#ccpick .acts .pri{background:var(--c-ok);border-color:var(--c-ok);color:#04130d}
+#ccpick :is(.adj button,.acts button,.more):active{filter:brightness(1.15)}
+@media(prefers-reduced-motion:no-preference){
+#ccpick{transition:opacity .2s ease,display .25s allow-discrete}
+#ccpick .pan{transition:transform .28s cubic-bezier(.32,.72,0,1)}
+@starting-style{#ccpick.open{opacity:0}#ccpick.open .pan{transform:translateY(100%)}}
+}

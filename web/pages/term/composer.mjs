@@ -6,8 +6,8 @@
 // they sit under the dock while every visible row is conversation; what a row's remainder leaves is closed by a shift of less than a row. A
 // tap on the terminal brings the keyboard up in the field (from the touch itself: iOS ignores a focus moved inside a focus event). What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
 // submits it with whatever is typed; with an empty field, send submits the draft alone. The mode line comes back as the mode chip (tap =
-// shift+tab). A permission dialog: nothing is hidden, a bare digit picks. A shell or a full-screen program: no field, the terminal is the one
-// input. ?comp=off turns the composer off.
+// shift+tab). A permission dialog: nothing is hidden, a bare digit picks; a picker (/model) comes up as a sheet (pick.mjs). A shell or a
+// full-screen program: no field, the terminal is the one input. ?comp=off turns the composer off.
 // The layout must not depend on the screen from one frame to the next: showing the field resizes the terminal, Claude and tmux redraw, and
 // mid-redraw the box is briefly gone (the phone, 2026-10-23: the field flashed on and off). So the field appears at once and goes only after
 // Claude has been off the screen for LINGER ms, and the shift and the chips are kept through the same window.
@@ -17,9 +17,10 @@
 import { claudeScreen } from './claudebox.mjs';
 import { coarse, el, icon, off, say } from './dom.mjs';
 import { mods } from './bar.mjs';
+import { picker } from './pick.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
-const LINGER = 1500, SETTLE = 400;
+const LINGER = 1500, SETTLE = 400, ASKED = 3000;
 // Claude at work: its spinner line over the box (`· Recombobulating… (4m 18s · ↓ 15.1k tokens)`); a stopped turn: `⎿  Interrupted · …`
 const WORK = /^\s*[^\s\w]\s+\p{Lu}[\p{L}-]*…/u, STOP = /⎿\s+Interrupted\b/;
 
@@ -47,6 +48,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // the "/" menu: Claude's commands, the session's skills and custom commands (/app/commands.json), filtered as the field is typed; it opens
   // above the field, over the terminal (no layout change: nothing resizes); a tap puts the command in the field
   const cmds = el('div', { id: 'cccmds', role: 'listbox', 'aria-label': 'commands', hidden: true });
+  const sheet = picker(term); // Claude's /model and the like, as a sheet
   // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line, cut mid-resize, before the field took over).
   // The page starts as it will look: the field up, and Claude's rows already under the dock (as many as this session had last time, so the
   // pty's first size is its final one: no resize, no second redraw); the terminal stays out of sight until Claude has redrawn with its box
@@ -66,6 +68,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
 
   /** @type {{ t: string, p: number } | null} */ let sent = null;
   let top = -1, shift = '', choice = 0, held = '', seen = 0; // top: the row of the box's top rule while it is hidden; seen: Claude last on screen
+  // the picker sheet answers with keys, so it is shown only for a picker that came up within LINGER of Claude's own box (or ASKED of a slash
+  // command sent from the field, which is only up with Claude), and for as long as it stays up: a shell or a program that prints one is not
+  // Claude (security review 2026-10-24). While it is up the pty keeps the rows hidden under the dock (no resize: a resize makes Claude
+  // repaint the whole conversation, seconds on a long one, and the phone froze on open and on cancel; 2026-10-24); they give the picker
+  // room too. ponytail: a page opened on a picker already up, or a picker taller than the rows (its keys cut off), gets Claude's drawing and
+  // the field, as before
+  let boxAt = 0, askedAt = 0, trusted = false;
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
   const grow = () => {
@@ -110,6 +119,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // ↑ ↓ on the keys); nothing else is sent into it
     if (choice) { if (/^\d{1,2}$/.test(t)) term.input(t); else if (!t) term.input('\r'); return; }
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
+    if (t[0] === '/') askedAt = Date.now();
     sent = held ? null : { t, p: 0 }; // ponytail: a message sent with a draft (an image) is not given back; the draft stays Claude's
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
@@ -127,6 +137,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     scan();
     if (held) { say('Send or remove what is attached first'); return; } // typed after it, /model would be text, not the command
     if (top < 0 || choice) return;
+    askedAt = Date.now();
     term.paste('/model');
     setTimeout(() => term.input('\r'), 60);
   });
@@ -211,6 +222,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (t >= 0 || s.choice) seen = now;
     else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
+    if (s.box) boxAt = now;
+    trusted = !!s.picker && (trusted || now - boxAt < LINGER || now - askedAt < ASKED);
+    sheet.show(trusted ? s.picker : null);
     clearTimeout(linger);
     if (t >= 0) {
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
@@ -228,7 +242,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
         if (s.model && modelName.textContent !== s.model.name) modelName.textContent = s.model.name;
         if (s.model && modelEffort.textContent !== s.model.effort) modelEffort.textContent = s.model.effort;
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; hide(0); } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; if (!trusted) hide(0); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
