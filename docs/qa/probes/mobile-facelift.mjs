@@ -42,6 +42,17 @@ check('2 floating glass pill tab bar', tabs && tabs.pos === 'fixed' && tabs.left
 const card = await page.evaluate(() => { const c = document.querySelector('.fleet-cards .lp'); if (!c) return null; const lb = c.querySelector('.lb');
   return { radius: getComputedStyle(c).borderRadius, state: c.dataset.state, lbFs: lb ? parseFloat(getComputedStyle(lb).fontSize) : 0 }; });
 check('3 22px card with state + >=16px title', card && card.radius === '22px' && card.state !== undefined && card.lbFs >= 16, JSON.stringify(card));
+// the card's ⋯ menu: its buttons are menu rows, not the card's round 42px icon buttons (the phone, 2026-10-25: Pause, Save and Kill came out as clipped circles)
+await page.locator('.fleet-cards .fcact > .kx > summary').click();
+const menu = await page.evaluate(() => { const k = document.querySelector('.fleet-cards .kx[open] > .kc'); if (!k) return null; const kr = k.getBoundingClientRect();
+  const own = [...document.querySelectorAll('.fleet-cards .fcact > .ab, .fleet-cards .fcact > .kx > summary')].map(b => getComputedStyle(b).borderRadius);
+  const bad = [...k.querySelectorAll('.ab')].filter(b => b.offsetParent).map(b => { const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+    return { t: b.textContent.trim(), round: cs.borderRadius === '50%', over: b.scrollWidth > b.clientWidth + 1, out: r.left < kr.left || r.right > kr.right + 0.5 }; })
+    .filter(x => x.round || x.over || x.out);
+  return { own, bad, n: k.querySelectorAll('.ab').length }; });
+check('3b card menu rows are not round buttons', menu && menu.n >= 3 && !menu.bad.length && menu.own.length === 2 && menu.own.every(r => r === '50%'), JSON.stringify(menu));
+await page.screenshot({ path: `${out}/home-menu-390.png` });
+await page.locator('.fleet-cards .fcact > .kx > summary').click();
 
 {
 await page.goto(base + '/system', { waitUntil: 'load' });
