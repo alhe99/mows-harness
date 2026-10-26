@@ -11,6 +11,7 @@
 // reading does not: `node workflows.mjs --runs <transcript>` runs as the tmux user (userCmd, as cmdscan.mjs does), and every file it reads
 // must be a regular file opened without following a link, read up to CAP (security review 2026-10-26: a planted link, /dev/zero or a
 // root-only file, was read by root). ponytail: one short node process per poll of an open terminal; a cache when many phones watch at once.
+import { execFile } from 'node:child_process';
 import { constants, promises as fsp } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -87,8 +88,13 @@ export async function readRun(sdir, id) {
 /** the session's runs of the last KEEP, newest first */
 export async function runsOf(transcript) {
   const sdir = transcript.replace(/\.jsonl$/, ''), root = path.join(sdir, 'subagents', 'workflows');
+  // the recent ones by their directory's time first, then read only those: reading all of a long session's runs (28 here, some of 40 agents)
+  // took 316 MB a poll and the reader, inside the dashboard's 400 MB MemoryMax, aborted (exit 134, 2026-10-26)
   const ids = (await fsp.readdir(root).catch(() => [])).filter(d => RUN_RE.test(d));
-  const runs = await Promise.all(ids.map(id => readRun(sdir, id)));
+  const at = f => fsp.lstat(f).then(s => s.mtimeMs, () => 0); // the directory moves when an agent starts, the journal on every event
+  const mt = await Promise.all(ids.map(async id => Math.max(await at(path.join(root, id)), await at(path.join(root, id, 'journal.jsonl')))));
+  const recent = ids.filter((_, i) => Date.now() - mt[i] < KEEP).sort((x, y) => mt[ids.indexOf(y)] - mt[ids.indexOf(x)]).slice(0, MAX * 2);
+  const runs = await Promise.all(recent.map(id => readRun(sdir, id)));
   return runs.filter(r => Date.now() - r.last < KEEP).sort((x, y) => y.last - x.last).slice(0, MAX);
 }
 
@@ -173,8 +179,14 @@ export async function workflowsJson(req, res, url) {
   const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{window_panes} #{window_zoomed_flag} #{pane_tty}'])) : '';
   const tty = (/^11 (?:1 \d|\d+ 1) (\S+)$/m.exec(panes) || [])[1] || '';
   const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
-  let runs = [], agents = [];
-  if (row?.row?.path) try { ({ runs = [], agents = [] } = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--runs', row.row.path])) || '{}')); } catch {}
+  // runs/agents null: not known this time (the reader failed or the session has no transcript yet) — the page keeps what it showed. An empty
+  // answer wiped the phone's list on every failed poll (2026-10-26); the reason goes to the journal.
+  let runs = null, agents = null;
+  if (row?.row?.path) {
+    const [cmd, args] = userCmd([process.execPath, SELF, '--runs', row.row.path]);
+    const out = await new Promise(r => execFile(cmd, args, { timeout: 8000, maxBuffer: 4 << 20 }, (e, o, err) => { if (e) console.error(`workflows: --runs ${name}: ${e.code ?? ''} ${e.signal ?? ''} ${String(err).slice(0, 300)}`); r(e ? '' : o); }));
+    try { ({ runs, agents } = JSON.parse(out)); } catch { runs = agents = null; }
+  }
   const buf = Buffer.from(JSON.stringify({ session: name, runs, agents, claude }));
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': buf.length });
   res.end(buf);

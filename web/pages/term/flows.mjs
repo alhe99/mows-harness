@@ -112,7 +112,7 @@ export function flows(on) {
   const tick = () => {
     if (document.hidden) return;
     const t0 = Date.now(); // when it was asked: what it says is about the pane from then on
-    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j, t0); if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
+    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j, t0); if (j && Array.isArray(j.runs)) render(j.runs, Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ }); // runs null: the dashboard could not read them this time, same
     if (sel?.id) more();
   };
   tick();
