@@ -11,7 +11,8 @@ const MARK = { running: '●', done: '✓', failed: '✕', stale: '?' };
 const ago = ms => (ms < 90_000 ? Math.round(ms / 1000) + 's' : ms < 5_400_000 ? Math.round(ms / 60_000) + 'm' : (ms / 3_600_000).toFixed(1) + 'h');
 const kt = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1e3) + 'k');
 
-export function flows() {
+/** @param {(j: any) => void} [on] each answer, whole (term.mjs hands its `claude` to the composer) */
+export function flows(on) {
   const args = new URLSearchParams(location.search).getAll('arg');
   const url = '/app/workflows.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : '');
   const badge = el('span', { id: 'ccwf', hidden: true });
@@ -44,7 +45,7 @@ export function flows() {
   };
   const tick = () => {
     if (document.hidden) return;
-    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
+    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j); if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
   };
   tick();
   setInterval(tick, POLL);

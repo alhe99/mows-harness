@@ -72,9 +72,12 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // command sent from the field, which is only up with Claude), and for as long as it stays up: a shell or a program that prints one is not
   // Claude (security review 2026-10-24). While it is up the pty keeps the rows hidden under the dock (no resize: a resize makes Claude
   // repaint the whole conversation, seconds on a long one, and the phone froze on open and on cancel; 2026-10-24); they give the picker
-  // room too. ponytail: a page opened on a picker already up, or a picker taller than the rows (its keys cut off), gets Claude's drawing and
-  // the field, as before
-  let boxAt = 0, askedAt = 0, trusted = false;
+  // room too. A page opened on a picker already up (a question Claude asked while the phone was away, 2026-10-26) takes the dashboard's word
+  // that Claude is in front in the pane (claude(), from workflows.json every 5 s: up to 5 s stale once Claude exits). ponytail: a picker
+  // taller than the rows (its keys cut off) gets Claude's drawing and the field, as before
+  // A dialog trusted so stays trusted while it stays up: through Claude's redraws, and the resize that a keyboard going down makes (seconds on
+  // a long conversation), any gap under LINGER (dlgAt: the last scan that showed it, trusted)
+  let boxAt = 0, askedAt = 0, trusted = false, front = false, dlgAt = 0;
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
   const grow = () => {
@@ -223,8 +226,12 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
     if (s.box) boxAt = now;
-    trusted = !!s.picker && (trusted || now - boxAt < LINGER || now - askedAt < ASKED);
+    if (s.choice && (now - dlgAt < LINGER || front || now - boxAt < LINGER || now - askedAt < ASKED)) dlgAt = now;
+    trusted = !!s.picker && dlgAt === now;
     sheet.show(trusted ? s.picker : null);
+    // a question Claude asks (its `Chat about this` row) while the keyboard is up: the keyboard goes, so the terminal gets the rows to show
+    // it whole and the sheet can take it (the phone, 2026-10-26: cut off at the top, it stayed in Claude's drawing)
+    if (s.choice && !s.picker && document.activeElement === ta && rows.some(r => /^\s*(?:❯\s*)?\d+\. Chat about this$/.test(r))) ta.blur();
     clearTimeout(linger);
     if (t >= 0) {
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
@@ -328,5 +335,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     ta.setRangeText(t, ta.selectionStart, ta.selectionEnd, 'end'); grow();
     return true;
   };
-  return { el: form, typing: () => document.activeElement === ta, insert };
+  /** the dashboard's word: Claude is (or is not) the program in front in this pane */
+  const claude = b => { if (front !== b) { front = b; scan(); } };
+  return { el: form, typing: () => document.activeElement === ta, insert, claude };
 }

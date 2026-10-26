@@ -1,5 +1,5 @@
 // workflows.mjs — GET /app/workflows.json?tab=<8 hex>[&s=<session>]: the Workflow runs and background agents of the session a terminal tab
-// shows, for the phone's pill and sheet (web/pages/term/flows.mjs). Claude's own "Background tasks" panel does not render on the phone, so this reads what
+// shows, for the phone's badge and sheet (web/pages/term/flows.mjs), and whether Claude is in front in its pane (for composer.mjs). Claude's own "Background tasks" panel does not render on the phone, so this reads what
 // Claude writes to disk instead, next to the session's transcript <sid>.jsonl:
 //   <sid>/subagents/workflows/<run>/journal.jsonl   live, one line per event: launched | started {agentId,label,phase} | result | failed
 //   <sid>/workflows/<run>.json                      written once the run ends: status, durationMs, totalTokens, phases
@@ -100,11 +100,17 @@ export async function workflowsJson(req, res, url) {
   const { fleetState, tmuxLive, sh, userCmd } = await import('../core.mjs'), { tabSession } = await import('./commands.mjs'); // not at load: --runs needs neither
   const tab = url.searchParams.get('tab') || '', want = url.searchParams.get('s') || '';
   let name = /^[0-9a-f]{8}$/.test(tab) ? await tabSession(tab) : '';
-  if (!name && (await tmuxLive()).some(l => l.name === want)) name = want;
+  const live = await tmuxLive();
+  if (!name && live.some(l => l.name === want)) name = want;
+  // claude: Claude is the program in front in the session's pane (a `claude` in the tty's foreground process group, ps's `+`). The page
+  // trusts a question Claude draws that was already up when it opened on this word (composer.mjs); a shell printing one is not Claude.
+  // Fails closed: no pane, no tty, ps failing all read false.
+  const pane = live.find(l => l.name === name)?.paneId || '', tty = /^%\d+$/.test(pane) ? (await sh(...userCmd(['tmux', 'display-message', '-p', '-t', pane, '#{pane_tty}']))).trim() : '';
+  const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
   const row = name ? (await fleetState()).find(f => f.name === name) : null;
   let runs = [], agents = [];
   if (row?.row?.path) try { ({ runs = [], agents = [] } = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--runs', row.row.path])) || '{}')); } catch {}
-  const buf = Buffer.from(JSON.stringify({ session: name, runs, agents }));
+  const buf = Buffer.from(JSON.stringify({ session: name, runs, agents, claude }));
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': buf.length });
   res.end(buf);
 }

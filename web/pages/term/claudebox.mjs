@@ -11,7 +11,7 @@ const CLS = { 'accept edits': 'ed', 'plan mode': 'pl', 'bypass permissions': 'ba
 const MODEL = /\b(Opus|Sonnet|Haiku|Fable)(?: (\d+(?:\.\d+)?))?(?:\s*\((low|medium|high|xhigh|max|auto)\))?/;
 // a permission dialog: its own furniture (the selected option, the cancel hint) marks it wherever it sits on the bottom rows; its question
 // ("Do you want to …") is ordinary prose too, so that one counts only under the box's top rule
-const DIALOG = /Esc to cancel|❯\s*\d\.\s/, ASK = /Do you want to /;
+const DIALOG = /Esc to\s+cancel|❯[ \t]*\d\.[ \t]/, ASK = /Do you want to /; // on the rows joined: a narrow pane wraps `Esc to` / `cancel`
 const choices = rows => { let c = 0; for (const r of rows) { const m = /^\s*(?:│\s*)?(?:[❯>]\s*)?(\d)\.\s/.exec(r); if (m) c = Math.max(c, +m[1]); } return c; };
 
 /** @param {string[]} rows the screen, top to bottom, right-trimmed
@@ -37,7 +37,7 @@ export function claudeScreen(rows, typed = rows) {
   // and a box found above or below a real dialog would hide it while return answers it (security reviews 2026-10-23). Only the question's
   // words are read from the box down: above it is conversation, where they are only words.
   const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
-  if (tail.some(r => DIALOG.test(r)) || under.some(r => ASK.test(r))) return { box: null, mode: null, model: null, choice: choices(tail), picker: claudePicker(rows), edge: -1 };
+  if (DIALOG.test(tail.join('\n')) || under.some(r => ASK.test(r))) return { box: null, mode: null, model: null, choice: choices(tail), picker: claudePicker(rows), edge: -1 };
   // edge: the lowest rule with a prompt row under it, bottom rule or not. Mid-resize tmux shows the pane cut to the new size before Claude
   // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
   let edge = -1;
@@ -60,40 +60,53 @@ export function claudeScreen(rows, typed = rows) {
 // Esc to cancel`). null for anything else, a permission question included (its words are shown as Claude draws them), for a list with
 // Claude's box under it (output, not a picker), and for anything not laid out as Claude draws it: the title right under the line, nothing
 // under the keys but tmux's status line (a file printed in a shell must not pass for one; composer.mjs also wants Claude on screen first).
+// Claude's questions (AskUserQuestion, 2026-10-26, live captures at 53 columns in scripts/term-proto-check.mjs) are pickers too (ask: true):
+// a ─ line, the header (`☐ Prod Doppler`, or the tabs of several questions `←  ☒ Env  ☐ Checks  ✔ Submit  →`), the question (`│ ` before
+// each row of a single one), the options with their descriptions on the rows under them, `[ ]` / `[✔]` before each of a multi-select one
+// and a `Submit` row under them; the last option takes free text (free: `Type something.`, or what was typed into it) and a ─ line parts it
+// from `Chat about this`. Its keys line wraps (`· Esc to` / `cancel`); the review page that ends several questions has none.
 const TOP = /^\s*(?:─{8,}|▔{8,})\s*$/; // the picker's own top line is ▔ (2026-10-24); ─ as a fallback
 const OPT = /^\s*([❯↑↓])?\s*(\d{1,2})\.\s+(\S.*?)(?:\s{2,}(\S.*))?$/, MORE = /^\s*…\s*\+(\d+)\s+(\S.*)$/, ADJ = /^\s*\S?\s*(.+?)\s*←\/→ to adjust/;
+const HEAD = /^\s*(?:←\s+)?[☐☒✔]\s+\S/, BOX = /^\[([ ✔])\]\s+(.*)$/, SUBMIT = /^\s*(❯)?\s*Submit$/;
 /** @param {string[]} rows */
 export function claudePicker(rows) {
   rows = rows.map(r => r.trimEnd()); // the lengths measure the column: a row as xterm reads it keeps the spaces tmux cleared it with
-  const f = rows.map(r => /Esc to cancel/.test(r)).lastIndexOf(true);
+  let f = rows.findLastIndex((x, i) => /Esc to cancel/.test(x) || /^\s*cancel\b/.test(x) && /Esc to$/.test(rows[i - 1] || ''));
+  const end = f < 0 ? rows.findLastIndex((x, i) => i < rows.length - 1 && x.trim()) : -1; // a page with no keys: its last row, if a question's
+  if (f < 0) f = end;
   if (f < rows.length - 16 || f < 0) return null;
-  const r = rows.map((x, i) => i < f && TOP.test(x)).lastIndexOf(true);
+  const r = rows.findLastIndex((x, i) => i < f && TOP.test(x) && !OPT.test(rows[i + 1] || '')); // not the line over `Chat about this`
   if (r < 0 || !rows[r + 1]?.trim() || rows.slice(f + 1, -1).some(x => x.trim())) return null;
-  for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) || ASK.test(rows[i])) return null;
-  const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]) };
-  let col = 0, edge = 0, foot = '', head = 0; // head: 0 the title next, 1 its prose, 2 past it (a blank row ends it)
+  const ask = HEAD.test(rows[r + 1]);
+  if (end >= 0 && !ask) return null;
+  for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) && !OPT.test(rows[i + 1]) || !ask && ASK.test(rows[i])) return null;
+  const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]), ask, submit: /** @type {{ on: boolean } | null} */ (null) };
+  let edge = 0, foot = '', brk = false;
   for (const row of rows.slice(r + 1, f + 1)) {
-    const m = OPT.exec(row), a = ADJ.exec(row), t = row.trim();
+    const m = OPT.exec(row), a = ADJ.exec(row), t = row.trim().replace(/^│\s?/, ''), o = p.opts.at(-1), sub = ask && SUBMIT.exec(row);
+    if (TOP.test(row)) { if (ask && o) o.free = true; continue; } // the line over `Chat about this`: the option above it takes free text
+    if (sub) { p.submit = { on: !!sub[1] }; continue; }
     if (m) {
-      const o = { n: +m[2], label: m[3].replace(/\s*✔$/, ''), desc: '', on: m[1] === '❯', cur: /✔$/.test(m[3]), up: m[1] === '↑', down: m[1] === '↓', rows: /** @type {string[]} */ ([]) };
-      if (m[4]) { col = row.length - m[4].length; o.rows.push(row); }
-      p.opts.push(o);
-    } else if (!t) { if (head === 1 && p.text) head = 2; }
+      const b = ask ? BOX.exec(m[3]) : null, label = b ? b[2] : m[3];
+      const n = { n: +m[2], label: label.replace(/\s*✔$/, ''), desc: '', on: m[1] === '❯', cur: b ? b[1] === '✔' : /✔$/.test(m[3]), up: m[1] === '↑', down: m[1] === '↓', box: !!b, col: 0, rows: /** @type {string[]} */ ([]) };
+      if (m[4]) { n.col = row.length - m[4].length; n.rows.push(row); } else n.col = row.indexOf(label, row.indexOf(m[2] + '.')); // a description under it starts under the label
+      p.opts.push(n);
+    } else if (!t) brk = !!p.text;
     else if (MORE.test(row)) p.more = t.replace(/^…\s*/, '');
     else if (a) p.adjust = a[1];
-    else if (p.opts.length && !p.adjust && col && row.length - t.length >= col - 1) p.opts.at(-1).rows.push(row); // a description's next row
-    else if (p.opts.length) foot += ' ' + t;
-    else if (head === 0) { p.title = t; head = 1; }
-    else if (head === 1) p.text = (p.text + ' ' + t).trim();
+    else if (o && !p.adjust && o.col && row.length - row.trimStart().length >= o.col - 1) o.rows.push(row); // a description's next row
+    else if (o) foot += ' ' + t;
+    else if (!p.title) p.title = ask ? t.replace(/^←\s*|\s*→$/g, '').replace(/\s+✔ Submit$/, '').replace(/^[☐☒✔]\s*(?!.*\s[☐☒✔]\s)/, '') : t;
+    else { p.text = p.text ? p.text + (brk || /^[●→]/.test(t) ? '\n' : ' ') + t : t; brk = false; }
   }
   // a description's rows, joined. Claude wraps at words, and cuts only a word longer than the column (`longest-runni` / `ng tasks`): a row
   // that fills the column and two halves together longer than it were one word
   for (const o of p.opts) for (const row of o.rows) edge = Math.max(edge, row.length);
   for (const o of p.opts) {
     let full = false; // the row before reached the edge
-    for (const row of o.rows) { const t = row.slice(col).trim(), cut = full && (/\S+$/.exec(o.desc)?.[0] ?? '').length + (/^\S+/.exec(t)?.[0] ?? '').length > edge - col; o.desc += (o.desc && !cut ? ' ' : '') + t; full = row.length === edge; }
-    delete o.rows;
+    for (const row of o.rows) { const t = row.slice(o.col).trim(), cut = full && (/\S+$/.exec(o.desc)?.[0] ?? '').length + (/^\S+/.exec(t)?.[0] ?? '').length > edge - o.col; o.desc += (o.desc && !cut ? ' ' : '') + t; full = row.length === edge; }
+    delete o.rows; delete o.col;
   }
   for (const s of foot.split(' · ')) { const m = /^\s*(\S+) to (.+?)\s*$/.exec(s); if (m && !m[1].includes('/')) p.keys.push({ key: m[1], label: m[2] }); }
-  return p.opts.length && p.title && p.keys.length ? p : null;
+  return p.opts.length && p.title && (p.keys.length || ask) ? p : null;
 }
