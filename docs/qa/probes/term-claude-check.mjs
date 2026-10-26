@@ -39,6 +39,7 @@ const ASK1 = { head: 'Prod Doppler', q: 'Every missing Doppler value is in prod.
     ['Credentials only, now', 'I generate the proxy username/password and write it to the three prod consumer configs. No CA.'], ['Everything, now', 'Credentials plus a prod CA generated on this VM, key uploaded straight to Doppler and shredded.']] };
 const ASKM = { q: 'Which checks should run?', opts: [['Lint', 'Run the linter over the changed code'], ['Tests', 'Run the unit and integration test suites']] };
 const words = (t, w) => { const out = []; let l = ''; for (const x of t.split(' ')) { if (l && (l + ' ' + x).length > w) { out.push(l); l = x; } else l = l ? l + ' ' + x : x; } if (l) out.push(l); return out; };
+const agReq = []; // the agent-detail requests the sheet made
 let FRONT = false; // workflows.json's word: Claude is in front in the pane
 
 class FakeClaude {
@@ -253,8 +254,10 @@ async function phone(w, h) {
     if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
     if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
+    if (p.startsWith('/app/workflows.json') && new URL(r.request().url()).searchParams.has('agent')) { agReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ agent: { result: '', failed: false,
+      steps: [{ t: '2026-10-26T21:00:00Z', k: 'say', s: 'Reviewing the branch.' }, { t: '2026-10-26T21:01:00Z', k: 'tool', s: 'Bash: Run the suite' }] } }) }); }
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
-      agents: [{ label: 'build:lego0', phase: 'Build', state: 'done' }, { label: 'build:web', phase: 'Build', state: 'failed' }, { label: 'review:branch', phase: 'Review', state: 'running' }] }],
+      agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
       agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
@@ -346,6 +349,22 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
   check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
   const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, ags: [...document.querySelectorAll('#ccsheet .wf .ags li')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
+  // a tap on an agent: its detail in the sheet, as the desktop's panel shows it (2026-10-26) — the rest of the sheet steps aside, newest step
+  // first; ‹ goes back to the list, and a sheet closed on the detail opens on the list again
+  await P.page.locator('#ccsheet .wf li', { hasText: 'review:branch' }).click(); await P.page.waitForSelector('#ccsheet .dt ol'); await sleep(100);
+  const dt = await P.page.evaluate(() => ({ head: document.querySelector('#ccsheet .dh b')?.textContent, sub: document.querySelector('#ccsheet .dh small')?.textContent,
+    steps: [...document.querySelectorAll('#ccsheet .dt ol li')].map(l => l.className + ':' + l.querySelector('span').textContent),
+    rest: [...document.querySelector('#ccsheet .pan').children].filter(c => !c.matches('.wf,.grab') && getComputedStyle(c).display !== 'none').length }));
+  const aq = new URL(agReq.at(-1) || 'http://x/');
+  check(`${tag} 1 agent detail: a tap shows the agent, what it did newest first, and nothing else of the sheet`, dt.head === 'review:branch' && dt.sub === 'running · email-engine-build · Review'
+    && dt.steps.join() === 'tool:Bash: Run the suite,say:Reviewing the branch.' && dt.rest === 0 && aq.searchParams.get('agent') === 'w3' && aq.searchParams.get('run') === 'wf_0123abcd-ef0', [dt, agReq.at(-1)]);
+  await P.page.locator('#ccsheet .back').click(); await sleep(100);
+  const back = await P.page.evaluate(() => document.querySelectorAll('#ccsheet .wf .run li').length + ':' + !!document.querySelector('#ccsheet .dt'));
+  await P.page.locator('#ccsheet .wf li', { hasText: 'dev-ladder' }).click(); await sleep(100);
+  await P.page.mouse.click(w / 2, 40); await sleep(400);
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await sleep(300);
+  const reopen = await P.page.evaluate(() => !!document.querySelector('#ccsheet .dt') + ':' + getComputedStyle(document.querySelector('#ccsheet .hd')).display);
+  check(`${tag} 1 agent detail: ‹ is the list again; closed on a detail, the sheet opens on the list`, back === '5:false' && reopen === 'false:flex' && new URL(agReq.at(-1)).searchParams.get('run') === null, [back, reopen]);
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
   check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);

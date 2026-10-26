@@ -103,7 +103,7 @@ const comp = composer(term, tc, () => fit(true), att.recent, att.pick);
 const args = new URLSearchParams(location.search).getAll('arg');
 const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') } : null;
 const wf = coarse() ? flows((j, t0) => comp?.claude(!!j.claude, t0)) : null; // the session's Workflow runs and agents: a badge on ⋯, a block on top of the sheet
-const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session, top: wf?.box }) : null;
+const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session, top: wf?.box, shut: wf?.home }) : null;
 const bar = el('div', { id: 'cckb' }, ...baseKeys(term, { typing: () => !!comp?.typing(), type: t => comp?.insert(t), menu: () => sheet?.open() }));
 document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
 fit(true); // now, not from the observer a frame later: the socket may open first, and the size it sends is the pty's (one redraw, not two)

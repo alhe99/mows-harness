@@ -158,9 +158,12 @@ color:var(--c-fg);font:500 12px var(--c-mono);opacity:0;pointer-events:none;tran
 padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));max-height:80%;box-sizing:border-box;overflow-y:auto;transform:translateY(100%);
 font:15px var(--c-sans);color:var(--c-fg)}
 #ccsheet.open .pan{transform:translateY(0)}
-/* a sheet runs to the screen's edge, as a native one does: iOS 26 paints its reserved bottom zone with the canvas colour, so an open sheet takes
-   the canvas, and the home indicator lives in that zone (or under the keyboard), so the sheet's padding leaves env() out (the dock's rule). 2026-10-26 */
-html:has(#ccsheet.open,#ccpick.open){background:var(--c-surface)}
+/* a sheet runs to the screen's edge, as a native one does. iOS 26 paints its reserved bottom zone in the colour of what is fixed at the bottom
+   edge: the body (fixed, the page black), never the canvas — a canvas in the sheet's grey left the zone black on the phone (#09090b, 2026-10-26).
+   So an open sheet's panel is itself fixed, and the body takes its grey too, for an engine that samples the outer one. The home indicator lives
+   in that zone (or under the keyboard), so the sheet's padding leaves env() out (the dock's rule). 2026-10-26 */
+:is(#ccsheet,#ccpick) .pan{position:fixed}
+body:has(#ccsheet.open,#ccpick.open){background:var(--c-surface)!important} /* !important: theme.mjs sets the body's background inline */
 body:is(.kbup,.nozone) :is(#ccsheet,#ccpick) .pan{padding-bottom:14px}
 /* motion: the backdrop fades, the sheet slides, transform and opacity only. display sits in the transition with allow-discrete so the slide-out plays
    before display flips to none, and @starting-style gives the slide-in a from-state. A browser without either drops these and toggles instantly. */
@@ -213,7 +216,22 @@ background:var(--c-raised);color:var(--c-mut);border:1px solid var(--c-line2);fo
 #ccsheet .wf li{display:flex;align-items:baseline;gap:8px;font:13px var(--c-mono);color:var(--c-fg2);min-width:0}
 #ccsheet .wf li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #ccsheet .wf .ags li span small{display:block;overflow:hidden;text-overflow:ellipsis} #ccsheet .wf li.stale i{color:var(--c-dim)}
+#ccsheet .wf li[data-id]:not([data-id=""]){cursor:pointer} #ccsheet .wf li[data-id]:active{color:var(--c-fg)}
 #ccsheet .wf li i{font-style:normal;width:1em;flex:none} #ccsheet .wf li.done i{color:var(--c-ok)} #ccsheet .wf li.failed i{color:var(--c-bad)} #ccsheet .wf li.running i{color:var(--c-ok);animation:ccload-blink 1.06s steps(1) infinite}
+
+/* an agent's detail (flows.mjs): the rest of the sheet steps aside; ‹ and the label, the result once it ends, then what it did, newest first */
+#ccsheet .pan:has(.wf.detail)>:not(.wf,.grab){display:none}
+#ccsheet .dh{display:flex;align-items:center;gap:10px;margin-bottom:12px;min-width:0} #ccsheet .dh>div{display:grid;gap:2px;min-width:0}
+#ccsheet .dh b{font:600 16px var(--c-sans);overflow-wrap:anywhere} #ccsheet .dh small{font:400 11.5px var(--c-mono);color:var(--c-dim)} #ccsheet .dh small.running{color:var(--c-ok)}
+#ccsheet .back{flex:none;width:36px;height:36px;border-radius:10px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:500 22px/1 var(--c-sans);padding:0 0 3px}
+#ccsheet .res{margin:0 0 12px;padding:10px 12px;border:1px solid var(--c-ok-bd);border-radius:12px;background:var(--c-raised);font:12px/1.45 var(--c-mono);color:var(--c-fg2);
+white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto} #ccsheet .res.failed{border-color:var(--c-bad)}
+#ccsheet .dt ol{list-style:none;margin:0;padding:0;display:grid}
+#ccsheet .dt ol li{display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid var(--c-line);font:12.5px/1.4 var(--c-mono);color:var(--c-fg2)}
+#ccsheet .dt ol li:last-child{border-bottom:0} #ccsheet .dt ol li small{color:var(--c-dim);font-size:11px;padding-top:1px}
+#ccsheet .dt ol li span{white-space:normal;text-overflow:clip;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+#ccsheet .dt ol li.say span{font-family:var(--c-sans);color:var(--c-fg)}
+#ccsheet .dt p{margin:4px 0;font:13px var(--c-sans);color:var(--c-dim)}
 
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */
 #ccpick{position:fixed;inset:0;z-index:72;display:none;background:rgba(0,0,0,.6)}

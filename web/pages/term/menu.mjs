@@ -10,8 +10,8 @@ const I = {
 };
 const ic = d => { const s = icon(d); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '1.8'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); return s; };
 
-/** @param {{ clip: any, att: { pick: () => void }, fonts: any, theme: any, detach: () => void, restart: () => void, title: () => { name: string, label: string } | null, top?: HTMLElement | null }} o */
-export function menu({ clip, att, fonts, theme, detach, restart, title, top = null }) {
+/** @param {{ clip: any, att: { pick: () => void }, fonts: any, theme: any, detach: () => void, restart: () => void, title: () => { name: string, label: string } | null, top?: HTMLElement | null, shut?: () => void }} o */
+export function menu({ clip, att, fonts, theme, detach, restart, title, top = null, shut }) {
   const name = el('b'), sub = el('span');
   const tile = (d, label, fn) => { const b = el('button', { type: 'button', className: 'tile' }, ic(d), label); b.addEventListener('click', () => { close(); fn(); }); return b; };
   const row = (label, fn, cls = '', extra = null) => { const b = el('button', { type: 'button', className: 'ln ' + cls }, el('span', {}, label), extra); b.addEventListener('click', () => fn(b)); return b; };
@@ -26,7 +26,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title, top = nu
   const pan = el('div', { className: 'pan', role: 'dialog', 'aria-label': 'terminal actions' },
     el('div', { className: 'grab' }),
     el('div', { className: 'hd' }, name, sub),
-    top, // the session's workflow runs (flows.mjs), when it has any
+    top, // the session's workflow runs (flows.mjs), when it has any; shut takes it back to its list
     el('div', { className: 'tiles' },
       clip ? tile(I.copy, 'Copy text', clip.open) : null,
       clip ? tile(I.paste, 'Paste', clip.paste) : null,
@@ -47,7 +47,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title, top = nu
     if (attachTile) attachTile.hidden = !!cc && !cc.hidden;
     sheet.classList.add('open');
   };
-  const close = () => sheet.classList.remove('open');
+  const close = () => { sheet.classList.remove('open'); shut?.(); };
   document.body.append(sheet);
   return { open, close };
 }

@@ -7,7 +7,7 @@
 //   <sid>/subagents/agent-<id>.meta.json            an Agent call (2026-10-26): name, description, "finished" once it is done
 //   <sid>/subagents/agent-<id>.jsonl                its transcript: the last tool it called is what it is doing
 // A run with no final file is running, or "stale" once nothing in its directory changed for STALE (Claude exited mid-run). Read-only; the
-// paths come from the session index, never from the request. The dashboard runs as root and these files sit in the user's home, so the
+// paths come from the session index, never from the request (an agent's detail takes its id and run from the request, both pattern-checked). The dashboard runs as root and these files sit in the user's home, so the
 // reading does not: `node workflows.mjs --runs <transcript>` runs as the tmux user (userCmd, as cmdscan.mjs does), and every file it reads
 // must be a regular file opened without following a link, read up to CAP (security review 2026-10-26: a planted link, /dev/zero or a
 // root-only file, was read by root). ponytail: one short node process per poll of an open terminal; a cache when many phones watch at once.
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const STALE = 30 * 60_000, KEEP = 24 * 3600_000, MAX = 5;
-const RUN_RE = /^wf_[0-9a-f-]{6,}$/, AGENT_RE = /^agent-([\w-]{1,80})\.meta\.json$/, CAP = 4 << 20, TAIL = 64 << 10;
+const RUN_RE = /^wf_[0-9a-f-]{6,}$/, ID_RE = /^[\w-]{1,80}$/, AGENT_RE = /^agent-([\w-]{1,80})\.meta\.json$/, CAP = 4 << 20, TAIL = 64 << 10, LOG = 1 << 20, STEPS = 40;
 
 /** a regular file, never through a link, its last CAP bytes ('' for anything else) */
 async function readCapped(p, cap = CAP) {
@@ -41,7 +41,7 @@ export async function readRun(sdir, id) {
   const agents = new Map(); // agentId -> { label, phase, state }
   for (const l of jtxt.split('\n')) {
     let e; try { e = JSON.parse(l); } catch { continue; }
-    if (e.type === 'started') agents.set(e.agentId, { label: String(e.label || ''), phase: String(e.phase || ''), state: 'running' });
+    if (e.type === 'started') agents.set(e.agentId, { id: String(e.agentId), label: String(e.label || ''), phase: String(e.phase || ''), state: 'running' });
     else if ((e.type === 'result' || e.type === 'failed') && agents.has(e.agentId)) agents.get(e.agentId).state = e.type === 'result' ? 'done' : 'failed';
   }
   let fin = null; try { fin = ftxt ? JSON.parse(ftxt) : null; } catch {}
@@ -70,15 +70,41 @@ export async function runsOf(transcript) {
   return runs.filter(r => Date.now() - r.last < KEEP).sort((x, y) => y.last - x.last).slice(0, MAX);
 }
 
-/** the last tool call in a transcript's tail, as "Tool: what for" */
-function doing(tail) {
-  const ls = tail.split('\n');
-  for (let i = ls.length - 1; i > 0; i--) { // line 0 is cut at the tail's start
+/** what an agent did, from its transcript's tail, oldest first: each tool call as "Tool: what for", and what it said */
+function steps(tail) {
+  const out = [], ls = tail.split('\n');
+  for (let i = 1; i < ls.length; i++) { // line 0 is cut at the tail's start
     let e; try { e = JSON.parse(ls[i]); } catch { continue; }
-    const u = Array.isArray(e?.message?.content) ? e.message.content.findLast(c => c?.type === 'tool_use') : null;
-    if (u) { const why = u.input?.description || u.input?.command || u.input?.file_path || u.input?.pattern || ''; return (String(u.name) + (why ? ': ' + String(why) : '')).replace(/\s+/g, ' ').slice(0, 120); }
+    if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
+    for (const c of e.message.content) {
+      if (c?.type === 'tool_use') { const why = c.input?.description || c.input?.command || c.input?.file_path || c.input?.pattern || ''; out.push({ t: String(e.timestamp || ''), k: 'tool', s: (String(c.name) + (why ? ': ' + String(why) : '')).replace(/\s+/g, ' ').slice(0, 200) }); }
+      else if (c?.type === 'text' && String(c.text).trim()) out.push({ t: String(e.timestamp || ''), k: 'say', s: String(c.text).trim().slice(0, 4000) });
+    }
   }
-  return '';
+  return out;
+}
+/** a result as plain lines, for a phone: "key: value", nested ones indented, a list's items "-" (a script's StructuredOutput is JSON) */
+const plain = (v, pad = '') => (v && typeof v === 'object'
+  ? Object.entries(v).map(([k, x]) => `${pad}${Array.isArray(v) ? '-' : k + ':'}${x && typeof x === 'object' ? '\n' + plain(x, pad + '  ') : ' ' + x}`).join('\n')
+  : pad + String(v));
+const doing = tail => (steps(tail).findLast(x => x.k === 'tool')?.s || '').slice(0, 120);
+
+/** one agent, for the phone's detail view: its last STEPS and its result (a run's agent: the journal's; an Agent call: what it said last, once finished) */
+export async function agentLog(transcript, run, id) {
+  if (!ID_RE.test(id) || (run && !RUN_RE.test(run))) return null;
+  const sdir = transcript.replace(/\.jsonl$/, ''), dir = run ? path.join(sdir, 'subagents', 'workflows', run) : path.join(sdir, 'subagents');
+  const all = steps(await readCapped(path.join(dir, `agent-${id}.jsonl`), LOG));
+  let result = '', failed = false;
+  if (run) for (const l of (await readCapped(path.join(dir, 'journal.jsonl'))).split('\n')) {
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    if (e.agentId !== id || (e.type !== 'result' && e.type !== 'failed')) continue;
+    failed = e.type === 'failed'; const v = failed ? e.error ?? e : e.result;
+    result = plain(v);
+  } else {
+    let m; try { m = JSON.parse(await readCapped(path.join(dir, `agent-${id}.meta.json`), TAIL)); } catch {}
+    if (m?.finished) result = all.findLast(x => x.k === 'say')?.s || '';
+  }
+  return { steps: all.slice(-STEPS), result: result.slice(0, 8000), failed };
 }
 
 /** the session's background agents (Agent calls) active in the last KEEP, newest first */
@@ -102,6 +128,15 @@ export async function workflowsJson(req, res, url) {
   let name = /^[0-9a-f]{8}$/.test(tab) ? await tabSession(tab) : '';
   const live = await tmuxLive();
   if (!name && live.some(l => l.name === want)) name = want;
+  const row = name ? (await fleetState()).find(f => f.name === name) : null;
+  const ag = url.searchParams.get('agent'), run = url.searchParams.get('run') || '';
+  if (ag !== null) { // one agent's detail: { agent: null } for an unknown session or a bad id
+    let agent = null;
+    if (row?.row?.path && ID_RE.test(ag) && (!run || RUN_RE.test(run))) try { agent = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--agent', row.row.path, run || '-', ag])) || 'null'); } catch {}
+    const b = Buffer.from(JSON.stringify({ agent }));
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': b.length });
+    return res.end(b);
+  }
   // claude: Claude is the program in front in the pane the tab shows, the session's active pane (a `claude` in its tty's foreground process
   // group, ps's `+`). The page trusts a question Claude draws that was already up when it opened on this word (composer.mjs); a shell
   // printing one is not Claude. Fails closed: no pane, no tty, ps failing all read false. (security review 2026-10-26: the first pane is
@@ -110,7 +145,6 @@ export async function workflowsJson(req, res, url) {
   const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{window_panes} #{window_zoomed_flag} #{pane_tty}'])) : '';
   const tty = (/^11 (?:1 \d|\d+ 1) (\S+)$/m.exec(panes) || [])[1] || '';
   const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
-  const row = name ? (await fleetState()).find(f => f.name === name) : null;
   let runs = [], agents = [];
   if (row?.row?.path) try { ({ runs = [], agents = [] } = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--runs', row.row.path])) || '{}')); } catch {}
   const buf = Buffer.from(JSON.stringify({ session: name, runs, agents, claude }));
@@ -121,6 +155,8 @@ export async function workflowsJson(req, res, url) {
 const main = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 // node routes/workflows.mjs --runs <transcript>: { runs, agents } as JSON, for workflowsJson (as the tmux user)
 if (main && process.argv[2] === '--runs') { const t = String(process.argv[3] || ''); process.stdout.write(JSON.stringify({ runs: await runsOf(t), agents: await agentsOf(t) })); }
+// node routes/workflows.mjs --agent <transcript> <run|-> <id>: agentLog as JSON, the same way
+if (main && process.argv[2] === '--agent') { const [t, r, id] = process.argv.slice(3).map(String); process.stdout.write(JSON.stringify(await agentLog(t, r === '-' ? '' : r, id))); }
 // node routes/workflows.mjs --check: the parser against a fixture run (running, then finished), and a link is never followed
 if (main && process.argv[2] === '--check') {
   const assert = (await import('node:assert')).strict, os = await import('node:os');
@@ -148,11 +184,16 @@ if (main && process.argv[2] === '--check') {
   assert.equal(r.status, 'running');
   const sub = path.join(sdir, 'subagents'), w = (f, o) => fsp.writeFile(path.join(sub, f), typeof o === 'string' ? o : JSON.stringify(o));
   await w('agent-a1.meta.json', { name: 'dev-ladder', description: 'Dev ladder' });
-  await w('agent-a1.jsonl', 'cut{\n' + [{ message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls', description: 'Run E23\n tests' } }] } }, { message: { content: [{ type: 'tool_result' }] } }].map(e => JSON.stringify(e)).join('\n') + '\n');
+  await w('agent-a1.jsonl', 'cut{\n' + [{ type: 'assistant', timestamp: 'T1', message: { content: [{ type: 'text', text: 'Running E23.' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls', description: 'Run E23\n tests' } }] } }, { type: 'user', message: { content: [{ type: 'tool_result' }] } }].map(e => JSON.stringify(e)).join('\n') + '\n');
   await w('agent-a2.meta.json', { description: 'Old one', finished: true }); await w('agent-a2.jsonl', '');
   await fsp.symlink('/dev/zero', path.join(sub, 'agent-a3.meta.json')); await w('agent-a3.jsonl', ''); // a planted link: skipped
   const ag = await agentsOf(sdir + '.jsonl');
   assert.deepEqual(ag.map(a => [a.label, a.state, a.doing]), [['dev-ladder', 'running', 'Bash: Run E23 tests'], ['Old one', 'done', '']]);
+  assert.deepEqual(await agentLog(sdir + '.jsonl', '', 'a1'), { steps: [{ t: 'T1', k: 'say', s: 'Running E23.' }, { t: 'T1', k: 'tool', s: 'Bash: Run E23 tests' }], result: '', failed: false });
+  assert.equal((await agentLog(sdir + '.jsonl', id, 'a1')).result, ''); // a run's agent: the journal's result
+  assert.equal(plain({ ok: true, rows: [{ row: 'L1', v: 'PASS' }] }), 'ok: true\nrows:\n  -\n    row: L1\n    v: PASS');
+  assert.equal((await agentLog(sdir + '.jsonl', id, 'a2')).failed, true);
+  assert.equal(await agentLog(sdir + '.jsonl', '', '../a1'), null); assert.equal(await agentLog(sdir + '.jsonl', '../x', 'a1'), null);
   await fsp.rm(sdir, { recursive: true });
   console.log('workflows.mjs: ok');
 }
