@@ -62,6 +62,7 @@ import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
 import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
 import { commandsJson } from './routes/commands.mjs';
+import { workflowsJson } from './routes/workflows.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
@@ -189,6 +190,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/app') return await appView(req, res, url, UI === 'next');
     if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/app/commands.json') return await commandsJson(req, res, url);
+    if (p === '/app/workflows.json') return await workflowsJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
     if (p === '/md') return await mdView(req, res, url, UI === 'next');
     // ↻ button: force usage re-collect, then bounce back to the same page (PRG) with
