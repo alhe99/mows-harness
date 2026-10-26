@@ -194,10 +194,12 @@ background:none;width:100%;box-sizing:border-box;text-align:left;font:15px var(-
 #ccsheet .step span{min-width:34px;text-align:center;font:500 14px var(--c-mono);font-variant-numeric:tabular-nums}
 select#ccthemesel{height:36px;max-width:60%;background:var(--c-raised);color:var(--c-fg);border:1px solid var(--c-line2);border-radius:9px;font:14px var(--c-sans);padding:0 10px}
 
-/* the session's workflow runs (flows.mjs): a pill over the terminal's top right while one runs, and a block on top of the menu sheet */
-#ccwf{position:absolute;top:8px;right:10px;z-index:5;max-width:calc(100% - 20px);box-sizing:border-box;padding:5px 11px;border-radius:999px;border:1px solid var(--c-ok-bd);
-background:#0b1f18;color:var(--c-ok);font:500 11.5px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ccwf.failed,#ccwf.stale{color:var(--c-bad);border-color:var(--c-line2);background:var(--c-raised)} #ccwf.completed{color:var(--c-mut);border-color:var(--c-line2);background:var(--c-raised)}
+/* the session's workflow runs and agents (flows.mjs): a badge on the key bar's ⋯ while one runs, and a block on top of the menu sheet */
+#cckb button[data-k=Menu]{position:relative}
+#cckb button[data-k=Menu]:has(#ccwf.running){border-color:var(--c-ok-bd);color:var(--c-ok)}
+#ccwf{position:absolute;top:-6px;right:-4px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;display:grid;place-items:center;
+background:var(--c-raised);color:var(--c-mut);border:1px solid var(--c-line2);font:600 11px/1 var(--c-mono);pointer-events:none}
+#ccwf.running{background:var(--c-ok);color:#04130d;border-color:var(--c-ok)} #ccwf.failed,#ccwf.stale{color:var(--c-bad)}
 #ccwf[hidden],#ccsheet .wf[hidden]{display:none}
 #ccsheet .wf{margin-bottom:12px;display:grid;gap:10px}
 #ccsheet .run{border:1px solid var(--c-line2);border-radius:14px;background:var(--c-raised);padding:10px 12px}

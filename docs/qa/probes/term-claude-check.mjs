@@ -288,9 +288,13 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   const closed = await P.page.evaluate(() => !document.getElementById('ccsheet').classList.contains('open'));
   check(`${tag} 1 no strip, ⋯ is the bar's first key and opens the menu, a backdrop tap closes it`, !top.strip && top.wrapTop === 0 && top.first === 'Menu' && closed, [top, closed]);
-  // the session's Workflow run (2026-10-26): a pill at the terminal's top right, inside the screen; its tap opens the sheet, the run's agents on top
-  const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), r = p.getBoundingClientRect(); return { text: p.hidden ? '' : p.textContent, right: Math.round(r.right), top: Math.round(r.top), iw: innerWidth }; });
-  await P.page.locator('#ccwf').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
+  // the session's Workflow run and agents (2026-10-26): a count on the ⋯ key, off the terminal (a pill over it covered Claude's text), never
+  // clipped by the bar; ⋯ opens the sheet with the run's agents on top
+  const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), k = p.parentElement, r = p.getBoundingClientRect(), t = document.getElementById('terminal-wrap').getBoundingClientRect();
+    const hit = document.elementsFromPoint(r.left + r.width / 2, r.top + 2);
+    return { text: p.hidden ? '' : p.textContent, onMenu: k?.dataset.k === 'Menu', label: k?.getAttribute('aria-label'), offTerm: r.top >= t.bottom - 1, inView: r.top >= 0 && r.right <= innerWidth, shown: hit[0] === k || hit.includes(k) };
+  });
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
   // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top).
   // Measured once the slide-in has ended, not after a fixed wait: a busy WebKit was still sliding the sheet up after 450 ms (a flake, not a layout)
   await P.page.waitForFunction(() => /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/.test(getComputedStyle(document.querySelector('#ccsheet .pan')).transform), null, { timeout: 3000 }).catch(() => {});
@@ -300,7 +304,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
   const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, ags: [...document.querySelectorAll('#ccsheet .wf .ags li')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
   await P.page.mouse.click(w / 2, 40); await sleep(300);
-  check(`${tag} 1 workflow: the pill names the run and its phase, inside the screen; its tap opens the sheet with the agents on top`, wf.text === '⟳ email-engine-build · Review (2/2) · 2/3 agents' && wf.right <= wf.iw && wf.top >= 0 && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
+  check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
   check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);
   // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
   await P.page.evaluate(() => document.activeElement?.blur?.());

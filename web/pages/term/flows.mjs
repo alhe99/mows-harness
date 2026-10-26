@@ -1,8 +1,9 @@
-// flows.mjs — the session's Workflow runs and background agents (2026-10-26). Claude's "Background tasks" panel does not render on the phone, and its /workflows
-// overlay takes the terminal over, so this page asks the dashboard instead: /app/workflows.json (infra/dashboard/routes/workflows.mjs), every
-// POLL while the page is visible. A pill over the terminal while a run is going, or ended less than RECENT ago; its tap opens the menu sheet,
-// whose top block (box) lists every run of the last day with its agents, then the background agents (Agent calls) with what each is doing.
-// Touch only, like the sheet.
+// flows.mjs — the session's Workflow runs and background agents (2026-10-26). Claude's "Background tasks" panel does not render on the phone,
+// and its /workflows overlay takes the terminal over, so this page asks the dashboard instead: /app/workflows.json
+// (infra/dashboard/routes/workflows.mjs), every POLL while the page is visible. A badge on the key bar's ⋯ (term.mjs puts it there) counts
+// what is running, or marks a run ended less than RECENT ago; ⋯ opens the menu sheet, whose top block (box) lists every run of the last day
+// with its agents, then the background agents (Agent calls) with what each is doing. Not a pill over the terminal: that covered Claude's
+// text (2026-10-26). Touch only, like the sheet.
 import { el } from './dom.mjs';
 
 const POLL = 5000, RECENT = 15 * 60_000;
@@ -10,12 +11,10 @@ const MARK = { running: '●', done: '✓', failed: '✕', stale: '?' };
 const ago = ms => (ms < 90_000 ? Math.round(ms / 1000) + 's' : ms < 5_400_000 ? Math.round(ms / 60_000) + 'm' : (ms / 3_600_000).toFixed(1) + 'h');
 const kt = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1e3) + 'k');
 
-/** @param {() => void} open the menu sheet */
-export function flows(open) {
+export function flows() {
   const args = new URLSearchParams(location.search).getAll('arg');
   const url = '/app/workflows.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : '');
-  const pill = el('button', { type: 'button', id: 'ccwf', hidden: true });
-  pill.addEventListener('click', open);
+  const badge = el('span', { id: 'ccwf', hidden: true });
   const box = el('div', { className: 'wf', hidden: true });
 
   /** @param {any[]} runs @param {any[]} agents */
@@ -36,10 +35,12 @@ export function flows(open) {
       el('ul', {}, ...agents.map(a => el('li', { className: a.state, title: a.desc }, el('i', {}, MARK[a.state] || '·'),
         el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null), el('small', {}, a.state === 'running' ? '' : ago(now - a.last))))))
     : null);
-    const live = runs.find(r => r.status === 'running') || (!busy.length && runs.find(r => now - r.last < RECENT));
-    pill.hidden = !live && !busy.length;
-    if (live) { pill.className = live.status; pill.textContent = `${live.status === 'running' ? '⟳' : MARK[live.status === 'completed' ? 'done' : 'failed']} ${live.name} · ${line(live).split(' · ').slice(0, 2).join(' · ')}`; }
-    else if (busy.length) { pill.className = 'running'; pill.textContent = `⟳ ${busy.length > 1 ? busy.length + ' agents' : busy[0].label}${busy.length === 1 && busy[0].doing ? ' · ' + busy[0].doing.split(':')[0] : ''}`; }
+    const going = runs.filter(r => r.status === 'running').length + busy.length, ended = !going && runs.find(r => now - r.last < RECENT);
+    badge.hidden = !going && !ended;
+    badge.className = going ? 'running' : ended ? ended.status : '';
+    badge.textContent = going ? String(going) : ended ? MARK[ended.status === 'completed' ? 'done' : 'failed'] : '';
+    const say = going ? `${going} running` : ended ? `${ended.name} ${ended.status}` : '';
+    badge.parentElement?.setAttribute('aria-label', 'terminal actions' + (say ? ', ' + say : ''));
   };
   const tick = () => {
     if (document.hidden) return;
@@ -48,5 +49,5 @@ export function flows(open) {
   tick();
   setInterval(tick, POLL);
   document.addEventListener('visibilitychange', tick);
-  return { pill, box };
+  return { badge, box };
 }
