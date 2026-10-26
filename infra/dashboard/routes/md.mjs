@@ -50,11 +50,13 @@ ${tabs}${footerHtml()}${mermaid ? `<script>${LOADER}</script>` : ''}
 </body></html>`;
 }
 
-// A standalone .html file (an Archify diagram, a report) is sent as it is, under a CSP sandbox WITHOUT allow-same-origin: the page gets an
+// An Archify page (an .html file inside a .archify/ folder of the tmux user's home, what /diagrams lists; any other .html is refused) is sent
+// as it is, under a CSP sandbox WITHOUT allow-same-origin: the page gets an
 // opaque origin, so it cannot read the dashboard's cookies or storage, and connect-src 'none' keeps it from calling anything. Its own inline
 // scripts and styles run; exports download; a link opens a new tab that stays sandboxed (no allow-popups-to-escape-sandbox: a window it opens
 // gets no origin either). A page that loads anything from the network renders without it. ponytail: same origin as the dashboard, isolated by
 // the sandbox alone; a cookie-less subdomain for these files if they ever come from somewhere less trusted than this box's own home.
+// COOP same-origin cuts it off from any window that opened it; no-referrer keeps the file path out of the sites its links open.
 export const HTML_CSP = "sandbox allow-scripts allow-downloads allow-popups; default-src 'none'; " +
   "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:; " +
   "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
@@ -70,7 +72,9 @@ export async function mdView(req, res, url, next = false) {
   if (!real.startsWith(MD_ROOT + '/')) return oops(403, 'only files under /home are viewable.');
   const cap = html ? 16 : 2; // MB; an Archify page carries its viewer and fonts inline (~1 MB)
   if (!st.isFile() || st.size > cap * 1024 * 1024) return oops(403, `not a regular file under ${cap} MB.`);
-  if (html && !url.searchParams.get('dl')) return send(req, res, 200, await fsp.readFile(real), 'text/html; charset=utf-8', { 'content-security-policy': HTML_CSP });
+  if (html && !(real.startsWith(TMUX_HOME + '/') && real.includes('/.archify/'))) return oops(403, 'only Archify pages (an .html under a .archify/ folder of the home) are viewable.');
+  if (html && !url.searchParams.get('dl')) return send(req, res, 200, await fsp.readFile(real), 'text/html; charset=utf-8',
+    { 'content-security-policy': HTML_CSP, 'cross-origin-opener-policy': 'same-origin', 'referrer-policy': 'no-referrer' });
   const src = await fsp.readFile(real, 'utf8');
   // ?dl=1 -> the raw file as a download (phones can't reach the VPS disk any other way)
   if (url.searchParams.get('dl')) {

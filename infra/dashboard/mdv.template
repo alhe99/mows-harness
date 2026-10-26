@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mdv <file> — print the dashboard's preview URL for a markdown, .txt or standalone .html file (an Archify diagram).
+# mdv <file> — print the dashboard's preview URL for a markdown or .txt file, or an Archify page (.archify/*/*.html).
 # The dashboard's /md route renders it in the browser, phone and desktop alike; the printed
 # URL is clickable in /term (ttyd's xterm ships the web-links addon) and cmd-clickable in
 # most local terminals. Install: fill {{DOMAIN}} and copy to /usr/local/bin/mdv (chmod +x).
