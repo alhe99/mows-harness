@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
-import { BASE_CSP, send } from '../core.mjs';
+import { BASE_CSP, TMUX_HOME, send, sh, userCmd } from '../core.mjs';
 import { DOC_META, footerHtml, mdDocument, mdNotice, mdParts, pageChrome } from '../legacy.mjs';
 import { assetUrl } from '../static.mjs';
 
@@ -80,4 +80,41 @@ export async function mdView(req, res, url, next = false) {
   }
   if (next) return send(req, res, 200, mdNextDocument(real, st, src, req.headers.host || ''), 'text/html; charset=utf-8', { 'content-security-policy': MD_CSP });
   send(req, res, 200, mdDocument(real, st, src, req.headers.host));
+}
+
+// ---------- /diagrams: every Archify page under the user's home, newest first, each opening in /md above ----------
+// Archify writes <cwd>/.archify/<type>-<slug>-<time>/<slug>.html, and sessions run in the home or a project up to three levels below it, so a
+// glob at those depths finds them (~30 ms; a find over the home took 3 s). The glob, the stat and the <title> read run as the tmux user,
+// never root, and skip links. ponytail: a project deeper than three levels is not listed; add a depth to the glob when one is.
+const DIAGRAMS_SH = `cd "$1" || exit 0
+for f in .archify/*/*.html */.archify/*/*.html */*/.archify/*/*.html */*/*/.archify/*/*.html; do
+  [ -f "$f" ] && [ ! -L "$f" ] || continue
+  t=$(head -c 8192 -- "$f" | tr '\\n\\t' '  ' | grep -o '<title>[^<]*' | head -1)
+  printf '%s\\t%s\\t%s\\t%s\\n' "$(stat -c %Y -- "$f")" "$(stat -c %s -- "$f")" "\${t#<title>}" "$f"
+done`;
+const unent = s => s.replace(/&(lt|gt|quot|#39|amp);/g, (_, e) => ({ lt: '<', gt: '>', quot: '"', '#39': "'", amp: '&' })[e]);
+/** the glob's lines -> [{ mt, size, title, path, project, kind }], newest first; a line that does not parse is dropped */
+export function diagramRows(out, home) {
+  return out.split('\n').map(l => l.split('\t')).filter(c => c.length === 4 && /^\d+$/.test(c[0]) && /\.html?$/.test(c[3])).map(([mt, size, title, rel]) => {
+    const [proj, dir] = rel.split('/.archify/').length === 2 ? rel.split('/.archify/') : ['', rel.replace(/^\.archify\//, '')];
+    return { mt: +mt * 1000, size: +size, path: home + '/' + rel, project: proj || '~', kind: dir.split('-')[0],
+      title: unent(title).replace(/\s+Diagram$/, '').trim() || path.basename(rel, path.extname(rel)) };
+  }).sort((a, b) => b.mt - a.mt);
+}
+export async function diagramsView(req, res) {
+  const rows = diagramRows(await sh(...userCmd(['bash', '-O', 'nullglob', '-c', DIAGRAMS_SH, 'diagrams', TMUX_HOME])), TMUX_HOME);
+  const e = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const ago = ms => (ms < 3_600_000 ? Math.max(1, Math.round(ms / 60_000)) + 'm' : ms < 172_800_000 ? Math.round(ms / 3_600_000) + 'h' : Math.round(ms / 86_400_000) + 'd') + ' ago';
+  const { hdr, tabs, termFab } = pageChrome('', null, req.headers.host || '', '/agents');
+  const asset = (stem, ext) => assetUrl(stem, ext) || '/assets/missing-build';
+  const list = rows.length ? `<ul class="dgl">${rows.map(r => `<li><a href="/md?f=${encodeURIComponent(r.path)}"><b>${e(r.title)}</b>` +
+    `<span>${e(r.project)} · ${e(r.kind)} · ${ago(Date.now() - r.mt)} · ${Math.round(r.size / 1024)} KB</span></a></li>`).join('')}</ul>`
+    : '<p>No Archify diagrams yet. Ask any session to "explain" or "diagram" something; the reply links the page here.</p>';
+  send(req, res, 200, `<!doctype html><html lang="en"><head><meta charset="utf-8">
+${DOC_META}
+<link rel="stylesheet" href="${asset('tokens', 'css')}"><link rel="stylesheet" href="${asset('md', 'css')}">
+<style>.mdv .dgl{list-style:none;padding:0;margin:0}.mdv .dgl li{margin:0;border-bottom:1px solid var(--bd2)}.dgl a{display:block;padding:12px 2px;text-decoration:none}
+.dgl b{display:block;color:var(--title);font-size:15px}.dgl span{color:var(--dim);font:12px var(--mono)}</style>
+<title>Diagrams</title></head><body>${hdr}${termFab}<main class="mdv"><h1>Diagrams</h1>${list}</main>
+${tabs}${footerHtml()}</body></html>`);
 }

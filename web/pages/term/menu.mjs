@@ -1,5 +1,5 @@
 // menu.mjs — the actions sheet behind the strip's ⋯ (2026-10-23): what the old key bar carried that is not a key. Copy text (the overlay),
-// paste, attach a file; text size; the terminal theme; detach from tmux; restart the pane (two taps: whatever runs is killed); all sessions.
+// paste, attach a file; text size; the terminal theme; detach from tmux; restart the pane (two taps: whatever runs is killed); the Archify diagrams (/diagrams); all sessions.
 // The session's workflow runs on top (flows.mjs). Touch only. The backdrop or a chosen action closes it.
 import { el, icon, say } from './dom.mjs';
 
@@ -35,6 +35,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title, top = nu
     theme.select ? el('div', { className: 'ln' }, el('label', { htmlFor: 'ccthemesel' }, 'Theme'), theme.select) : null,
     row('Detach from tmux', () => { close(); detach(); }, '', el('small', {}, '^Q d')),
     restartRow,
+    row('Diagrams', () => { location.href = '/diagrams'; }, '', el('small', {}, '›')), // the Archify pages (routes/md.mjs)
     row('All sessions', () => { location.href = '/'; }, '', el('small', {}, '›')));
   const sheet = el('div', { id: 'ccsheet' }, pan);
   sheet.addEventListener('click', e => { if (e.target === sheet) close(); });

@@ -290,6 +290,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // the session's Workflow run (2026-10-26): a pill at the terminal's top right, inside the screen; its tap opens the sheet, the run's agents on top
   const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), r = p.getBoundingClientRect(); return { text: p.hidden ? '' : p.textContent, right: Math.round(r.right), top: Math.round(r.top), iw: innerWidth }; });
   await P.page.locator('#ccwf').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
+  // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top)
+  const dg = await P.page.evaluate(() => { const ls = [...document.querySelectorAll('#ccsheet .ln')], d = ls.find(x => x.textContent.startsWith('Diagrams'));
+    d?.scrollIntoView({ block: 'nearest' }); const r = d?.getBoundingClientRect();
+    return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
+  check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
   const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, rows: [...document.querySelectorAll('#ccsheet .wf li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   check(`${tag} 1 workflow: the pill names the run and its phase, inside the screen; its tap opens the sheet with the agents on top`, wf.text === '⟳ email-engine-build · Review (2/2) · 2/3 agents' && wf.right <= wf.iw && wf.top >= 0 && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
