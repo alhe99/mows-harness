@@ -283,6 +283,13 @@ if (args.includes('--selftest')) {
                       '<blockquote>', '<strong>b</strong>', '<a href="https://x/">l</a>', '<a href="#">j</a>'])
     if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
   console.log('md renderer: OK');
+  { // /md?f=<x>.html serves the file itself: only under a sandbox with no same-origin, no network and no forms
+    const { HTML_CSP } = await import('./routes/md.mjs'), d = HTML_CSP.split(/;\s*/);
+    for (const [ok, why] of [[/^sandbox /.test(d[0]) && !/allow-same-origin|allow-forms|allow-top-navigation/.test(d[0]), 'sandbox grants origin, forms or top navigation'],
+      [d.includes("connect-src 'none'") && d.includes("default-src 'none'") && d.includes("form-action 'none'"), 'network or forms allowed']])
+      if (!ok) { console.error(`FAIL: /md html CSP: ${why}: ${HTML_CSP}`); process.exit(1); }
+    console.log('md html sandbox: OK');
+  }
   { // the "/" menu's discovery (routes/commands.mjs): frontmatter, linked skills, hidden skills, nested and linked commands
     const { BUILTIN } = await import('./routes/commands.mjs'), { front, discover } = await import('./routes/cmdscan.mjs');
     const fs = await import('node:fs'), path = (await import('node:path')).default, os = (await import('node:os')).default;

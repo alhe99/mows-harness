@@ -50,20 +50,29 @@ ${tabs}${footerHtml()}${mermaid ? `<script>${LOADER}</script>` : ''}
 </body></html>`;
 }
 
+// A standalone .html file (an Archify diagram, a report) is sent as it is, under a CSP sandbox WITHOUT allow-same-origin: the page gets an
+// opaque origin, so it cannot read the dashboard's cookies or storage, and connect-src 'none' keeps it from calling anything. Its own inline
+// scripts and styles run; links open in a new tab; exports download. A page that loads anything from the network renders without it.
+export const HTML_CSP = "sandbox allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox; default-src 'none'; " +
+  "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:; " +
+  "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const MD_ROOT = '/home';
 export async function mdView(req, res, url, next = false) {
   const f = url.searchParams.get('f') || '';
   const oops = (code, m) => send(req, res, code, mdNotice(m));
   if (!f.startsWith('/')) return oops(400, 'usage: /md?f=/home/<user>/path/to/file.md');
-  if (!/\.(md|markdown|txt)$/i.test(f)) return oops(400, 'only .md, .markdown and .txt files can be previewed.');
+  const html = /\.html?$/i.test(f);
+  if (!html && !/\.(md|markdown|txt)$/i.test(f)) return oops(400, 'only .md, .markdown, .txt and .html files can be previewed.');
   let real, st;
   try { real = await fsp.realpath(f); st = await fsp.stat(real); } catch { return oops(404, `not found: ${f}`); }
   if (!real.startsWith(MD_ROOT + '/')) return oops(403, 'only files under /home are viewable.');
-  if (!st.isFile() || st.size > 2 * 1024 * 1024) return oops(403, 'not a regular file under 2 MB.');
+  const cap = html ? 16 : 2; // MB; an Archify page carries its viewer and fonts inline (~1 MB)
+  if (!st.isFile() || st.size > cap * 1024 * 1024) return oops(403, `not a regular file under ${cap} MB.`);
+  if (html && !url.searchParams.get('dl')) return send(req, res, 200, await fsp.readFile(real), 'text/html; charset=utf-8', { 'content-security-policy': HTML_CSP });
   const src = await fsp.readFile(real, 'utf8');
   // ?dl=1 -> the raw file as a download (phones can't reach the VPS disk any other way)
   if (url.searchParams.get('dl')) {
-    res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store',
+    res.writeHead(200, { 'Content-Type': html ? 'application/octet-stream' : 'text/markdown; charset=utf-8', 'Cache-Control': 'no-store',
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(path.basename(real))}` });
     return res.end(src);
   }

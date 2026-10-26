@@ -221,7 +221,9 @@ preview is mandatory.
 
 `GET /md?f=<abs path>` renders any `.md`/`.markdown`/`.txt` file under `/home` in the
 dashboard shell (server-side mini-renderer in `lite.mjs`, escape-first so file content
-can't inject markup; realpath-guarded to `/home`, 2 MB cap). The companion CLI prints the
+can't inject markup; realpath-guarded to `/home`, 2 MB cap). A standalone `.html` file (an
+Archify diagram) is sent as is, up to 16 MB, under a CSP sandbox with no same-origin, no
+network and no forms, so it can't touch the dashboard. The companion CLI prints the
 clickable URL — `/term`'s xterm makes URLs in any pane clickable, so a session can just
 print `mdv spec.md` output and you tap it, phone or desktop:
 
