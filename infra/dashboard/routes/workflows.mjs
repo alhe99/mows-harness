@@ -106,8 +106,9 @@ export async function workflowsJson(req, res, url) {
   // group, ps's `+`). The page trusts a question Claude draws that was already up when it opened on this word (composer.mjs); a shell
   // printing one is not Claude. Fails closed: no pane, no tty, ps failing all read false. (security review 2026-10-26: the first pane is
   // not the one on screen in a session of several)
-  const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{pane_tty}'])) : '';
-  const tty = (/^11 (\S+)$/m.exec(panes) || [])[1] || '';
+  // Only a window showing that one pane: the page reads the whole window, so with a split one Claude's pane would vouch for its neighbour's
+  const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{window_panes} #{window_zoomed_flag} #{pane_tty}'])) : '';
+  const tty = (/^11 (?:1 \d|\d+ 1) (\S+)$/m.exec(panes) || [])[1] || '';
   const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
   const row = name ? (await fleetState()).find(f => f.name === name) : null;
   let runs = [], agents = [];
