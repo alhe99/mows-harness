@@ -22,14 +22,25 @@ export function flows(on) {
   let last = { runs: [], agents: [] }, log = null; // the feed's last answer; the open agent's
 
   const clock = t => { const d = new Date(t); return isNaN(+d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); };
+  // what it did, newest first, as Claude's own transcript reads: what it said as text, each tool as its name and what for, a repeat folded
+  // (×3), the time only where it changes
+  const rows = xs => xs.reduce((rs, x) => {
+    const p = rs[rs.length - 1];
+    if (x.k === 'tool' && p?.k === 'tool' && p.n === x.n && p.s === x.s) { p.c++; p.t = x.t; } else rs.push({ ...x, c: 1 });
+    return rs;
+  }, []).reverse();
   const detail = () => {
     const r = last.runs.find(x => x.id === sel.run), a = (r ? r.agents : last.agents).find(x => x.id === sel.id);
-    const st = a ? a.state : '', sub = [st, r ? r.name : '', a?.phase || a?.desc || ''].filter(Boolean).join(' · ');
+    const st = a ? a.state : '', end = st === 'running' ? Date.now() : Date.parse(log?.steps.at(-1)?.t || '');
+    const took = log?.t0 && end - Date.parse(log.t0) > 0 ? `since ${clock(log.t0)} · ${ago(end - Date.parse(log.t0))}` : '';
+    const sub = [st, r ? r.name : '', a?.phase || a?.desc || ''].filter(Boolean).join(' · ');
     box.replaceChildren(el('div', { className: 'dt' },
       el('div', { className: 'dh' }, el('button', { type: 'button', className: 'back', 'aria-label': 'back to the runs' }, '‹'),
-        el('div', {}, el('b', {}, a ? a.label : sel.id), el('small', { className: st }, sub))),
+        el('div', {}, el('b', {}, a ? a.label : sel.id), el('small', { className: st }, sub), took ? el('small', {}, took) : null)),
       log?.result ? el('pre', { className: log.failed ? 'res failed' : 'res' }, log.result) : null,
-      !log ? el('p', {}, 'Loading…') : log.steps.length ? el('ol', {}, ...log.steps.slice().reverse().map(x => el('li', { className: x.k }, el('small', {}, clock(x.t)), el('span', {}, x.s))))
+      !log ? el('p', {}, 'Loading…') : log.steps.length ? el('ol', {}, ...rows(log.steps).map((x, i, xs) => el('li', { className: x.k },
+        el('small', {}, i && clock(xs[i - 1].t) === clock(x.t) ? '' : clock(x.t)),
+        x.k === 'say' ? el('p', {}, x.s) : el('p', {}, el('b', {}, x.n), x.s ? ' ' + x.s : '', x.c > 1 ? el('i', {}, ' ×' + x.c) : null))))
       : el('p', {}, 'Nothing yet.')));
   };
   const more = () => fetch(`${url}&agent=${encodeURIComponent(sel.id)}${sel.run ? '&run=' + encodeURIComponent(sel.run) : ''}`).then(r => (r.ok ? r.json() : null))

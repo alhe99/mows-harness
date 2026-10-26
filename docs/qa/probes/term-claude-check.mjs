@@ -255,7 +255,7 @@ async function phone(w, h) {
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
     if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
     if (p.startsWith('/app/workflows.json') && new URL(r.request().url()).searchParams.has('agent')) { agReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ agent: { result: '', failed: false,
-      steps: [{ t: '2026-10-26T21:00:00Z', k: 'say', s: 'Reviewing the branch.' }, { t: '2026-10-26T21:01:00Z', k: 'tool', s: 'Bash: Run the suite' }] } }) }); }
+      steps: [{ t: '2026-10-26T21:00:00Z', k: 'say', s: 'Reviewing the branch.' }, { t: '2026-10-26T21:01:00Z', k: 'tool', n: 'Bash', s: 'Run the suite' }, { t: '2026-10-26T21:01:30Z', k: 'tool', n: 'Bash', s: 'Run the suite' }] } }) }); }
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
       agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
       agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
@@ -353,11 +353,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // first; ‹ goes back to the list, and a sheet closed on the detail opens on the list again
   await P.page.locator('#ccsheet .wf li', { hasText: 'review:branch' }).click(); await P.page.waitForSelector('#ccsheet .dt ol'); await sleep(100);
   const dt = await P.page.evaluate(() => ({ head: document.querySelector('#ccsheet .dh b')?.textContent, sub: document.querySelector('#ccsheet .dh small')?.textContent,
-    steps: [...document.querySelectorAll('#ccsheet .dt ol li')].map(l => l.className + ':' + l.querySelector('span').textContent),
+    steps: [...document.querySelectorAll('#ccsheet .dt ol li')].map(l => l.className + ':' + l.querySelector('p').textContent),
     rest: [...document.querySelector('#ccsheet .pan').children].filter(c => !c.matches('.wf,.grab') && getComputedStyle(c).display !== 'none').length }));
   const aq = new URL(agReq.at(-1) || 'http://x/');
-  check(`${tag} 1 agent detail: a tap shows the agent, what it did newest first, and nothing else of the sheet`, dt.head === 'review:branch' && dt.sub === 'running · email-engine-build · Review'
-    && dt.steps.join() === 'tool:Bash: Run the suite,say:Reviewing the branch.' && dt.rest === 0 && aq.searchParams.get('agent') === 'w3' && aq.searchParams.get('run') === 'wf_0123abcd-ef0', [dt, agReq.at(-1)]);
+  check(`${tag} 1 agent detail: a tap shows the agent, what it did newest first (a repeat folded), and nothing else of the sheet`, dt.head === 'review:branch' && dt.sub === 'running · email-engine-build · Review'
+    && dt.steps.join() === 'tool:Bash Run the suite ×2,say:Reviewing the branch.' && dt.rest === 0 && aq.searchParams.get('agent') === 'w3' && aq.searchParams.get('run') === 'wf_0123abcd-ef0', [dt, agReq.at(-1)]);
   await P.page.locator('#ccsheet .back').click(); await sleep(100);
   const back = await P.page.evaluate(() => document.querySelectorAll('#ccsheet .wf .run li').length + ':' + !!document.querySelector('#ccsheet .dt'));
   await P.page.locator('#ccsheet .wf li', { hasText: 'dev-ladder' }).click(); await sleep(100);

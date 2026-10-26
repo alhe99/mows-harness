@@ -18,13 +18,13 @@ import path from 'node:path';
 const STALE = 30 * 60_000, KEEP = 24 * 3600_000, MAX = 5;
 const RUN_RE = /^wf_[0-9a-f-]{6,}$/, ID_RE = /^[\w-]{1,80}$/, AGENT_RE = /^agent-([\w-]{1,80})\.meta\.json$/, CAP = 4 << 20, TAIL = 64 << 10, LOG = 1 << 20, STEPS = 40;
 
-/** a regular file, never through a link, its last CAP bytes ('' for anything else) */
-async function readCapped(p, cap = CAP) {
+/** a regular file, never through a link, its last CAP bytes, or its first with head ('' for anything else) */
+async function readCapped(p, cap = CAP, head = false) {
   let fh; try { fh = await fsp.open(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return ''; }
   try {
     const st = await fh.stat(); if (!st.isFile()) return '';
     const n = Math.min(st.size, cap), b = Buffer.alloc(n);
-    await fh.read(b, 0, n, st.size - n);
+    await fh.read(b, 0, n, head ? 0 : st.size - n);
     return b.toString('utf8');
   } catch { return ''; } finally { await fh.close(); }
 }
@@ -70,14 +70,19 @@ export async function runsOf(transcript) {
   return runs.filter(r => Date.now() - r.last < KEEP).sort((x, y) => y.last - x.last).slice(0, MAX);
 }
 
-/** what an agent did, from its transcript's tail, oldest first: each tool call as "Tool: what for", and what it said */
+/** a tool's name as a person reads it: mcp__paymentsdev__update-many is "paymentsdev update-many" */
+const toolName = n => String(n).replace(/^mcp__([^_]+(?:_[^_]+)*?)__/, '$1 ');
+/** what a call was for: its description, else its command's first line without the cd and VAR= set-up, else the file, pattern, url, or
+ *  (an MCP call) the collection or query it works on */
+const toolWhy = i => String(i?.description || String(i?.command || '').split('\n')[0].replace(/^(?:\s*(?:cd\s+\S+|\w+=\S*)\s*(?:&&|;)\s*)+/, '') || i?.file_path || i?.pattern || i?.url || i?.collection || (typeof i?.query === 'string' ? i.query : '') || '').replace(/\s+/g, ' ').trim();
+/** what an agent did, from its transcript's tail, oldest first: each tool call ({ n: the tool, s: what for }), and what it said */
 function steps(tail) {
   const out = [], ls = tail.split('\n');
   for (let i = 1; i < ls.length; i++) { // line 0 is cut at the tail's start
     let e; try { e = JSON.parse(ls[i]); } catch { continue; }
     if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
     for (const c of e.message.content) {
-      if (c?.type === 'tool_use') { const why = c.input?.description || c.input?.command || c.input?.file_path || c.input?.pattern || ''; out.push({ t: String(e.timestamp || ''), k: 'tool', s: (String(c.name) + (why ? ': ' + String(why) : '')).replace(/\s+/g, ' ').slice(0, 200) }); }
+      if (c?.type === 'tool_use') out.push({ t: String(e.timestamp || ''), k: 'tool', n: toolName(c.name), s: toolWhy(c.input).slice(0, 200) });
       else if (c?.type === 'text' && String(c.text).trim()) out.push({ t: String(e.timestamp || ''), k: 'say', s: String(c.text).trim().slice(0, 4000) });
     }
   }
@@ -87,13 +92,14 @@ function steps(tail) {
 const plain = (v, pad = '') => (v && typeof v === 'object'
   ? Object.entries(v).map(([k, x]) => `${pad}${Array.isArray(v) ? '-' : k + ':'}${x && typeof x === 'object' ? '\n' + plain(x, pad + '  ') : ' ' + x}`).join('\n')
   : pad + String(v));
-const doing = tail => (steps(tail).findLast(x => x.k === 'tool')?.s || '').slice(0, 120);
+const doing = tail => { const x = steps(tail).findLast(y => y.k === 'tool'); return x ? (x.n + (x.s ? ': ' + x.s : '')).slice(0, 120) : ''; };
 
 /** one agent, for the phone's detail view: its last STEPS and its result (a run's agent: the journal's; an Agent call: what it said last, once finished) */
 export async function agentLog(transcript, run, id) {
   if (!ID_RE.test(id) || (run && !RUN_RE.test(run))) return null;
   const sdir = transcript.replace(/\.jsonl$/, ''), dir = run ? path.join(sdir, 'subagents', 'workflows', run) : path.join(sdir, 'subagents');
-  const all = steps(await readCapped(path.join(dir, `agent-${id}.jsonl`), LOG));
+  const log = path.join(dir, `agent-${id}.jsonl`), all = steps(await readCapped(log, LOG));
+  const t0 = (/"timestamp":"([^"]{10,40})"/.exec(await readCapped(log, TAIL, true)) || [])[1] || ''; // when it started: the transcript's first stamp
   let result = '', failed = false;
   if (run) for (const l of (await readCapped(path.join(dir, 'journal.jsonl'))).split('\n')) {
     let e; try { e = JSON.parse(l); } catch { continue; }
@@ -104,7 +110,7 @@ export async function agentLog(transcript, run, id) {
     let m; try { m = JSON.parse(await readCapped(path.join(dir, `agent-${id}.meta.json`), TAIL)); } catch {}
     if (m?.finished) result = all.findLast(x => x.k === 'say')?.s || '';
   }
-  return { steps: all.slice(-STEPS), result: result.slice(0, 8000), failed };
+  return { t0, steps: all.slice(-STEPS), result: result.slice(0, 8000), failed };
 }
 
 /** the session's background agents (Agent calls) active in the last KEEP, newest first */
@@ -189,7 +195,9 @@ if (main && process.argv[2] === '--check') {
   await fsp.symlink('/dev/zero', path.join(sub, 'agent-a3.meta.json')); await w('agent-a3.jsonl', ''); // a planted link: skipped
   const ag = await agentsOf(sdir + '.jsonl');
   assert.deepEqual(ag.map(a => [a.label, a.state, a.doing]), [['dev-ladder', 'running', 'Bash: Run E23 tests'], ['Old one', 'done', '']]);
-  assert.deepEqual(await agentLog(sdir + '.jsonl', '', 'a1'), { steps: [{ t: 'T1', k: 'say', s: 'Running E23.' }, { t: 'T1', k: 'tool', s: 'Bash: Run E23 tests' }], result: '', failed: false });
+  assert.deepEqual(await agentLog(sdir + '.jsonl', '', 'a1'), { t0: '', steps: [{ t: 'T1', k: 'say', s: 'Running E23.' }, { t: 'T1', k: 'tool', n: 'Bash', s: 'Run E23 tests' }], result: '', failed: false });
+  assert.equal(toolName('mcp__paymentsdev__update-many'), 'paymentsdev update-many'); assert.equal(toolName('mcp__claude_mem__search'), 'claude_mem search');
+  assert.equal(toolWhy({ command: 'G=/tmp/x/g1; $G/batch.sh 9 vgs\nmore' }), '$G/batch.sh 9 vgs'); assert.equal(toolWhy({ command: 'cd /a/b && cat x.md' }), 'cat x.md'); assert.equal(toolWhy({ database: 'p', collection: 'charges' }), 'charges');
   assert.equal((await agentLog(sdir + '.jsonl', id, 'a1')).result, ''); // a run's agent: the journal's result
   assert.equal(plain({ ok: true, rows: [{ row: 'L1', v: 'PASS' }] }), 'ok: true\nrows:\n  -\n    row: L1\n    v: PASS');
   assert.equal((await agentLog(sdir + '.jsonl', id, 'a2')).failed, true);

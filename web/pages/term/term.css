@@ -227,10 +227,12 @@ background:var(--c-raised);color:var(--c-mut);border:1px solid var(--c-line2);fo
 #ccsheet .res{margin:0 0 12px;padding:10px 12px;border:1px solid var(--c-ok-bd);border-radius:12px;background:var(--c-raised);font:12px/1.45 var(--c-mono);color:var(--c-fg2);
 white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto} #ccsheet .res.failed{border-color:var(--c-bad)}
 #ccsheet .dt ol{list-style:none;margin:0;padding:0;display:grid}
-#ccsheet .dt ol li{display:grid;grid-template-columns:42px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid var(--c-line);font:12.5px/1.4 var(--c-mono);color:var(--c-fg2)}
-#ccsheet .dt ol li:last-child{border-bottom:0} #ccsheet .dt ol li small{color:var(--c-dim);font-size:11px;padding-top:1px}
-#ccsheet .dt ol li span{white-space:normal;text-overflow:clip;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-#ccsheet .dt ol li.say span{font-family:var(--c-sans);color:var(--c-fg)}
+#ccsheet .dt ol li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid var(--c-line)}
+#ccsheet .dt ol li:last-child{border-bottom:0} #ccsheet .dt ol li>small{color:var(--c-dim);font:11px var(--c-mono);padding-top:2px}
+#ccsheet .dt ol li p{margin:0;min-width:0;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+#ccsheet .dt ol li.say p{font:14px/1.45 var(--c-sans);color:var(--c-fg);-webkit-line-clamp:8;white-space:pre-line}
+#ccsheet .dt ol li.tool p{font:12px/1.4 var(--c-mono);color:var(--c-mut);-webkit-line-clamp:2}
+#ccsheet .dt ol li.tool b{font-weight:600;color:var(--c-fg2)} #ccsheet .dt ol li.tool i{font-style:normal;color:var(--c-dim)}
 #ccsheet .dt p{margin:4px 0;font:13px var(--c-sans);color:var(--c-dim)}
 
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */

@@ -115,9 +115,22 @@ viewportFit(fit);
 ime(term, client);
 paint(term, client);
 
-// a viewport pinned short of the screen in a standalone app is iOS 26's reserved bottom zone: .nozone takes its inset off the bar. The
-// geometry goes to the access log once, deferred, because iOS reports env() and innerHeight wrong until layout settles.
-setTimeout(() => requestAnimationFrame(() => {
+// iOS can open the installed app with its layout viewport short of the screen by the top inset (62 pt on a 956 pt phone; innerHeight 894):
+// the page then ends above a strip it cannot paint in. The dashboard heals it (web/standalone.mjs vpfix: a display:none → reflow → restore on
+// the body makes WebKit re-measure; its beacon logs the heal on every launch), and so does this page now (2026-10-26). Still short after
+// HEALS tries: .nozone takes the inset off the bar and the sheets, as before. Again on every return to the page.
+const HEALS = 6;
+const short = () => matchMedia('(display-mode: standalone)').matches && matchMedia('(orientation: portrait)').matches && screen.height - innerHeight > 40;
+const heal = (n = 0, done = () => {}) => {
+  // never under the keyboard: a hidden body blurs the field
+  if (short() && n < HEALS && !document.body.classList.contains('kbup')) { const b = document.body; b.style.display = 'none'; void b.offsetHeight; b.style.display = ''; return setTimeout(() => heal(n + 1, done), 250); }
+  document.body.classList.toggle('nozone', short()); fit(true); done(n);
+};
+addEventListener('pageshow', () => heal());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) heal(); });
+// the geometry goes to the access log once, deferred, because iOS reports env() and innerHeight wrong until layout settles; after the heal,
+// with how many tries it took (heal=0: it was never short)
+setTimeout(() => requestAnimationFrame(() => heal(0, tries => {
   try {
     const probe = (css, doc = document) => { const d = doc.body.appendChild(el('div', { style: 'position:fixed;visibility:hidden;pointer-events:none;top:0;left:0;width:1px;' + css })); return d; };
     const pr = probe('padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)'), cs = getComputedStyle(pr);
@@ -125,12 +138,11 @@ setTimeout(() => requestAnimationFrame(() => {
     u.style.height = '100dvh'; const dvh = h();
     u.style.height = '100svh'; const svh = h();
     const vv = window.visualViewport, standalone = matchMedia('(display-mode: standalone)').matches;
-    const q = `t=term-v8&m=${standalone ? 'app' : 'tab'}&sat=${parseFloat(cs.paddingTop) | 0}&sab=${parseFloat(cs.paddingBottom) | 0}&ih=${innerHeight}&sh=${screen.height}&oh=${outerHeight}&sy=${screenY | 0}&vh=${vv ? vv.height | 0 : 0}&dh=${document.documentElement.clientHeight}&lvh=${lvh}&dvh=${dvh}&svh=${svh}&kbb=${Math.round(bar.getBoundingClientRect().bottom)}`;
+    const q = `t=term-v9&m=${standalone ? 'app' : 'tab'}&heal=${tries}&nozone=${+document.body.classList.contains('nozone')}&sat=${parseFloat(cs.paddingTop) | 0}&sab=${parseFloat(cs.paddingBottom) | 0}&ih=${innerHeight}&sh=${screen.height}&oh=${outerHeight}&sy=${screenY | 0}&vh=${vv ? vv.height | 0 : 0}&dh=${document.documentElement.clientHeight}&lvh=${lvh}&dvh=${dvh}&svh=${svh}&kbb=${Math.round(bar.getBoundingClientRect().bottom)}`;
     pr.remove(); u.remove();
     fetch('/z?' + q).catch(() => {});
-    if (screen.height - innerHeight > 40 && standalone) { document.body.classList.add('nozone'); fit(true); }
   } catch { /* a beacon is best effort */ }
-}), 900);
+})), 900);
 
 client.start();
 gridKeys(term);
