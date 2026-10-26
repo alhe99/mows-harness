@@ -285,7 +285,7 @@ if (args.includes('--selftest')) {
   console.log('md renderer: OK');
   { // /md?f=<x>.html serves the file itself: only under a sandbox with no same-origin, no network and no forms
     const { HTML_CSP } = await import('./routes/md.mjs'), d = HTML_CSP.split(/;\s*/);
-    for (const [ok, why] of [[/^sandbox /.test(d[0]) && !/allow-same-origin|allow-forms|allow-top-navigation/.test(d[0]), 'sandbox grants origin, forms or top navigation'],
+    for (const [ok, why] of [[/^sandbox /.test(d[0]) && !/allow-same-origin|allow-forms|allow-top-navigation|allow-popups-to-escape-sandbox/.test(d[0]), 'sandbox grants origin, forms, top navigation or unsandboxed popups'],
       [d.includes("connect-src 'none'") && d.includes("default-src 'none'") && d.includes("form-action 'none'"), 'network or forms allowed']])
       if (!ok) { console.error(`FAIL: /md html CSP: ${why}: ${HTML_CSP}`); process.exit(1); }
     console.log('md html sandbox: OK');

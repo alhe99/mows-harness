@@ -52,8 +52,10 @@ ${tabs}${footerHtml()}${mermaid ? `<script>${LOADER}</script>` : ''}
 
 // A standalone .html file (an Archify diagram, a report) is sent as it is, under a CSP sandbox WITHOUT allow-same-origin: the page gets an
 // opaque origin, so it cannot read the dashboard's cookies or storage, and connect-src 'none' keeps it from calling anything. Its own inline
-// scripts and styles run; links open in a new tab; exports download. A page that loads anything from the network renders without it.
-export const HTML_CSP = "sandbox allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox; default-src 'none'; " +
+// scripts and styles run; exports download; a link opens a new tab that stays sandboxed (no allow-popups-to-escape-sandbox: a window it opens
+// gets no origin either). A page that loads anything from the network renders without it. ponytail: same origin as the dashboard, isolated by
+// the sandbox alone; a cookie-less subdomain for these files if they ever come from somewhere less trusted than this box's own home.
+export const HTML_CSP = "sandbox allow-scripts allow-downloads allow-popups; default-src 'none'; " +
   "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:; " +
   "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const MD_ROOT = '/home';
