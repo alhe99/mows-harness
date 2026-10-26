@@ -33,6 +33,13 @@ const TMUX = '\x1b[42;30m[ccw-dev] 0:claude* "Mobile notification" 22:23\x1b[0m'
 // Claude's /model picker, as Claude draws it (2026-10-24): a window of 4 over the list, ❯ the highlight, ✔ the current, ←/→ the effort
 const PICK = [['Opus 5.5', 'Most capable'], ['Fable 5.1', 'Hardest work'], ['Sonnet 5.5', 'Fast'], ['Haiku 5.5', 'Fastest'], ['Opus 4.8', 'Everyday'], ['Sonnet 4.6', 'Routine']];
 const EFF = ['low', 'medium', 'high', 'xhigh'], WIN = 4;
+// Claude's questions (AskUserQuestion), as Claude draws them (live captures, 2026-10-26): one with a free option, and a multi-select one
+const ASK1 = { head: 'Prod Doppler', q: 'Every missing Doppler value is in prod. Writing them makes new prod secrets and can restart running prod pods. How far should I go?',
+  opts: [['Prepare, you run it (Recommended)', 'I write a ready, tested script: generate the credential pair and CA, upload by pipe, hash-check, shred. You run it for prod when ready.'],
+    ['Credentials only, now', 'I generate the proxy username/password and write it to the three prod consumer configs. No CA.'], ['Everything, now', 'Credentials plus a prod CA generated on this VM, key uploaded straight to Doppler and shredded.']] };
+const ASKM = { q: 'Which checks should run?', opts: [['Lint', 'Run the linter over the changed code'], ['Tests', 'Run the unit and integration test suites']] };
+const words = (t, w) => { const out = []; let l = ''; for (const x of t.split(' ')) { if (l && (l + ' ' + x).length > w) { out.push(l); l = x; } else l = l ? l + ' ' + x : x; } if (l) out.push(l); return out; };
+let FRONT = false; // workflows.json's word: Claude is in front in the pane
 
 class FakeClaude {
   constructor(ws) { Object.assign(this, { ws, rows: 0, cols: 0, log: [...Array.from({ length: 40 }, (_, i) => i % 3 === 2 ? '' : `\x1b[2m  ${i}\x1b[0m \x1b[32m+ an earlier line of the conversation, long enough to wrap on a phone screen #${i}\x1b[0m`), '\x1b[38;5;246m✻ Welcome back\x1b[0m', ''] /* a full screen of history, as on a session that has run a while */, draft: '', last: 'it\'s all merged?', model: 'Opus 5.5 (high)', imgs: 0, mode: 0, scene: 'idle', screen: [], bp: false }); }
@@ -47,6 +54,7 @@ class FakeClaude {
     if (this.scene === 'shell') { for (const c of d) { if (c === '\r') { this.log.push('dev@box:~$ ' + this.draft); this.draft = ''; } else if (c >= ' ') this.draft += c; } this.redraw(); return; }
     while (d) {
       let m;
+      if (/^ask/.test(this.scene) && (m = /^\x1b\[([AB])/.exec(d))) { d = d.slice(3); this.ahl = Math.min(5, Math.max(1, this.ahl + (m[1] === 'B' ? 1 : -1))); continue; }
       if (this.scene === 'model' && (m = /^\x1b\[([ABCD])/.exec(d))) {
         const k = m[1]; d = d.slice(3);
         if (k === 'A' || k === 'B') this.hl = Math.min(PICK.length, Math.max(1, this.hl + (k === 'B' ? 1 : -1))); else this.eff = (this.eff + (k === 'C' ? 1 : EFF.length - 1)) % EFF.length;
@@ -57,6 +65,7 @@ class FakeClaude {
       if (d.startsWith('\x1b[A') || d.startsWith('\x1bOA')) { this.draft = this.last; d = d.slice(3); continue; }
       if (d.startsWith('\x1b')) { // esc: cancels a dialog, clears the input
         if (this.scene === 'model') this.scene = 'idle';
+        else if (/^ask/.test(this.scene)) { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  question cancelled\x1b[0m', ''); }
         else if (this.scene === 'working') this.interrupt();
         else if (this.scene === 'dialog') { this.scene = 'idle'; this.log.push('\x1b[2m  ⎿  cancelled\x1b[0m', ''); } else this.draft = '';
         d = d.slice(d.length > 1 && d[1] === '[' ? 3 : 1); continue;
@@ -69,6 +78,23 @@ class FakeClaude {
         continue;
       }
       if (c === '\r' && this.draft.trim() === '/model') { this.draft = ''; this.scene = 'model'; this.hl = PICK.findIndex(p => this.model.startsWith(p[0] + ' ')) + 1 || 1; this.win = 0; this.eff = Math.max(0, EFF.indexOf(/\((\w+)\)/.exec(this.model)?.[1])); continue; }
+      // a question: a digit answers (on the multi-select one it ticks); on the free option (4; multi 3) what is typed is its text; Enter answers
+      // the highlighted row (multi: ticks it, or on Submit sends the ticked ones)
+      if (this.scene === 'ask') {
+        if (this.ahl === 4 && c >= ' ') { this.atext += c; continue; }
+        if (this.ahl === 4 && c === '\x7f') { this.atext = this.atext.slice(0, -1); continue; }
+        if (/[1-5]/.test(c)) { if (c === '4') this.ahl = 4; else this.answer(c === '5' ? 'chat' : c); continue; }
+        if (c === '\r') { if (this.ahl !== 4) this.answer(this.ahl === 5 ? 'chat' : String(this.ahl)); else if (this.atext) this.answer(': ' + this.atext); }
+        continue;
+      }
+      if (this.scene === 'askm') {
+        if (this.ahl === 3 && c >= ' ') { this.atext += c; this.ticks[2] = true; continue; }
+        if (this.ahl === 3 && c === '\x7f') { this.atext = this.atext.slice(0, -1); continue; }
+        if (/[1-3]/.test(c)) { this.ticks[+c - 1] = !this.ticks[+c - 1]; continue; }
+        if (c === '4') { this.answer('chat'); continue; }
+        if (c === '\r') { if (this.ahl === 4) this.answer('submitted: ' + ['Lint', 'Tests', this.atext || 'Type something'].filter((_, i) => this.ticks[i]).join(',')); else if (this.ahl === 5) this.answer('chat'); else this.ticks[this.ahl - 1] = !this.ticks[this.ahl - 1]; }
+        continue;
+      }
       if (this.scene === 'dialog') { if (c === '\r') c = '1'; /* Enter answers the highlighted option, the first */ if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
@@ -77,6 +103,8 @@ class FakeClaude {
     }
     this.redraw();
   }
+  ask(scene) { Object.assign(this, { scene, ahl: 1, atext: '', ticks: [false, false, false] }); this.redraw(); }
+  answer(x) { this.log.push(`\x1b[2m  ⎿  answered ${x}\x1b[0m`, ''); this.scene = 'idle'; }
   submit() {
     const p = this.draft.trim(); this.last = p; this.draft = '';
     this.log.push(`\x1b[48;5;237m\x1b[38;5;246m❯ \x1b[38;5;231m${p}\x1b[0m`, '');
@@ -107,6 +135,21 @@ class FakeClaude {
         ...(w + WIN < PICK.length ? [`      … +${PICK.length - w - WIN} models`] : []), '', `   ● ${EFF[this.eff]} effort \x1b[2m←/→ to adjust\x1b[0m`, '',
         '   Enter to set as default · s to use this', '   session only · Esc to cancel', TMUX];
       if (tail.length > this.rows) tail = [...tail.slice(0, this.rows - 2), '                              tasks        ↓', TMUX];
+    }
+    else if (/^ask/.test(this.scene)) {
+      const R2 = '─'.repeat(this.cols), w = this.cols, g = r => (r === this.ahl ? '\x1b[38;5;153m❯' : ' '), hd = t => `\x1b[48;5;153m\x1b[38;5;16m ${t} \x1b[0m`;
+      if (this.scene === 'ask') {
+        tail = [R2, ` ${hd('☐ ' + ASK1.head)}`, '', ...words(ASK1.q, w - 2).map(r => '│ ' + r), '',
+          ...ASK1.opts.flatMap(([l, d], i) => [`${g(i + 1)} ${i + 1}. ${l}\x1b[0m`, ...words(d, w - 5).map(r => '     ' + r)]),
+          `${g(4)} 4. ${this.atext || 'Type something.'}\x1b[0m`, R2, `${g(5)} 5. Chat about this\x1b[0m`, ''];
+      } else {
+        const t = this.ticks.map(x => (x ? '✔' : ' '));
+        tail = [R2, `←  ${hd('☐ Checks')} ✔ Submit  →`, '', ASKM.q, '',
+          ...ASKM.opts.flatMap(([l, d], i) => [`${g(i + 1)} ${i + 1}. [${t[i]}] ${l}\x1b[0m`, ...words(d, w - 9).map(r => '         ' + r)]),
+          `${g(3)} 3. [${t[2]}] ${this.atext || 'Type something'}\x1b[0m`, `${g(4)}    Submit\x1b[0m`, R2, `${g(5)} 4. Chat about this\x1b[0m`, ''];
+      }
+      tail.push(...words('Enter to select · ↑/↓ to navigate · Esc to cancel', w), TMUX);
+      this.tall = tail.length > this.rows; // its top cut off, as on a small phone
     }
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
     else {
@@ -210,8 +253,9 @@ async function phone(w, h) {
     if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
     if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
-    if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
-      agents: [{ label: 'build:lego0', phase: 'Build', state: 'done' }, { label: 'build:web', phase: 'Build', state: 'failed' }, { label: 'review:branch', phase: 'Review', state: 'running' }] }] }) });
+    if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
+      agents: [{ label: 'build:lego0', phase: 'Build', state: 'done' }, { label: 'build:web', phase: 'Build', state: 'failed' }, { label: 'review:branch', phase: 'Review', state: 'running' }] }],
+      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -287,9 +331,13 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   const closed = await P.page.evaluate(() => !document.getElementById('ccsheet').classList.contains('open'));
   check(`${tag} 1 no strip, ⋯ is the bar's first key and opens the menu, a backdrop tap closes it`, !top.strip && top.wrapTop === 0 && top.first === 'Menu' && closed, [top, closed]);
-  // the session's Workflow run (2026-10-26): a pill at the terminal's top right, inside the screen; its tap opens the sheet, the run's agents on top
-  const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), r = p.getBoundingClientRect(); return { text: p.hidden ? '' : p.textContent, right: Math.round(r.right), top: Math.round(r.top), iw: innerWidth }; });
-  await P.page.locator('#ccwf').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
+  // the session's Workflow run and agents (2026-10-26): a count on the ⋯ key, off the terminal (a pill over it covered Claude's text), never
+  // clipped by the bar; ⋯ opens the sheet with the run's agents on top
+  const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), k = p.parentElement, r = p.getBoundingClientRect(), t = document.getElementById('terminal-wrap').getBoundingClientRect();
+    const hit = document.elementsFromPoint(r.left + r.width / 2, r.top + 2);
+    return { text: p.hidden ? '' : p.textContent, onMenu: k?.dataset.k === 'Menu', label: k?.getAttribute('aria-label'), offTerm: r.top >= t.bottom - 1, inView: r.top >= 0 && r.right <= innerWidth, shown: hit[0] === k || hit.includes(k) };
+  });
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
   // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top).
   // Measured once the slide-in has ended, not after a fixed wait: a busy WebKit was still sliding the sheet up after 450 ms (a flake, not a layout)
   await P.page.waitForFunction(() => /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/.test(getComputedStyle(document.querySelector('#ccsheet .pan')).transform), null, { timeout: 3000 }).catch(() => {});
@@ -297,9 +345,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     d?.scrollIntoView({ block: 'nearest' }); const r = d?.getBoundingClientRect();
     return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
   check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
-  const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, rows: [...document.querySelectorAll('#ccsheet .wf li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
+  const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, ags: [...document.querySelectorAll('#ccsheet .wf .ags li')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
   await P.page.mouse.click(w / 2, 40); await sleep(300);
-  check(`${tag} 1 workflow: the pill names the run and its phase, inside the screen; its tap opens the sheet with the agents on top`, wf.text === '⟳ email-engine-build · Review (2/2) · 2/3 agents' && wf.right <= wf.iw && wf.top >= 0 && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
+  check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
+  check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);
   // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
   await P.page.evaluate(() => document.activeElement?.blur?.());
   const box = await P.page.locator('#terminal-wrap').boundingBox();
@@ -542,6 +591,46 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await shot(P, `${tag}-10-dialog`);
   await P.page.fill('#ccmsg', ''); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
   check(`${tag} 11 send with nothing typed is the dialog's Enter (after ↑ ↓)`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
+  // A Claude's questions (AskUserQuestion) as a sheet, not the old terminal drawing (the phone, 2026-10-26): asked right after Claude's box
+  const ask = () => P.page.evaluate(() => { const w = document.getElementById('ccpick'), f = w.querySelector('.free textarea');
+    return { q: w.querySelector('.opts .q')?.textContent, ds: [...w.querySelectorAll('.opt .od')].map(x => x.textContent), ticks: [...w.querySelectorAll('.opt.box')].map(x => x.classList.contains('cur')), field: !!f, focused: document.activeElement === f, cancel: w.querySelector('.hd button')?.textContent, stray: [...w.querySelector('.pan').childNodes].filter(n => n.nodeType === 3).map(n => n.textContent) }; });
+  // asked while typing (the keyboard up, the rows few): the keyboard goes, the terminal gets its rows back
+  await P.page.focus('#ccmsg'); await kb(P, Math.round(h * 0.52)); await sleep(700);
+  F.ask('ask'); await sleep(600);
+  const dropped = await P.page.evaluate(() => document.activeElement?.id !== 'ccmsg');
+  check(`${tag} A0 a question asked with the keyboard up: the keyboard goes`, dropped);
+  await kb(P, h); await sleep(900); // as iOS does once the field lets go
+  if (F.tall) { // taller than the screen: the header and the question cut off, so Claude's own drawing and the field, as for a tall picker
+    await sleep(500); const s1 = await st(P);
+    check(`${tag} A0 a question taller than the screen even so: Claude's drawing, the field asks for a number, no sheet`, !(await sheet()).open && s1.shown && s1.ph === 'Pick a number, or ↑ ↓ then send…', s1);
+    await key(P, 'Esc'); await sleep(500);
+  } else {
+  await opened(); k = await sheet(); let a = await ask();
+  check(`${tag} A1 a question comes up as a sheet: its header, the question whole, the options with their descriptions, the free one, Chat about this, Cancel`, k.open && k.title === 'Prod Doppler' && a.q === ASK1.q && k.rows.join('|') === 'Prepare, you run it (Recommended)|Credentials only, now|Everything, now|Type something…|Chat about this' && a.ds[1] === ASK1.opts[1][1] && a.cancel === 'Cancel' && !a.stray.length && k.on === 'Prepare, you run it (Recommended)' && k.inView && k.sw === k.iw && !k.kb, [k, a]);
+  await shot(P, `${tag}-A1-question`);
+  i0 = (F.inputs || []).length; await tapIn('.opt:has-text("Credentials only")'); k = await sheet();
+  check(`${tag} A2 a tap answers: Claude gets 2, the sheet goes`, F.scene === 'idle' && F.log.some(l => l.includes('answered 2')) && !k.open && (F.inputs || []).slice(i0).join('') === '2', [F.scene, (F.inputs || []).slice(i0), k.open]);
+  await sleep(500); F.ask('ask'); await opened(); await tapIn('.opt.ph'); a = await ask();
+  check(`${tag} A3 "Type something…" opens a field in the sheet, focused`, a.field && a.focused, a);
+  await P.page.fill('#ccpick .free textarea', 'use staging first'); await shot(P, `${tag}-A3-free`);
+  i0 = (F.inputs || []).length; await tapIn('.free button'); k = await sheet();
+  check(`${tag} A4 Send: the highlight moved there with arrows (a digit would be typed), the text, Enter: Claude has the answer`, F.log.some(l => l.includes('answered : use staging first')) && !k.open && (F.inputs || []).slice(i0).join('') === '\x1b[B\x1b[B\x1b[Buse staging first\r', [(F.inputs || []).slice(i0), F.log.slice(-3)]);
+  await sleep(500); F.ask('askm'); await opened(); await tapIn('.opt:has-text("Lint")'); k = await sheet(); a = await ask();
+  check(`${tag} A5 a multi-select question: a tap ticks (Claude's 1), the sheet stays with the tick and a Submit button`, F.scene === 'askm' && k.open && k.title === 'Checks' && a.ticks.join() === 'true,false,false' && k.acts.join() === 'Submit*', [F.scene, k, a]);
+  await shot(P, `${tag}-A5-multi`);
+  await tapIn('.opt.ph'); await P.page.fill('#ccpick .free textarea', 'docs'); await tapIn('.free button'); k = await sheet(); a = await ask();
+  check(`${tag} A6 its free option: the text typed into it, no Enter (that would untick it): ticked, the sheet stays`, F.scene === 'askm' && F.atext === 'docs' && a.ticks.join() === 'true,false,true' && k.rows.includes('docs'), [F.scene, F.atext, a, k.rows]);
+  await tapIn('.acts .pri'); k = await sheet();
+  check(`${tag} A7 Submit: the highlight to Claude's Submit row, Enter: Claude has Lint and docs`, F.log.some(l => l.includes('answered submitted: Lint,docs')) && !k.open, F.log.slice(-3));
+  // a page opened on a question already up (asked while the phone was away): no Claude box seen; the dashboard's word decides
+  await sleep(400); F.scene = 'shell'; F.redraw(); await sleep(1800); i0 = (F.inputs || []).length; F.ask('ask'); await sleep(700);
+  check(`${tag} A8 a question up with no Claude box seen and no word that Claude is in front: Claude's drawing, no sheet, nothing sent`, !(await sheet()).open && (F.inputs || []).length === i0, await sheet());
+  FRONT = true; await P.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))); await opened(); k = await sheet();
+  check(`${tag} A9 the dashboard says Claude is in front: the question comes up as the sheet`, k.open && k.title === 'Prod Doppler', [k, F.tall, F.rows]);
+  await tapIn('.hd button'); FRONT = false; await P.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))); await sleep(300);
+  check(`${tag} A10 Cancel is Claude's esc`, F.scene === 'idle' && F.log.some(l => l.includes('question cancelled')) && !(await sheet()).open, [F.scene, F.log.slice(-2)]);
+  }
+  await sleep(400); await P.page.evaluate(() => { window.__qa.flips = 0; }); // the shell of A8 hid the field and brought it back: 12-13 count their own
   F.scene = 'shell'; F.redraw(); await sleep(300); s = await st(P);
   check(`${tag} 12 Claude gone: the field lingers a moment (a redraw is not an exit)`, s.shown, s);
   await sleep(1700); s = await st(P);

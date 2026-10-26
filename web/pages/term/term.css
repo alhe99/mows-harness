@@ -194,10 +194,12 @@ background:none;width:100%;box-sizing:border-box;text-align:left;font:15px var(-
 #ccsheet .step span{min-width:34px;text-align:center;font:500 14px var(--c-mono);font-variant-numeric:tabular-nums}
 select#ccthemesel{height:36px;max-width:60%;background:var(--c-raised);color:var(--c-fg);border:1px solid var(--c-line2);border-radius:9px;font:14px var(--c-sans);padding:0 10px}
 
-/* the session's workflow runs (flows.mjs): a pill over the terminal's top right while one runs, and a block on top of the menu sheet */
-#ccwf{position:absolute;top:8px;right:10px;z-index:5;max-width:calc(100% - 20px);box-sizing:border-box;padding:5px 11px;border-radius:999px;border:1px solid var(--c-ok-bd);
-background:#0b1f18;color:var(--c-ok);font:500 11.5px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#ccwf.failed,#ccwf.stale{color:var(--c-bad);border-color:var(--c-line2);background:var(--c-raised)} #ccwf.completed{color:var(--c-mut);border-color:var(--c-line2);background:var(--c-raised)}
+/* the session's workflow runs and agents (flows.mjs): a badge on the key bar's ⋯ while one runs, and a block on top of the menu sheet */
+#cckb button[data-k=Menu]{position:relative}
+#cckb button[data-k=Menu]:has(#ccwf.running){border-color:var(--c-ok-bd);color:var(--c-ok)}
+#ccwf{position:absolute;top:-6px;right:-4px;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;display:grid;place-items:center;
+background:var(--c-raised);color:var(--c-mut);border:1px solid var(--c-line2);font:600 11px/1 var(--c-mono);pointer-events:none}
+#ccwf.running{background:var(--c-ok);color:#04130d;border-color:var(--c-ok)} #ccwf.failed,#ccwf.stale{color:var(--c-bad)}
 #ccwf[hidden],#ccsheet .wf[hidden]{display:none}
 #ccsheet .wf{margin-bottom:12px;display:grid;gap:10px}
 #ccsheet .run{border:1px solid var(--c-line2);border-radius:14px;background:var(--c-raised);padding:10px 12px}
@@ -206,6 +208,7 @@ background:#0b1f18;color:var(--c-ok);font:500 11.5px var(--c-mono);white-space:n
 #ccsheet .wf ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 #ccsheet .wf li{display:flex;align-items:baseline;gap:8px;font:13px var(--c-mono);color:var(--c-fg2);min-width:0}
 #ccsheet .wf li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .wf .ags li span small{display:block;overflow:hidden;text-overflow:ellipsis} #ccsheet .wf li.stale i{color:var(--c-dim)}
 #ccsheet .wf li i{font-style:normal;width:1em;flex:none} #ccsheet .wf li.done i{color:var(--c-ok)} #ccsheet .wf li.failed i{color:var(--c-bad)} #ccsheet .wf li.running i{color:var(--c-ok);animation:ccload-blink 1.06s steps(1) infinite}
 
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */
@@ -236,6 +239,16 @@ padding:10px 12px;border:1px solid transparent;border-radius:14px;background:non
 #ccpick .acts button{min-height:46px;padding:6px 10px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:600 14px/1.25 var(--c-sans)}
 #ccpick .acts .pri{background:var(--c-ok);border-color:var(--c-ok);color:#04130d}
 #ccpick :is(.adj button,.acts button,.more):active{filter:brightness(1.15)}
+/* Claude's questions (pick.mjs, ask): the question whole, the labels wrapped, a tick box on a multi-select one, the free option's field */
+#ccpick .q{margin:0 4px 10px;font:500 15px/1.45 var(--c-sans);color:var(--c-fg);white-space:pre-line;overflow-wrap:anywhere}
+#ccpick .ask .ol{white-space:normal;overflow-wrap:anywhere}
+#ccpick .opt.ph .ol{color:var(--c-mut);font-style:italic}
+#ccpick .opt .ck{grid-column:2;grid-row:1/span 2;width:20px;height:20px;box-sizing:border-box;border:1.5px solid var(--c-line2);border-radius:6px;display:grid;place-items:center}
+#ccpick .opt .ck svg{width:14px;height:14px;color:#04130d} #ccpick .opt.cur .ck{background:var(--c-ok);border-color:var(--c-ok)}
+#ccpick .ask .opt.box.cur .ol{color:var(--c-fg)}
+#ccpick .free{display:flex;gap:8px;align-items:flex-end;padding:2px 2px 8px 12px}
+#ccpick .free textarea{flex:1;min-width:0;min-height:44px;box-sizing:border-box;padding:10px 12px;border-radius:14px;border:1px solid var(--c-ok-bd);background:var(--c-bg);color:var(--c-fg);font:16px/1.35 var(--c-sans);resize:none}
+#ccpick .free button{flex:none;min-height:44px;padding:0 16px;border-radius:14px;border:1px solid var(--c-ok);background:var(--c-ok);color:#04130d;font:600 14px var(--c-sans)}
 @media(prefers-reduced-motion:no-preference){
 #ccpick{transition:opacity .2s ease,display .25s allow-discrete}
 #ccpick .pan{transition:transform .28s cubic-bezier(.32,.72,0,1)}
