@@ -185,6 +185,7 @@ docs/qa/probes/sessions-check.mjs
 docs/qa/probes/shell-check.mjs
 docs/qa/probes/term-check.mjs
 docs/qa/probes/term-claude-check.mjs
+docs/qa/probes/term-hidden-tab.mjs
 docs/qa/probes/twofa-check.mjs
 docs/qa/probes/views-check.mjs
 docs/superpowers/plans/2026-08-10-agy-delegation.md

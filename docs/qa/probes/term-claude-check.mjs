@@ -290,7 +290,9 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   // the session's Workflow run (2026-10-26): a pill at the terminal's top right, inside the screen; its tap opens the sheet, the run's agents on top
   const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), r = p.getBoundingClientRect(); return { text: p.hidden ? '' : p.textContent, right: Math.round(r.right), top: Math.round(r.top), iw: innerWidth }; });
   await P.page.locator('#ccwf').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
-  // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top)
+  // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top).
+  // Measured once the slide-in has ended, not after a fixed wait: a busy WebKit was still sliding the sheet up after 450 ms (a flake, not a layout)
+  await P.page.waitForFunction(() => /^(none|matrix\(1, 0, 0, 1, 0, 0\))$/.test(getComputedStyle(document.querySelector('#ccsheet .pan')).transform), null, { timeout: 3000 }).catch(() => {});
   const dg = await P.page.evaluate(() => { const ls = [...document.querySelectorAll('#ccsheet .ln')], d = ls.find(x => x.textContent.startsWith('Diagrams'));
     d?.scrollIntoView({ block: 'nearest' }); const r = d?.getBoundingClientRect();
     return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
