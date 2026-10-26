@@ -342,8 +342,14 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     return true;
   };
   /** the dashboard's word: Claude is (or is not) the program in front in this pane */
-  // an answer asked earlier than the last one taken changes nothing (they can arrive out of order); a no always ends the trust
-  const claude = (b, at = Date.now()) => { if (!b) front = false; else if (at > frontAt) { front = true; frontAt = at; } else return; scan(); };
+  // an answer asked earlier than the newest one taken, yes or no, changes nothing (they can arrive out of order: an old yes must not undo a
+  // newer no); a no always ends the trust
+  let lastAt = 0;
+  const claude = (b, at = Date.now()) => {
+    if (!b) { front = false; lastAt = Math.max(lastAt, at); scan(); return; }
+    if (at <= lastAt) return;
+    lastAt = at; front = true; frontAt = at; scan();
+  };
   /** @param {() => void} fn asks the dashboard for its word now (flows.mjs tick) */
   const ask = fn => { need = fn; };
   return { el: form, typing: () => document.activeElement === ta, insert, claude, ask };
