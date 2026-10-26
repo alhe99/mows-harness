@@ -39,7 +39,14 @@ if (window.parent !== window) { addEventListener('focus', () => term.focus()); i
 
 // every fit goes through here: bursts (keyboard, safe areas settling) are coalesced 150 ms so the pty sees one resize; fit(true) is immediate
 /** @type {any} */ let ft = 0;
-const fit = (now = false) => { clearTimeout(ft); const run = () => { try { fitAddon.fit(); } catch { /* not laid out yet */ } }; now ? run() : (ft = setTimeout(run, 150)); };
+// A box with no size is a hidden /grid tab, not a tiny screen: Chromium lays out an iframe under display:none at 0×0 and xterm's fit then
+// proposed 9×5, which tmux (window-size latest) gave the whole session, and Claude redrew its conversation away (2026-10-26). Skip it; the
+// ResizeObserver below refits when the tab shows again.
+const fit = (now = false) => {
+  clearTimeout(ft);
+  const run = () => { const box = document.getElementById('terminal-wrap'); if (box && !(box.offsetWidth && box.offsetHeight)) return; try { fitAddon.fit(); } catch { /* not laid out yet */ } };
+  now ? run() : (ft = setTimeout(run, 150));
+};
 fit(true);
 addEventListener('resize', () => fit());
 // the box the terminal lives in changes with the dock (a second key row, a growing composer) and the keyboard: refit on any of them. On a phone
