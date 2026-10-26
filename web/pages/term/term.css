@@ -158,6 +158,10 @@ color:var(--c-fg);font:500 12px var(--c-mono);opacity:0;pointer-events:none;tran
 padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px));max-height:80%;box-sizing:border-box;overflow-y:auto;transform:translateY(100%);
 font:15px var(--c-sans);color:var(--c-fg)}
 #ccsheet.open .pan{transform:translateY(0)}
+/* a sheet runs to the screen's edge, as a native one does: iOS 26 paints its reserved bottom zone with the canvas colour, so an open sheet takes
+   the canvas, and the home indicator lives in that zone (or under the keyboard), so the sheet's padding leaves env() out (the dock's rule). 2026-10-26 */
+html:has(#ccsheet.open,#ccpick.open){background:var(--c-surface)}
+body:is(.kbup,.nozone) :is(#ccsheet,#ccpick) .pan{padding-bottom:14px}
 /* motion: the backdrop fades, the sheet slides, transform and opacity only. display sits in the transition with allow-discrete so the slide-out plays
    before display flips to none, and @starting-style gives the slide-in a from-state. A browser without either drops these and toggles instantly. */
 @media(prefers-reduced-motion:no-preference){
