@@ -210,6 +210,8 @@ async function phone(w, h) {
     if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
     if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
+    if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
+      agents: [{ label: 'build:lego0', phase: 'Build', state: 'done' }, { label: 'build:web', phase: 'Build', state: 'failed' }, { label: 'review:branch', phase: 'Review', state: 'running' }] }] }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -285,6 +287,17 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   const closed = await P.page.evaluate(() => !document.getElementById('ccsheet').classList.contains('open'));
   check(`${tag} 1 no strip, ⋯ is the bar's first key and opens the menu, a backdrop tap closes it`, !top.strip && top.wrapTop === 0 && top.first === 'Menu' && closed, [top, closed]);
+  // the session's Workflow run (2026-10-26): a pill at the terminal's top right, inside the screen; its tap opens the sheet, the run's agents on top
+  const wf = await P.page.evaluate(() => { const p = document.getElementById('ccwf'), r = p.getBoundingClientRect(); return { text: p.hidden ? '' : p.textContent, right: Math.round(r.right), top: Math.round(r.top), iw: innerWidth }; });
+  await P.page.locator('#ccwf').click(); await P.page.waitForSelector("#ccsheet.open .pan"); await sleep(450); await shot(P, `${tag}-1-workflows`); // after the slide-in
+  // the Archify diagrams (2026-10-26): a row above "All sessions" that reaches /diagrams, on screen once the sheet scrolls to it (the run is on top)
+  const dg = await P.page.evaluate(() => { const ls = [...document.querySelectorAll('#ccsheet .ln')], d = ls.find(x => x.textContent.startsWith('Diagrams'));
+    d?.scrollIntoView({ block: 'nearest' }); const r = d?.getBoundingClientRect();
+    return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
+  check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
+  const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, rows: [...document.querySelectorAll('#ccsheet .wf li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
+  await P.page.mouse.click(w / 2, 40); await sleep(300);
+  check(`${tag} 1 workflow: the pill names the run and its phase, inside the screen; its tap opens the sheet with the agents on top`, wf.text === '⟳ email-engine-build · Review (2/2) · 2/3 agents' && wf.right <= wf.iw && wf.top >= 0 && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
   // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
   await P.page.evaluate(() => document.activeElement?.blur?.());
   const box = await P.page.locator('#terminal-wrap').boundingBox();

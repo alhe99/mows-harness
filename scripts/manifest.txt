@@ -246,6 +246,7 @@ infra/dashboard/routes/md.mjs
 infra/dashboard/routes/push.mjs
 infra/dashboard/routes/twofa.mjs
 infra/dashboard/routes/webpush.mjs
+infra/dashboard/routes/workflows.mjs
 infra/dashboard/sse.mjs
 infra/dashboard/static.mjs
 infra/droid/SETUP.md
@@ -364,6 +365,7 @@ web/pages/term/claudebox.mjs
 web/pages/term/clip.mjs
 web/pages/term/composer.mjs
 web/pages/term/dom.mjs
+web/pages/term/flows.mjs
 web/pages/term/gridkeys.mjs
 web/pages/term/ime.mjs
 web/pages/term/index.html

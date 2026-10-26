@@ -62,10 +62,11 @@ import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
 import { NEXT_BASE, TOUCHTEST, appView, hostAcct, iconPNG, liveJson, manifest, nextView } from './routes/documents.mjs';
 import { commandsJson } from './routes/commands.mjs';
+import { workflowsJson } from './routes/workflows.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
-import { mdView } from './routes/md.mjs';
+import { diagramsView, mdView } from './routes/md.mjs';
 import { cli as twofaCli, twofaView } from './routes/twofa.mjs';
 
 // `lite.mjs 2fa enroll|revoke|list`: the second factor's CLI (routes/twofa.mjs), run over SSH; never starts the server
@@ -189,8 +190,10 @@ const server = http.createServer(async (req, res) => {
     if (p === '/app') return await appView(req, res, url, UI === 'next');
     if (p === '/app/live.json') return await liveJson(req, res, url);
     if (p === '/app/commands.json') return await commandsJson(req, res, url);
+    if (p === '/app/workflows.json') return await workflowsJson(req, res, url);
     if (p === '/device') return await deviceView(req, res);
     if (p === '/md') return await mdView(req, res, url, UI === 'next');
+    if (p === '/diagrams') return await diagramsView(req, res);
     // ↻ button: force usage re-collect, then bounce back to the same page (PRG) with
     // sys=1 so the panel re-opens already showing the refresh in progress. Only /system
     // renders the system+usage panel now (moved off '/' — gap #1/#2).
@@ -281,6 +284,18 @@ if (args.includes('--selftest')) {
                       '<blockquote>', '<strong>b</strong>', '<a href="https://x/">l</a>', '<a href="#">j</a>'])
     if (!mdOut.includes(frag)) { console.error(`FAIL: md renderer missing ${JSON.stringify(frag)} in ${JSON.stringify(mdOut)}`); process.exit(1); }
   console.log('md renderer: OK');
+  { // /md?f=<x>.html serves the file itself: only under a sandbox with no same-origin, no network and no forms
+    const { HTML_CSP } = await import('./routes/md.mjs'), d = HTML_CSP.split(/;\s*/);
+    for (const [ok, why] of [[/^sandbox /.test(d[0]) && !/allow-same-origin|allow-forms|allow-top-navigation|allow-popups-to-escape-sandbox/.test(d[0]), 'sandbox grants origin, forms, top navigation or unsandboxed popups'],
+      [d.includes("connect-src 'none'") && d.includes("default-src 'none'") && d.includes("form-action 'none'"), 'network or forms allowed']])
+      if (!ok) { console.error(`FAIL: /md html CSP: ${why}: ${HTML_CSP}`); process.exit(1); }
+    console.log('md html sandbox: OK');
+    const { diagramRows } = await import('./routes/md.mjs'); // /diagrams: the glob's lines, newest first, a broken line dropped
+    const dr = diagramRows('100\t2048\tOld &amp; slow Diagram\tDocuments/p/.archify/workflow-x-1/x.html\n200\t10\t\t.archify/erd-y-2/y.html\nnot\ta line\n300\t1\tt\tb/.archify/z/z.txt\n', '/srv/u');
+    const want = [['/srv/u/.archify/erd-y-2/y.html', '~', 'erd', 'y'], ['/srv/u/Documents/p/.archify/workflow-x-1/x.html', 'Documents/p', 'workflow', 'Old & slow']];
+    if (JSON.stringify(dr.map(r => [r.path, r.project, r.kind, r.title])) !== JSON.stringify(want)) { console.error('FAIL: /diagrams rows', JSON.stringify(dr)); process.exit(1); }
+    console.log('diagrams list: OK');
+  }
   { // the "/" menu's discovery (routes/commands.mjs): frontmatter, linked skills, hidden skills, nested and linked commands
     const { BUILTIN } = await import('./routes/commands.mjs'), { front, discover } = await import('./routes/cmdscan.mjs');
     const fs = await import('node:fs'), path = (await import('node:path')).default, os = (await import('node:os')).default;

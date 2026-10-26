@@ -194,6 +194,20 @@ background:none;width:100%;box-sizing:border-box;text-align:left;font:15px var(-
 #ccsheet .step span{min-width:34px;text-align:center;font:500 14px var(--c-mono);font-variant-numeric:tabular-nums}
 select#ccthemesel{height:36px;max-width:60%;background:var(--c-raised);color:var(--c-fg);border:1px solid var(--c-line2);border-radius:9px;font:14px var(--c-sans);padding:0 10px}
 
+/* the session's workflow runs (flows.mjs): a pill over the terminal's top right while one runs, and a block on top of the menu sheet */
+#ccwf{position:absolute;top:8px;right:10px;z-index:5;max-width:calc(100% - 20px);box-sizing:border-box;padding:5px 11px;border-radius:999px;border:1px solid var(--c-ok-bd);
+background:#0b1f18;color:var(--c-ok);font:500 11.5px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ccwf.failed,#ccwf.stale{color:var(--c-bad);border-color:var(--c-line2);background:var(--c-raised)} #ccwf.completed{color:var(--c-mut);border-color:var(--c-line2);background:var(--c-raised)}
+#ccwf[hidden],#ccsheet .wf[hidden]{display:none}
+#ccsheet .wf{margin-bottom:12px;display:grid;gap:10px}
+#ccsheet .run{border:1px solid var(--c-line2);border-radius:14px;background:var(--c-raised);padding:10px 12px}
+#ccsheet .rh{display:grid;gap:2px;margin-bottom:6px} #ccsheet .rh b{font:600 14px var(--c-sans);overflow-wrap:anywhere}
+#ccsheet .rh small,#ccsheet .wf li small{font:400 11.5px var(--c-mono);color:var(--c-dim)}
+#ccsheet .wf ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+#ccsheet .wf li{display:flex;align-items:baseline;gap:8px;font:13px var(--c-mono);color:var(--c-fg2);min-width:0}
+#ccsheet .wf li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .wf li i{font-style:normal;width:1em;flex:none} #ccsheet .wf li.done i{color:var(--c-ok)} #ccsheet .wf li.failed i{color:var(--c-bad)} #ccsheet .wf li.running i{color:var(--c-ok);animation:ccload-blink 1.06s steps(1) infinite}
+
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */
 #ccpick{position:fixed;inset:0;z-index:72;display:none;background:rgba(0,0,0,.6)}
 #ccpick.open{display:block}

@@ -1,6 +1,6 @@
 // menu.mjs — the actions sheet behind the strip's ⋯ (2026-10-23): what the old key bar carried that is not a key. Copy text (the overlay),
-// paste, attach a file; text size; the terminal theme; detach from tmux; restart the pane (two taps: whatever runs is killed); all sessions.
-// Touch only. The backdrop or a chosen action closes it.
+// paste, attach a file; text size; the terminal theme; detach from tmux; restart the pane (two taps: whatever runs is killed); the Archify diagrams (/diagrams); all sessions.
+// The session's workflow runs on top (flows.mjs). Touch only. The backdrop or a chosen action closes it.
 import { el, icon, say } from './dom.mjs';
 
 const I = {
@@ -10,8 +10,8 @@ const I = {
 };
 const ic = d => { const s = icon(d); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '1.8'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); return s; };
 
-/** @param {{ clip: any, att: { pick: () => void }, fonts: any, theme: any, detach: () => void, restart: () => void, title: () => { name: string, label: string } | null }} o */
-export function menu({ clip, att, fonts, theme, detach, restart, title }) {
+/** @param {{ clip: any, att: { pick: () => void }, fonts: any, theme: any, detach: () => void, restart: () => void, title: () => { name: string, label: string } | null, top?: HTMLElement | null }} o */
+export function menu({ clip, att, fonts, theme, detach, restart, title, top = null }) {
   const name = el('b'), sub = el('span');
   const tile = (d, label, fn) => { const b = el('button', { type: 'button', className: 'tile' }, ic(d), label); b.addEventListener('click', () => { close(); fn(); }); return b; };
   const row = (label, fn, cls = '', extra = null) => { const b = el('button', { type: 'button', className: 'ln ' + cls }, el('span', {}, label), extra); b.addEventListener('click', () => fn(b)); return b; };
@@ -26,6 +26,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title }) {
   const pan = el('div', { className: 'pan', role: 'dialog', 'aria-label': 'terminal actions' },
     el('div', { className: 'grab' }),
     el('div', { className: 'hd' }, name, sub),
+    top, // the session's workflow runs (flows.mjs), when it has any
     el('div', { className: 'tiles' },
       clip ? tile(I.copy, 'Copy text', clip.open) : null,
       clip ? tile(I.paste, 'Paste', clip.paste) : null,
@@ -34,6 +35,7 @@ export function menu({ clip, att, fonts, theme, detach, restart, title }) {
     theme.select ? el('div', { className: 'ln' }, el('label', { htmlFor: 'ccthemesel' }, 'Theme'), theme.select) : null,
     row('Detach from tmux', () => { close(); detach(); }, '', el('small', {}, '^Q d')),
     restartRow,
+    row('Diagrams', () => { location.href = '/diagrams'; }, '', el('small', {}, '›')), // the Archify pages (routes/md.mjs)
     row('All sessions', () => { location.href = '/'; }, '', el('small', {}, '›')));
   const sheet = el('div', { id: 'ccsheet' }, pan);
   sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
