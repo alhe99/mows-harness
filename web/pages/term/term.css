@@ -206,6 +206,7 @@ background:#0b1f18;color:var(--c-ok);font:500 11.5px var(--c-mono);white-space:n
 #ccsheet .wf ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 #ccsheet .wf li{display:flex;align-items:baseline;gap:8px;font:13px var(--c-mono);color:var(--c-fg2);min-width:0}
 #ccsheet .wf li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ccsheet .wf .ags li span small{display:block;overflow:hidden;text-overflow:ellipsis} #ccsheet .wf li.stale i{color:var(--c-dim)}
 #ccsheet .wf li i{font-style:normal;width:1em;flex:none} #ccsheet .wf li.done i{color:var(--c-ok)} #ccsheet .wf li.failed i{color:var(--c-bad)} #ccsheet .wf li.running i{color:var(--c-ok);animation:ccload-blink 1.06s steps(1) infinite}
 
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */

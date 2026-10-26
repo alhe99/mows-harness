@@ -1,11 +1,12 @@
-// flows.mjs — the session's Workflow runs (2026-10-26). Claude's "Background tasks" panel does not render on the phone, and its /workflows
+// flows.mjs — the session's Workflow runs and background agents (2026-10-26). Claude's "Background tasks" panel does not render on the phone, and its /workflows
 // overlay takes the terminal over, so this page asks the dashboard instead: /app/workflows.json (infra/dashboard/routes/workflows.mjs), every
 // POLL while the page is visible. A pill over the terminal while a run is going, or ended less than RECENT ago; its tap opens the menu sheet,
-// whose top block (box) lists every run of the last day with its agents. Touch only, like the sheet.
+// whose top block (box) lists every run of the last day with its agents, then the background agents (Agent calls) with what each is doing.
+// Touch only, like the sheet.
 import { el } from './dom.mjs';
 
 const POLL = 5000, RECENT = 15 * 60_000;
-const MARK = { running: '●', done: '✓', failed: '✕' };
+const MARK = { running: '●', done: '✓', failed: '✕', stale: '?' };
 const ago = ms => (ms < 90_000 ? Math.round(ms / 1000) + 's' : ms < 5_400_000 ? Math.round(ms / 60_000) + 'm' : (ms / 3_600_000).toFixed(1) + 'h');
 const kt = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1e3) + 'k');
 
@@ -17,25 +18,32 @@ export function flows(open) {
   pill.addEventListener('click', open);
   const box = el('div', { className: 'wf', hidden: true });
 
-  /** @param {any[]} runs */
-  const render = runs => {
+  /** @param {any[]} runs @param {any[]} agents */
+  const render = (runs, agents) => {
     const now = Date.now();
     const line = r => {
       const done = r.agents.filter(a => a.state !== 'running').length, pi = r.phases.indexOf(r.phase);
       if (r.status === 'running') return `${r.phase || 'starting'}${pi >= 0 ? ` (${pi + 1}/${r.phases.length})` : ''} · ${done}/${r.agents.length} agents`;
       return `${r.status}${r.ms ? ' · ' + ago(r.ms) : ''}${r.tokens ? ' · ' + kt(r.tokens) + ' tokens' : ''} · ${ago(now - r.last)} ago`;
     };
-    box.hidden = !runs.length;
+    const busy = agents.filter(a => a.state === 'running');
+    box.hidden = !runs.length && !agents.length;
     box.replaceChildren(...runs.map(r => el('div', { className: 'run ' + r.status },
       el('div', { className: 'rh' }, el('b', {}, r.name), el('small', {}, line(r))),
-      el('ul', {}, ...r.agents.map(a => el('li', { className: a.state }, el('i', {}, MARK[a.state] || '·'), el('span', {}, a.label), el('small', {}, a.phase)))))));
-    const live = runs.find(r => r.status === 'running') || runs.find(r => now - r.last < RECENT);
-    pill.hidden = !live;
+      el('ul', {}, ...r.agents.map(a => el('li', { className: a.state }, el('i', {}, MARK[a.state] || '·'), el('span', {}, a.label), el('small', {}, a.phase)))))),
+    agents.length ? el('div', { className: 'run ags' },
+      el('div', { className: 'rh' }, el('b', {}, 'Agents'), el('small', {}, `${busy.length} running`)),
+      el('ul', {}, ...agents.map(a => el('li', { className: a.state, title: a.desc }, el('i', {}, MARK[a.state] || '·'),
+        el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null), el('small', {}, a.state === 'running' ? '' : ago(now - a.last))))))
+    : null);
+    const live = runs.find(r => r.status === 'running') || (!busy.length && runs.find(r => now - r.last < RECENT));
+    pill.hidden = !live && !busy.length;
     if (live) { pill.className = live.status; pill.textContent = `${live.status === 'running' ? '⟳' : MARK[live.status === 'completed' ? 'done' : 'failed']} ${live.name} · ${line(live).split(' · ').slice(0, 2).join(' · ')}`; }
+    else if (busy.length) { pill.className = 'running'; pill.textContent = `⟳ ${busy.length > 1 ? busy.length + ' agents' : busy[0].label}${busy.length === 1 && busy[0].doing ? ' · ' + busy[0].doing.split(':')[0] : ''}`; }
   };
   const tick = () => {
     if (document.hidden) return;
-    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) render(Array.isArray(j.runs) ? j.runs : []); }, () => { /* offline: keep the last state */ });
+    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
   };
   tick();
   setInterval(tick, POLL);
