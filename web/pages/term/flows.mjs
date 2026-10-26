@@ -11,7 +11,7 @@ const MARK = { running: '●', done: '✓', failed: '✕', stale: '?' };
 const ago = ms => (ms < 90_000 ? Math.round(ms / 1000) + 's' : ms < 5_400_000 ? Math.round(ms / 60_000) + 'm' : (ms / 3_600_000).toFixed(1) + 'h');
 const kt = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1e3) + 'k');
 
-/** @param {(j: any) => void} [on] each answer, whole (term.mjs hands its `claude` to the composer) */
+/** @param {(j: any, t0: number) => void} [on] each answer, whole, and when it was asked (term.mjs hands its `claude` to the composer) */
 export function flows(on) {
   const args = new URLSearchParams(location.search).getAll('arg');
   const url = '/app/workflows.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : '');
@@ -45,10 +45,11 @@ export function flows(on) {
   };
   const tick = () => {
     if (document.hidden) return;
-    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j); if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
+    const t0 = Date.now(); // when it was asked: what it says is about the pane from then on
+    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j, t0); if (j) render(Array.isArray(j.runs) ? j.runs : [], Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ });
   };
   tick();
   setInterval(tick, POLL);
   document.addEventListener('visibilitychange', tick);
-  return { badge, box };
+  return { badge, box, tick };
 }

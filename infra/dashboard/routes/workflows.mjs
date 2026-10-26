@@ -102,10 +102,12 @@ export async function workflowsJson(req, res, url) {
   let name = /^[0-9a-f]{8}$/.test(tab) ? await tabSession(tab) : '';
   const live = await tmuxLive();
   if (!name && live.some(l => l.name === want)) name = want;
-  // claude: Claude is the program in front in the session's pane (a `claude` in the tty's foreground process group, ps's `+`). The page
-  // trusts a question Claude draws that was already up when it opened on this word (composer.mjs); a shell printing one is not Claude.
-  // Fails closed: no pane, no tty, ps failing all read false.
-  const pane = live.find(l => l.name === name)?.paneId || '', tty = /^%\d+$/.test(pane) ? (await sh(...userCmd(['tmux', 'display-message', '-p', '-t', pane, '#{pane_tty}']))).trim() : '';
+  // claude: Claude is the program in front in the pane the tab shows, the session's active pane (a `claude` in its tty's foreground process
+  // group, ps's `+`). The page trusts a question Claude draws that was already up when it opened on this word (composer.mjs); a shell
+  // printing one is not Claude. Fails closed: no pane, no tty, ps failing all read false. (security review 2026-10-26: the first pane is
+  // not the one on screen in a session of several)
+  const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{pane_tty}'])) : '';
+  const tty = (/^11 (\S+)$/m.exec(panes) || [])[1] || '';
   const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
   const row = name ? (await fleetState()).find(f => f.name === name) : null;
   let runs = [], agents = [];

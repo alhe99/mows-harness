@@ -76,8 +76,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // that Claude is in front in the pane (claude(), from workflows.json every 5 s: up to 5 s stale once Claude exits). ponytail: a picker
   // taller than the rows (its keys cut off) gets Claude's drawing and the field, as before
   // A dialog trusted so stays trusted while it stays up: through Claude's redraws, and the resize that a keyboard going down makes (seconds on
-  // a long conversation), any gap under LINGER (dlgAt: the last scan that showed it, trusted)
-  let boxAt = 0, askedAt = 0, trusted = false, front = false, dlgAt = 0;
+  // a long conversation), any gap under LINGER, and only the same kind of picker (dlgAt: the last scan that showed it, trusted; dlgKind)
+  // The dashboard's word counts only once fetched after the dialog came up (frontAt > upAt; a dialog asks for it at once: need), never a
+  // word up to a poll older than what is on screen (security review 2026-10-26)
+  let boxAt = 0, askedAt = 0, trusted = false, front = false, frontAt = 0, upAt = 0, dlgAt = 0, dlgKind = '', need = () => {};
   // the field fits its text, one to five lines. Measured only while it is laid out: a field that is not (hidden, or the page not rendered under the
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
   const grow = () => {
@@ -226,7 +228,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     else if (recent && ok(s.edge)) t = s.edge; // a redraw in flight: the box's top rule and prompt are there, its bottom is not yet
     choice = s.choice;
     if (s.box) boxAt = now;
-    if (s.choice && (now - dlgAt < LINGER || front || now - boxAt < LINGER || now - askedAt < ASKED)) dlgAt = now;
+    const kind = s.picker ? (s.picker.ask ? 'ask' : 'pick') : '';
+    if (!s.choice) upAt = 0; else if (!upAt) { upAt = now; if (now - boxAt >= LINGER) need(); } // came up with no box just before: ask the dashboard now
+    if (s.choice && (now - dlgAt < LINGER && (!kind || !dlgKind || kind === dlgKind) || front && frontAt > upAt || now - boxAt < LINGER || now - askedAt < ASKED)) { dlgAt = now; if (kind) dlgKind = kind; }
+    if (!s.choice && now - dlgAt >= LINGER) dlgKind = '';
     trusted = !!s.picker && dlgAt === now;
     sheet.show(trusted ? s.picker : null);
     // a question Claude asks (its `Chat about this` row) while the keyboard is up: the keyboard goes, so the terminal gets the rows to show
@@ -336,6 +341,8 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     return true;
   };
   /** the dashboard's word: Claude is (or is not) the program in front in this pane */
-  const claude = b => { if (front !== b) { front = b; scan(); } };
-  return { el: form, typing: () => document.activeElement === ta, insert, claude };
+  const claude = (b, at = Date.now()) => { front = b; frontAt = at; scan(); };
+  /** @param {() => void} fn asks the dashboard for its word now (flows.mjs tick) */
+  const ask = fn => { need = fn; };
+  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask };
 }

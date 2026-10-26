@@ -79,7 +79,10 @@ export function claudePicker(rows) {
   if (r < 0 || !rows[r + 1]?.trim() || rows.slice(f + 1, -1).some(x => x.trim())) return null;
   const ask = HEAD.test(rows[r + 1]);
   if (end >= 0 && !ask) return null;
-  for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) && !OPT.test(rows[i + 1]) || !ask && ASK.test(rows[i])) return null;
+  // a permission question is never a picker, whatever its rows hold: a command shown in one can carry a ─ line and a `☐ …` row (security
+  // review 2026-10-26), so its words are looked for on every row from the line down, a question's own words included (one asking "Do you
+  // want to …" gets Claude's drawing)
+  for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) && !OPT.test(rows[i + 1]) || ASK.test(rows[i])) return null;
   const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]), ask, submit: /** @type {{ on: boolean } | null} */ (null) };
   let edge = 0, foot = '', brk = false;
   for (const row of rows.slice(r + 1, f + 1)) {
@@ -108,5 +111,8 @@ export function claudePicker(rows) {
     delete o.rows; delete o.col;
   }
   for (const s of foot.split(' · ')) { const m = /^\s*(\S+) to (.+?)\s*$/.exec(s); if (m && !m[1].includes('/')) p.keys.push({ key: m[1], label: m[2] }); }
+  // a question has its own furniture: `Chat about this` last, under its ─ line (free: the option above that line), or it is the review page
+  // (Submit answers / Cancel, no keys line)
+  if (ask && !(p.opts.at(-1)?.label === 'Chat about this' && p.opts.at(-2)?.free || end >= 0 && p.opts.map(o => o.label).join() === 'Submit answers,Cancel')) return null;
   return p.opts.length && p.title && (p.keys.length || ask) ? p : null;
 }
