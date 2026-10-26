@@ -29,6 +29,23 @@ async function readCapped(p, cap = CAP, head = false) {
   } catch { return ''; } finally { await fh.close(); }
 }
 
+/** "claude-sonnet-5-5" reads "Sonnet 5.5" */
+const modelName = m => { const x = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(String(m || '')); return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : String(m || ''); };
+/** an agent's figures, as Claude's /workflows view gives them: its model, its context in tokens (the last request's input, cache reads and
+ *  writes: what "156.6k tok" counts there), and its first and last stamps (its time). From its transcript's head and tail only. */
+export async function agentStats(log) {
+  const [head, tail] = await Promise.all([readCapped(log, TAIL, true), readCapped(log, TAIL)]);
+  const t0 = (/"timestamp":"([^"]{10,40})"/.exec(head) || [])[1] || '', ls = tail.split('\n');
+  let t1 = '', model = '', tok = 0;
+  for (let i = ls.length - 1; i > 0 && !(t1 && model); i--) { // line 0 is cut at the tail's start
+    let e; try { e = JSON.parse(ls[i]); } catch { continue; }
+    if (!t1 && e?.timestamp) t1 = String(e.timestamp);
+    const u = e?.type === 'assistant' ? e.message?.usage : null;
+    if (u && !model) { model = modelName(e.message.model); tok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0); }
+  }
+  return { model, tok, t0, t1 };
+}
+
 /** one run, from its journal (+ the final file and the script when present) */
 export async function readRun(sdir, id) {
   const jdir = path.join(sdir, 'subagents', 'workflows', id);
@@ -46,16 +63,21 @@ export async function readRun(sdir, id) {
   }
   let fin = null; try { fin = ftxt ? JSON.parse(ftxt) : null; } catch {}
   const script = scripts.find(f => f.endsWith('-' + id + '.js'));
-  let phases = Array.isArray(fin?.phases) ? fin.phases.map(p => String(p.title || '')) : [];
-  if (!phases.length && script) { // ponytail: a regex over meta, not an eval; a script whose phases are not plain quoted titles shows none
-    const m = /phases\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}/.exec(await readCapped(path.join(sdir, 'workflows', 'scripts', script)));
-    if (m) phases = [...m[1].matchAll(/title\s*:\s*(['"`])(.*?)\1/g)].map(x => x[2]);
+  let phases = Array.isArray(fin?.phases) ? fin.phases.map(p => String(p.title || '')) : [], desc = '';
+  if (script) { // ponytail: a regex over meta, not an eval; a script whose phases are not plain quoted titles shows none
+    const src = await readCapped(path.join(sdir, 'workflows', 'scripts', script), TAIL, true);
+    desc = (/description\s*:\s*(['"`])(.*?)\1/.exec(src) || [])[2] || '';
+    const m = /phases\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}/.exec(src);
+    if (!phases.length && m) phases = [...m[1].matchAll(/title\s*:\s*(['"`])(.*?)\1/g)].map(x => x[2]);
   }
+  // ponytail: two 64 KB reads per agent per poll; a cache keyed on the transcript's mtime when runs of dozens of agents are watched
+  await Promise.all([...agents.values()].map(async a => Object.assign(a, await agentStats(path.join(jdir, `agent-${a.id}.jsonl`)))));
   const mts = await Promise.all(['journal.jsonl', ...names].map(f => fsp.lstat(path.join(jdir, f)).then(s => s.mtimeMs, () => 0)));
   const last = Math.max(0, ...mts);
   const list = [...agents.values()];
   return {
-    id, name: String(fin?.workflowName || (script ? script.slice(0, -(id.length + 4)) : id)),
+    id, name: String(fin?.workflowName || (script ? script.slice(0, -(id.length + 4)) : id)), desc,
+    start: Number(fin?.startTime) || Math.min(...list.map(a => Date.parse(a.t0)).filter(Boolean), last),
     status: fin ? String(fin.status || 'completed') : Date.now() - last > STALE ? 'stale' : 'running',
     phase: list.length ? list[list.length - 1].phase : '', phases, agents: list, last,
     ms: fin?.durationMs || 0, tokens: fin?.totalTokens || 0,
@@ -169,13 +191,17 @@ if (main && process.argv[2] === '--check') {
   const sdir = await fsp.mkdtemp(path.join(os.tmpdir(), 'wf-')), id = 'wf_0123abcd-ef0';
   await fsp.mkdir(path.join(sdir, 'subagents', 'workflows', id), { recursive: true });
   await fsp.mkdir(path.join(sdir, 'workflows', 'scripts'), { recursive: true });
-  await fsp.writeFile(path.join(sdir, 'workflows', 'scripts', `my-build-${id}.js`), "export const meta = {\n name: 'my-build',\n phases: [\n { title: 'Build', detail: 'x' },\n { title: \"Review\" },\n ],\n}\n");
+  await fsp.writeFile(path.join(sdir, 'workflows', 'scripts', `my-build-${id}.js`), "export const meta = {\n name: 'my-build',\n description: 'Builds it, then reviews',\n phases: [\n { title: 'Build', detail: 'x' },\n { title: \"Review\" },\n ],\n}\n");
   await fsp.writeFile(path.join(sdir, 'subagents', 'workflows', id, 'journal.jsonl'), [
     { type: 'launched' }, { type: 'started', agentId: 'a1', label: 'build:one', phase: 'Build' }, { type: 'result', agentId: 'a1', result: {} },
     { type: 'started', agentId: 'a2', label: 'build:two', phase: 'Build' }, { type: 'failed', agentId: 'a2' },
     { type: 'started', agentId: 'a3', label: 'review:all', phase: 'Review' }].map(e => JSON.stringify(e)).join('\n') + '\nnot json\n');
+  await fsp.writeFile(path.join(sdir, 'subagents', 'workflows', id, 'agent-a1.jsonl'), [{ type: 'user', timestamp: '2026-10-26T21:08:37.680Z' },
+    { type: 'assistant', timestamp: '2026-10-26T21:12:57.960Z', message: { model: 'claude-sonnet-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 156122, cache_creation_input_tokens: 413, output_tokens: 1083 } } }].map(e => JSON.stringify(e)).join('\n') + '\n');
   let [r] = await runsOf(sdir + '.jsonl');
-  assert.equal(r.name, 'my-build'); assert.equal(r.status, 'running'); assert.equal(r.phase, 'Review');
+  assert.equal(r.name, 'my-build');
+  assert.deepEqual(['model', 'tok', 't0', 't1'].map(k => r.agents[0][k]), ['Sonnet 5.5', 156537, '2026-10-26T21:08:37.680Z', '2026-10-26T21:12:57.960Z']);
+  assert.equal(r.desc, 'Builds it, then reviews'); assert.equal(r.start, Date.parse('2026-10-26T21:08:37.680Z')); assert.equal(r.status, 'running'); assert.equal(r.phase, 'Review');
   assert.deepEqual(r.phases, ['Build', 'Review']);
   assert.deepEqual(r.agents.map(a => a.state), ['done', 'failed', 'running']);
   await fsp.writeFile(path.join(sdir, 'workflows', id + '.json'), JSON.stringify({ status: 'completed', workflowName: 'my-build', durationMs: 5, totalTokens: 9, phases: [{ title: 'Build' }] }));

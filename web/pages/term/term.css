@@ -234,6 +234,21 @@ white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto} #ccsh
 #ccsheet .dt ol li.tool p{font:12px/1.4 var(--c-mono);color:var(--c-mut);-webkit-line-clamp:2}
 #ccsheet .dt ol li.tool b{font-weight:600;color:var(--c-fg2)} #ccsheet .dt ol li.tool i{font-style:normal;color:var(--c-dim)}
 #ccsheet .dt p{margin:4px 0;font:13px var(--c-sans);color:var(--c-dim)}
+/* a run (flows.mjs runView): Claude's /workflows view for a phone — its description, then each phase (✓, ●, or its number while it waits,
+   and what is done of it) over its agents: name, model and tokens, its time, › to its detail. In the list a run's card is the way in. */
+#ccsheet .run[data-run]{cursor:pointer} #ccsheet .run[data-run]:active{background:#2e2e32}
+#ccsheet .rh b em,#ccsheet .rv li em{font-style:normal;color:var(--c-dim);float:right;font-weight:400}
+#ccsheet .rv .desc{margin:-4px 0 14px;font:13.5px/1.45 var(--c-sans);color:var(--c-mut)}
+#ccsheet .rv .ph{border:1px solid var(--c-line2);border-radius:14px;background:var(--c-raised);padding:10px 12px;margin-bottom:10px}
+#ccsheet .rv .ph.wait{background:none;border-style:dashed}
+#ccsheet .rv .phh{display:flex;align-items:baseline;gap:8px;font:600 14px var(--c-sans)} #ccsheet .rv .phh b{flex:1}
+#ccsheet .rv .phh i{font:500 12px var(--c-mono);font-style:normal;width:1em;color:var(--c-dim)} #ccsheet .rv .ph.done .phh i{color:var(--c-ok)}
+#ccsheet .rv .ph.running .phh i{color:var(--c-ok);animation:ccload-blink 1.06s steps(1) infinite} #ccsheet .rv .ph.failed .phh i{color:var(--c-bad)}
+#ccsheet .rv .ph.wait .phh b{color:var(--c-dim);font-weight:500} #ccsheet .rv .phh small{font:400 12px var(--c-mono);color:var(--c-dim)}
+#ccsheet .rv .ph ul{margin-top:8px;gap:0}
+#ccsheet .rv .ph li{align-items:center;padding:8px 0;border-top:1px solid var(--c-line);cursor:pointer} #ccsheet .rv .ph li:active{color:var(--c-fg)}
+#ccsheet .rv .ph li span small{display:block;margin-top:2px;overflow:hidden;text-overflow:ellipsis}
+#ccsheet .rv .ph li>small{flex:none;font-variant-numeric:tabular-nums} #ccsheet .rv li em{float:none;flex:none}
 
 /* Claude's pickers (pick.mjs): the menu sheet's surface; the list as rows, the highlighted one raised, the current one emerald and ticked */
 #ccpick{position:fixed;inset:0;z-index:72;display:none;background:rgba(0,0,0,.6)}

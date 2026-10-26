@@ -257,7 +257,8 @@ async function phone(w, h) {
     if (p.startsWith('/app/workflows.json') && new URL(r.request().url()).searchParams.has('agent')) { agReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ agent: { result: '', failed: false,
       steps: [{ t: '2026-10-26T21:00:00Z', k: 'say', s: 'Reviewing the branch.' }, { t: '2026-10-26T21:01:00Z', k: 'tool', n: 'Bash', s: 'Run the suite' }, { t: '2026-10-26T21:01:30Z', k: 'tool', n: 'Bash', s: 'Run the suite' }] } }) }); }
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
-      agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
+      desc: 'Build the email engine, then review it', start: Date.now() - 6_000_000,
+      agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done', model: 'Sonnet 5.5', tok: 156537, t0: '2026-10-26T21:08:37Z', t1: '2026-10-26T21:12:57Z' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
       agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
@@ -349,9 +350,17 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
   check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
   const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, ags: [...document.querySelectorAll('#ccsheet .wf .ags li')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
-  // a tap on an agent: its detail in the sheet, as the desktop's panel shows it (2026-10-26) — the rest of the sheet steps aside, newest step
-  // first; ‹ goes back to the list, and a sheet closed on the detail opens on the list again
-  await P.page.locator('#ccsheet .wf li', { hasText: 'review:branch' }).click(); await P.page.waitForSelector('#ccsheet .dt ol'); await sleep(100);
+  // a tap on a run: Claude's /workflows view for a phone (2026-10-26) — its description, each phase with its mark and count over its agents
+  // (model, tokens, time), a phase still to come with its number; the rest of the sheet steps aside
+  await P.page.locator('#ccsheet .wf .run[data-run]').click(); await P.page.waitForSelector('#ccsheet .rv'); await sleep(100);
+  const rv = await P.page.evaluate(() => ({ head: document.querySelector('#ccsheet .dh b')?.textContent, sub: document.querySelector('#ccsheet .dh small')?.textContent, desc: document.querySelector('#ccsheet .rv .desc')?.textContent,
+    ph: [...document.querySelectorAll('#ccsheet .rv .ph')].map(p => p.className.slice(3) + ':' + p.querySelector('.phh').textContent),
+    ag: [...document.querySelectorAll('#ccsheet .rv .ph li')].map(l => l.querySelector('span').textContent + '|' + l.querySelector(':scope > small').textContent) }));
+  check(`${tag} 1 run view: the run's phases with their counts over their agents, model, tokens and time`, rv.head === 'email-engine-build' && rv.sub === 'running · 2/3 agents · 1h40m'
+    && rv.desc === 'Build the email engine, then review it' && rv.ph.join() === 'failed:✕Build1/2,running:●Review0/1'
+    && rv.ag[0] === 'build:lego0Sonnet 5.5 · 156.5k tok|4m20s' && rv.ag.length === 3, rv);
+  // a tap on an agent: its detail, newest step first; ‹ goes back a level at a time, and a sheet closed on a detail opens on the list again
+  await P.page.locator('#ccsheet .rv li', { hasText: 'review:branch' }).click(); await P.page.waitForSelector('#ccsheet .dt ol'); await sleep(100);
   const dt = await P.page.evaluate(() => ({ head: document.querySelector('#ccsheet .dh b')?.textContent, sub: document.querySelector('#ccsheet .dh small')?.textContent,
     steps: [...document.querySelectorAll('#ccsheet .dt ol li')].map(l => l.className + ':' + l.querySelector('p').textContent),
     rest: [...document.querySelector('#ccsheet .pan').children].filter(c => !c.matches('.wf,.grab') && getComputedStyle(c).display !== 'none').length }));
@@ -359,12 +368,14 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 1 agent detail: a tap shows the agent, what it did newest first (a repeat folded), and nothing else of the sheet`, dt.head === 'review:branch' && dt.sub === 'running · email-engine-build · Review'
     && dt.steps.join() === 'tool:Bash Run the suite ×2,say:Reviewing the branch.' && dt.rest === 0 && aq.searchParams.get('agent') === 'w3' && aq.searchParams.get('run') === 'wf_0123abcd-ef0', [dt, agReq.at(-1)]);
   await P.page.locator('#ccsheet .back').click(); await sleep(100);
-  const back = await P.page.evaluate(() => document.querySelectorAll('#ccsheet .wf .run li').length + ':' + !!document.querySelector('#ccsheet .dt'));
+  const up1 = await P.page.evaluate(() => !!document.querySelector('#ccsheet .rv'));
+  await P.page.locator('#ccsheet .back').click(); await sleep(100);
+  const back = (up1 ? 'run:' : '') + await P.page.evaluate(() => document.querySelectorAll('#ccsheet .wf .run li').length + ':' + !!document.querySelector('#ccsheet .dt'));
   await P.page.locator('#ccsheet .wf li', { hasText: 'dev-ladder' }).click(); await sleep(100);
   await P.page.mouse.click(w / 2, 40); await sleep(400);
   await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await sleep(300);
   const reopen = await P.page.evaluate(() => !!document.querySelector('#ccsheet .dt') + ':' + getComputedStyle(document.querySelector('#ccsheet .hd')).display);
-  check(`${tag} 1 agent detail: ‹ is the list again; closed on a detail, the sheet opens on the list`, back === '5:false' && reopen === 'false:flex' && new URL(agReq.at(-1)).searchParams.get('run') === null, [back, reopen]);
+  check(`${tag} 1 agent detail: ‹ is the run, then the list; closed on a detail, the sheet opens on the list`, back === 'run:5:false' && reopen === 'false:flex' && new URL(agReq.at(-1)).searchParams.get('run') === null, [back, reopen]);
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
   check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);
