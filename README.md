@@ -82,9 +82,10 @@ resume.
 **System** — live host metrics (load, memory, swap, disk) as bars, an environment card
 (service status, Claude Code version, uptime, last deploy, Node/OS), per-account usage limits
 and daily spend with a burn rate, a measured disk-reclaim preview, and the one host-wide
-destructive action (restart all sessions) behind its own confirm.
+destructive action (restart all sessions) behind its own confirm, the grid view's shortcut
+modifier, and push notifications for a session that needs you.
 
-<img src="docs/assets/system.png" alt="The System view: metric bars for load average, memory, swap and disk; an environment card with STATUS ONLINE, version, uptime and last deploy; a master-process card with a Restart All Sessions danger button; and usage cards with per-account 5-hour and weekly limit bars, spend and burn rate." width="820">
+<img src="docs/assets/system.png" alt="The System view: metric bars for load average, memory, swap and disk; an environment card with STATUS ONLINE, version, uptime and last deploy; a master-process card with a Restart All Sessions danger button; a shortcuts card with the grid modifier; a push-notifications card; and usage cards with per-account 5-hour and weekly limit bars, spend and burn rate." width="820">
 
 **Device** — a segmented Mobile / Web stage. **Mobile** is a containerized Android emulator
 (redroid + ws-scrcpy) streamed into the page, touch-controllable, one button to start; **Web**

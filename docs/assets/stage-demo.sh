@@ -59,8 +59,8 @@ cat > "$STAGE/bin/runuser" <<'EOF'
 shift 3   # -u <user> --
 exec "$@"
 EOF
-# canned tmux: the fleet page runs `list-panes -a -F` with the 9-field format
-# (name, attached, created, activity, pane_pid, cwd, pane_id, @sid, @label) and then one
+# canned tmux: the fleet page runs `list-panes -a -F` with the 12-field format
+# (name, attached, created, activity, pane_pid, cwd, pane_id, window_name, pane_dead, @keep, @sid, @label) and then one
 # `capture-pane -t %N` per live session to classify it (working / needs-you / idle) —
 # each fake pane tail below is crafted to land in a different state, and each @sid points
 # at one of the fake transcripts above so cards pick up real titles/projects/snippets.
@@ -71,10 +71,10 @@ case "\${1:-}" in
   list-panes)
     for last; do :; done
     if [[ "\$last" == *session_attached* ]]; then
-      printf 'cc-demo-ledger-api\t1\t%s\t%s\t424242\t/demo/Projects/ledger-api\t%%1\t7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11\trefund double-count\n' \$((now-1080)) \$((now-8))
-      printf 'cc-work-payouts\t0\t%s\t%s\t424243\t/demo/Projects/ledger-api\t%%2\t4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98\tpayouts migration\n' \$((now-780)) \$((now-95))
-      printf 'cc-demo-storefront-web\t0\t%s\t%s\t424244\t/demo/Projects/storefront-web\t%%3\t2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602\t\n' \$((now-1620)) \$((now-1520))
-      printf 'cc-demo-mows-harness\t0\t%s\t%s\t424245\t/demo/Projects/mows-harness\t%%4\t9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740\tterminal theme wave\n' \$((now-5400)) \$((now-2400))
+      printf 'cc-demo-ledger-api\t1\t%s\t%s\t424242\t/demo/Projects/ledger-api\t%%1\tclaude\t0\t\t7f3a1c20-5d4e-4b91-9a02-1c6d8e0f4b11\trefund double-count\n' \$((now-1080)) \$((now-8))
+      printf 'cc-work-payouts\t0\t%s\t%s\t424243\t/demo/Projects/ledger-api\t%%2\tclaude\t0\t\t4c2d9b17-8a63-4e50-9f1c-2e7b5d0a3c98\tpayouts migration\n' \$((now-780)) \$((now-95))
+      printf 'cc-demo-storefront-web\t0\t%s\t%s\t424244\t/demo/Projects/storefront-web\t%%3\tclaude\t0\t\t2b8e4d61-9c07-4a3f-8e15-7d20a9c3f602\t\n' \$((now-1620)) \$((now-1520))
+      printf 'cc-demo-mows-harness\t0\t%s\t%s\t424245\t/demo/Projects/mows-harness\t%%4\tclaude\t0\t\t9d1f6a83-3e52-4c7d-b06a-4f81e2c5a740\tterminal theme wave\n' \$((now-5400)) \$((now-2400))
     fi
     ;;
   capture-pane)
@@ -88,13 +88,13 @@ case "\${1:-}" in
 esac
 exit 0
 EOF
-# the fleet classifier marks a session "paused" when `ps -eo pid=,ppid=,stat=` shows a
-# stopped (stat T) descendant of the pane leader — give pid 424245 one so the fourth demo
-# card renders the paused state; every other ps invocation falls through to the real ps.
+# `ps -eo pid=,ppid=,stat=,comm=`: a session is Claude's when a `claude` process runs under its pane leader, and "paused" when
+# a descendant is stopped (stat T) — every pane gets a claude child, 424245's stopped, so the fourth card renders paused;
+# every other ps invocation falls through to the real ps.
 cat > "$STAGE/bin/ps" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "-eo" ]; then
-  printf '424242 1 S\n424243 1 S\n424244 1 S\n424245 1 S\n524245 424245 T\n'
+  printf '424242 1 S bash\n424243 1 S bash\n424244 1 S bash\n424245 1 S bash\n524242 424242 S claude\n524243 424243 S claude\n524244 424244 S claude\n524245 424245 T claude\n'
 else
   exec /usr/bin/ps "$@"
 fi
