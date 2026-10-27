@@ -103,6 +103,7 @@ docs/assets/demo-session.sh
 docs/assets/device.png
 docs/assets/fleet.gif
 docs/assets/fleet.tape
+docs/assets/grid.png
 docs/assets/hero.png
 docs/assets/history.png
 docs/assets/mac-frame.html

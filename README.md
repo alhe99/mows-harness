@@ -72,6 +72,15 @@ actual terminal pane), its project, and what the agent is doing *right now* (the
 newest message). Attach, pause, rename, or kill from the card's menu; the list updates live
 over SSE.
 
+**Grid** — the Sessions view's other mode, for a desktop: live terminals side by side, up to
+six per tab and nine tabs, beside a sidebar of every session grouped by project. Click a
+session to open it, and shift+click or drag to put it beside the others. Columns resize, a
+pane zooms, and the whole layout comes back on reload. Keyboard chords (⌘⇧ on a Mac, Ctrl⇧
+elsewhere, or Alt — set on System) switch tabs (1–9), move between panes (arrows), zoom (Z),
+close (X) and toggle the sidebar (B).
+
+<img src="docs/assets/grid.png" alt="The grid view: a sidebar of live sessions grouped by project (mows/harness, storefront/web, ledger/api) with their states, and one tab holding two terminals side by side — refund double-count, working, with its tests passing, and payouts migration, waiting, on a permission prompt asking to run the migration against the dev database." width="820">
+
 **History** — every session ever run, live or finished, across every account: grouped by day,
 filterable (account, project, time window, free text), with LIVE badges on the ones still
 running and pagination that holds up at hundreds of sessions. Any row opens a detail view with
