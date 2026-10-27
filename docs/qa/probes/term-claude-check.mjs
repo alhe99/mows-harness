@@ -377,6 +377,19 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   const reopen = await P.page.evaluate(() => !!document.querySelector('#ccsheet .dt') + ':' + getComputedStyle(document.querySelector('#ccsheet .hd')).display);
   check(`${tag} 1 agent detail: ‹ is the run, then the list; closed on a detail, the sheet opens on the list`, back === 'run:5:false' && reopen === 'false:flex' && new URL(agReq.at(-1)).searchParams.get('run') === null, [back, reopen]);
   await P.page.mouse.click(w / 2, 40); await sleep(300);
+  // the sheet follows a finger down, as a native one (2026-10-26): a short drag moves it and springs back, a long one closes it
+  const drag = async (dy, wait = 350) => {
+    const g = await P.page.locator('#ccsheet .grab').boundingBox(), x = g.x + g.width / 2, y = g.y + 2, at = d => [{ identifier: 7, clientX: x, clientY: y + d }];
+    await P.page.dispatchEvent('#ccsheet .grab', 'touchstart', { touches: at(0), changedTouches: at(0) });
+    for (const d of [8, dy / 2, dy]) { await P.page.dispatchEvent('#ccsheet .grab', 'touchmove', { touches: at(d), changedTouches: at(d) }); await sleep(dy < 100 ? 120 : 40); } // short: slow, no flick
+    const mid = await P.page.evaluate(() => document.querySelector('#ccsheet .pan').style.transform);
+    await P.page.dispatchEvent('#ccsheet .grab', 'touchend', { touches: [], changedTouches: at(dy) }); await sleep(wait);
+    return { mid, open: await P.page.evaluate(() => document.getElementById('ccsheet').classList.contains('open')), after: await P.page.evaluate(() => document.querySelector('#ccsheet .pan').style.transform) };
+  };
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await sleep(450);
+  const dShort = await drag(40), dLong = await drag(400);
+  check(`${tag} 1 drag: the sheet follows the finger; a short drag springs back, a long one closes it`, dShort.mid === 'translateY(40px)' && dShort.open && dShort.after === ''
+    && dLong.mid === 'translateY(400px)' && !dLong.open && dLong.after === '', [dShort, dLong]);
   check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
   check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);
   // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
