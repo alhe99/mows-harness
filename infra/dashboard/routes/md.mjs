@@ -90,28 +90,30 @@ export async function mdView(req, res, url, next = false) {
 // `mdv -s <file>` copies the file to SHARE_DIR/<token>.<ext> (128 random bits) beside <token>.src (the source path, never served) and prints
 // https://<host>/p/<token>. Caddy's (share) snippet lets /p/* past the sign-in, so the link alone opens it: no path in the URL or the page, no
 // listing, nothing to guess. The copy is a snapshot: `mdv -s` on the same file refreshes the same link, `mdv -u` revokes it, `mdv -l` lists them.
-// O_NOFOLLOW because this reads as root from a directory the tmux user owns: a symlink planted as <token>.html must not publish what it points at.
+// This reads as root from a directory the tmux user owns, so both reads (the copy and its .src) go through shareRead: no symlink (O_NOFOLLOW),
+// no hardlink (nlink 1), a regular file under the cap. Otherwise a planted <token>.src -> /etc/shadow would put its first line in the title.
 const SHARE_DIR = `${TMUX_HOME}/.local/share/mows/shares`;
+async function shareRead(f, cap) {
+  let fh;
+  try { fh = await fsp.open(f, FS.O_RDONLY | FS.O_NOFOLLOW); } catch { return null; }
+  try { const st = await fh.stat(); return st.isFile() && st.nlink === 1 && st.size <= cap ? { st, buf: await fh.readFile() } : null; }
+  finally { await fh.close(); }
+}
 export async function shareView(req, res, token, url) {
   const priv = { 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-cache' };
   if (/^[A-Za-z0-9_-]{22}$/.test(token)) for (const ext of ['html', 'md', 'txt']) {
-    let fh;
-    try { fh = await fsp.open(`${SHARE_DIR}/${token}.${ext}`, FS.O_RDONLY | FS.O_NOFOLLOW); } catch { continue; }
-    try {
-      const st = await fh.stat();
-      if (!st.isFile() || st.size > 16 * 1024 * 1024) break;
-      const buf = await fh.readFile();
-      const src = await fsp.readFile(`${SHARE_DIR}/${token}.src`, 'utf8').catch(() => '');
-      const name = path.basename(src.trim()) || `shared.${ext}`;
-      if (url.searchParams.get('dl')) {
-        res.writeHead(200, { ...priv, 'content-type': 'application/octet-stream', 'content-length': buf.length,
-          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
-        return res.end(buf);
-      }
-      if (ext === 'html') return send(req, res, 200, buf, 'text/html; charset=utf-8',
-        { ...priv, 'content-security-policy': HTML_CSP, 'cross-origin-opener-policy': 'same-origin' });
-      return send(req, res, 200, mdShareDocument(name, st, buf.toString('utf8'), `/p/${token}?dl=1`), 'text/html; charset=utf-8', priv);
-    } finally { await fh.close(); }
+    const got = await shareRead(`${SHARE_DIR}/${token}.${ext}`, 16 * 1024 * 1024);
+    if (!got) continue;
+    const { st, buf } = got;
+    const name = path.basename(((await shareRead(`${SHARE_DIR}/${token}.src`, 4096))?.buf.toString('utf8') || '').trim()) || `shared.${ext}`;
+    if (url.searchParams.get('dl')) {
+      res.writeHead(200, { ...priv, 'content-type': 'application/octet-stream', 'content-length': buf.length,
+        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
+      return res.end(buf);
+    }
+    if (ext === 'html') return send(req, res, 200, buf, 'text/html; charset=utf-8',
+      { ...priv, 'content-security-policy': HTML_CSP, 'cross-origin-opener-policy': 'same-origin' });
+    return send(req, res, 200, mdShareDocument(name, st, buf.toString('utf8'), `/p/${token}?dl=1`), 'text/html; charset=utf-8', priv);
   }
   res.writeHead(404, { ...priv, 'content-type': 'text/plain' }); res.end('not found');
 }
