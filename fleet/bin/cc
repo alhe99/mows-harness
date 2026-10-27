@@ -86,7 +86,10 @@ if [ "${1-}" = "-w" ]; then WT="${2-}"; [ -n "$WT" ] || { echo "cc: -w needs a n
 CFG=$(cfg_for "$P")
 [ -d "$CFG" ] || { echo "cc: no profile dir $CFG (create it or run: cc)" >&2; exit 1; }
 
-RUN=(claude)
+# --allow-dangerously-skip-permissions: bypass is one of shift+tab's modes in every profile, not only one whose defaultMode starts in it
+# (a work profile left on "auto" never offered it, 2026-10-27); the session still starts in its profile's mode, and a managed
+# permissions.disableBypassPermissionsMode still takes it away
+RUN=(claude --allow-dangerously-skip-permissions)
 [ -f "$CFG/mcp-interactive.json" ] && RUN+=(--strict-mcp-config --mcp-config "$CFG/mcp-interactive.json")
 RUN+=("$@")
 

@@ -170,7 +170,8 @@ run_session() { # profile cwd sid — in-pane runner, lives INSIDE the tmux wind
   tmux set-option @sid "$3" 2>/dev/null || true
   local mcp=(); [ -f "$cfg/mcp-interactive.json" ] && mcp=(--strict-mcp-config --mcp-config "$cfg/mcp-interactive.json")
   while :; do
-    env CLAUDE_CONFIG_DIR="$cfg" "$CLAUDE" "${mcp[@]}" --resume "$3" && rc=0 || rc=$?
+    # bypass offered in shift+tab's cycle, as cc does (fleet/bin/cc); the session resumes in its profile's mode
+    env CLAUDE_CONFIG_DIR="$cfg" "$CLAUDE" --allow-dangerously-skip-permissions "${mcp[@]}" --resume "$3" && rc=0 || rc=$?
     [ "$rc" -eq 0 ] && exit 0   # normal /exit — close the window
     printf '\n\033[1;33m ⚠ session %s ended unexpectedly (exit %s) at %s\033[0m\n' "${3:0:8}" "$rc" "$(date '+%H:%M:%S')"
     printf ' likely: taken over by another device (phone / claude.ai) or killed by the system.\n'
