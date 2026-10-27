@@ -2,7 +2,7 @@
 // features as modules of their own, themed from themes.json (theme.mjs). On a phone the page is a column: the terminal, then the dock (the
 // composer, composer.mjs, over the key bar, bar.mjs); the menu sheet (menu.mjs), behind the bar's ⋯, holds the rest. window.term stays exposed: mobile-journey.mjs reads
 // term._core._renderService.dimensions.css.cell.width. Assets come from /assets/, never /term/ (Caddy sends every /term* path to ttyd).
-// Kill switches, as URL params: ?ime=off ?clip=off ?comp=off ?paint=off ?theme=off.
+// Kill switches, as URL params: ?ime=off ?clip=off ?comp=off ?paint=off ?theme=off ?links=off.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -20,8 +20,9 @@ import { menu } from './menu.mjs';
 import { flows } from './flows.mjs';
 import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
-import { coarse, el } from './dom.mjs';
+import { coarse, el, off } from './dom.mjs';
 import { gridKeys } from './gridkeys.mjs';
+import { tapLinks } from './links.mjs';
 // Android, light system theme: a light status bar so its dark icons read — the reasoning is in web/standalone.mjs, next to the same line.
 if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
 
@@ -112,6 +113,7 @@ if (coarse()) wrap.append(modChip());
 if (wf) bar.querySelector('[data-k=Menu]')?.append(wf.badge);
 if (wf) comp?.ask(wf.tick);
 touchScroll();
+if (!off('links')) tapLinks(term);
 viewportFit(fit);
 ime(term, client);
 paint(term, client);
