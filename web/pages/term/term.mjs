@@ -22,17 +22,21 @@ import { themes } from './theme.mjs';
 import { ttydClient } from './ttyd.mjs';
 import { coarse, el, off } from './dom.mjs';
 import { gridKeys } from './gridkeys.mjs';
-import { tapLinks } from './links.mjs';
+import { tapLinks, open as openLink } from './links.mjs';
 // Android, light system theme: a light status bar so its dark icons read — the reasoning is in web/standalone.mjs, next to the same line.
 if (/Android/.test(navigator.userAgent) && matchMedia('(prefers-color-scheme: light)').matches) document.querySelector('meta[name=theme-color]')?.setAttribute('content', '#e4e4e7');
 
-const term = new Terminal({ fontSize: 14, fontFamily: 'Consolas,Liberation Mono,Menlo,Courier,monospace', allowProposedApi: true });
+// a click on a link: xterm's own handlers (OSC 8 and the web-links addon) open about:blank and then point it at the link, behind a
+// confirm() for OSC 8; in the desktop app (Safari's Add to Dock, Chrome's installed app) that blank window is in the app's scope, so the
+// link loaded inside the app (2026-10-27). Opening the link itself lets the OS hand an outside link to the default browser, no prompt.
+const term = new Terminal({ fontSize: 14, fontFamily: 'Consolas,Liberation Mono,Menlo,Courier,monospace', allowProposedApi: true,
+  linkHandler: { activate: (_e, uri) => openLink(uri) } });
 /** @type {any} */ (window).term = term;
 const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
 term.loadAddon(new Unicode11Addon());
 term.unicode.activeVersion = '11'; // emoji width 2, to match tmux 3.4
-term.loadAddon(new WebLinksAddon());
+term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)));
 term.open(/** @type {HTMLElement} */ (document.getElementById('terminal-container')));
 // a pane of /grid: the shell focuses the iframe element (a row click, a tab click, a chord); that alone leaves this document's focus on
 // its body and typing goes nowhere, so the window's focus event hands it to xterm. Standalone, a click on the terminal does it, as before.
