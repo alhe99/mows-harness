@@ -75,6 +75,8 @@ body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
 #cccomp[hidden]{display:none}
 #cccomp{min-width:0;display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
 #cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
+#cccomp .uth{display:none;padding:2px 2px 0 0;text-align:right;font:500 11.5px var(--c-mono);color:transparent;background:linear-gradient(90deg,#ff8787,#ffaf87,#ffd787,#afd7af,#afafd7,#d7afd7);-webkit-background-clip:text;background-clip:text}
+#cccomp.ut .uth{display:block} /* ultrathink typed: Claude's note, in its rainbow */
 #cccomp.sh{border-color:#ff87af66} #cccomp.sh:focus-within{border-color:#ff87af;box-shadow:0 0 0 3px #ff87af26} #cccomp.sh #ccmsg{font-family:var(--c-mono)} /* a `!` first: Claude's shell mode, in its colour */
 /* 16 px: iOS zooms the page into a smaller field on focus */
 #ccmsg{width:100%;box-sizing:border-box;height:36px;min-height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}

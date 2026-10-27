@@ -194,7 +194,7 @@ async function keybar() {
   check('a finger drag becomes wheel notches (80 px = 5 notches of 57)', wheels.length >= 5 && wheels.every(d => d === 57), wheels);
   // standalone geometry: the beacon, and .nozone when the viewport is pinned short in an installed app (not reproducible headless: beacon only)
   await sleep(1000);
-  check('the geometry beacon /z?t=term-v8 is sent once', W.beacons.filter(u => u.includes('t=term-v8')).length === 1, W.beacons.filter(u => u.includes('/z?')));
+  check('the geometry beacon /z?t=term-v10 is sent once', W.beacons.filter(u => u.includes('t=term-v10')).length === 1, W.beacons.filter(u => u.includes('/z?')));
   check('no page errors', W.errors.length === 0, W.errors);
   await shut(W);
   // the chrome does not exist as UI on a desktop pointer: hidden bar, no strip, no composer, no sheet
@@ -381,7 +381,7 @@ async function sheet() {
   await openMenu(E);
   const sh = await E.page.evaluate(() => { const pan = document.querySelector('#ccsheet .pan').getBoundingClientRect(); return { bottom: Math.round(pan.bottom), ih: innerHeight, h: pan.height, head: document.querySelector('#ccsheet .hd').textContent, tiles: [...document.querySelectorAll('#ccsheet .tile')].map(t => t.textContent), rows: [...document.querySelectorAll('#ccsheet .ln')].map(r => r.textContent.trim()), rowH: Math.min(...[...document.querySelectorAll('#ccsheet .ln')].map(r => r.getBoundingClientRect().height)) }; });
   check('⋯ opens the menu sheet at the bottom, at most 80 % tall, rows at least 52 px', sh.bottom === sh.ih && sh.h <= sh.ih * 0.8 + 1 && sh.rowH >= 52, sh);
-  check('the menu: the session, Copy text / Paste / Attach file, text size, theme, detach, restart, all sessions', sh.head.includes(A) && JSON.stringify(sh.tiles) === '["Copy text","Paste","Attach file"]' && /^Text size/.test(sh.rows[0]) && /^Theme/.test(sh.rows[1]) && /^Detach from tmux/.test(sh.rows[2]) && /^Restart this pane/.test(sh.rows[3]) && /^All sessions/.test(sh.rows[4]), sh);
+  check('the menu: the session, Copy text / Paste / Attach file, text size, theme, detach, restart, diagrams, all sessions', sh.head.includes(A) && JSON.stringify(sh.tiles) === '["Copy text","Paste","Attach file"]' && /^Text size/.test(sh.rows[0]) && /^Theme/.test(sh.rows[1]) && /^Detach from tmux/.test(sh.rows[2]) && /^Restart this pane/.test(sh.rows[3]) && /^Diagrams/.test(sh.rows[4]) && /^All sessions/.test(sh.rows[5]), sh);
   // restart takes two taps; the first only arms it
   const n0 = E.inputs().length;
   await E.page.locator('#ccsheet .ln', { hasText: 'Restart this pane' }).click(); await sleep(100);
@@ -416,6 +416,12 @@ async function sheet() {
   check('a pasted file is intercepted and uploaded', pr && F.posts.length === 3 && decodeURIComponent(F.posts[2].headers['x-name']) === 'p.png', [pr, F.posts.length]);
   check('no page errors', E.errors.length === 0 && T.errors.length === 0 && F.errors.length === 0, [...E.errors, ...T.errors, ...F.errors]);
   await shut(F);
+  // a file that is no image: its path after `Attached file: `, never first (a message starting with `/` is a slash command to Claude, which then
+  // drops ultrathink's deeper reasoning, 2026-10-27)
+  const D = await open(undefined, { shot: '/tmp/shots/notes.docx' });
+  await D.page.setInputFiles('input[type=file]', { name: 'notes.docx', mimeType: 'application/octet-stream', buffer: Buffer.from('PK') }); await sleep(300);
+  check('a file that is no image: the path pasted after "Attached file: "', D.inputs().includes('Attached file: /tmp/shots/notes.docx '), D.inputs());
+  await shut(D);
 }
 
 // ---- composer: Claude's own input box is hidden and the field stands in for it -----------------------------------------------------------

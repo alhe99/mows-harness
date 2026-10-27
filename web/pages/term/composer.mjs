@@ -57,7 +57,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // a shell last time) opens without the field: it comes with Claude's box, while the terminal is still out of sight.
   const args = new URLSearchParams(location.search).getAll('arg'), KEY = 'cchid:' + (args[0] === 'attach' ? args[1] || '' : '');
   let last = 0; try { last = +(localStorage.getItem(KEY) || 0); } catch { /* storage off: a first visit every time */ }
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, ta, el('div', { className: 'cbar' }, add, mode, model, draft, send));
+  // ultrathink in the message: Claude's own note under it (`Deeper reasoning requested for this turn`, over its box) is under the dock, so the
+  // field says it, in the keyword's colours
+  const uth = el('div', { className: 'uth', 'aria-live': 'polite' }, 'Deeper reasoning requested for this turn');
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, uth, ta, el('div', { className: 'cbar' }, add, mode, model, draft, send));
   let booting = true, got = false, cap = 0;
   document.body.classList.add('ccboot');
   const ready = () => { if (booting) { booting = false; back = 0; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
@@ -89,6 +92,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // iOS file picker) measures 0, and a 0 px field stayed collapsed after an attach (the phone, 2026-10-24); term.css keeps a one-line minimum
   const grow = () => {
     form.classList.toggle('has', !!ta.value.trim() || !!held);
+    form.classList.toggle('ut', /\bultrathink\b/i.test(ta.value + ' ' + held));
     if (!ta.offsetParent) return;
     ta.style.height = 'auto';
     const h = ta.scrollHeight;

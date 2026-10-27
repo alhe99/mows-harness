@@ -653,6 +653,12 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   i0 = (F.inputs || []).length;
   await P.page.locator('#ccpick .opt', { hasText: "don't ask again" }).click(); await sleep(500);
   check(`${tag} 11 a tap answers: Claude gets 2, the sheet goes`, F.scene === 'idle' && F.log.some(l => l.includes('answered 2')) && (F.inputs || []).slice(i0).join('') === '2' && !(await sheet()).open, [F.scene, F.log.slice(-3), (F.inputs || []).slice(i0)]);
+  // U ultrathink typed: Claude's own note about it sits over its box, under the dock: the field says it
+  await P.page.fill('#ccmsg', 'please Ultrathink this'); await P.page.evaluate(() => document.getElementById('ccmsg').dispatchEvent(new Event('input')));
+  const ut = await P.page.evaluate(() => { const u = document.querySelector('#cccomp .uth'); return getComputedStyle(u).display !== 'none' && u.textContent; });
+  await P.page.fill('#ccmsg', ''); await P.page.evaluate(() => document.getElementById('ccmsg').dispatchEvent(new Event('input')));
+  const ut0 = await P.page.evaluate(() => getComputedStyle(document.querySelector('#cccomp .uth')).display);
+  check(`${tag} U ultrathink in the field: Claude's note shows over it, and goes with the word`, ut === 'Deeper reasoning requested for this turn' && ut0 === 'none', [ut, ut0]);
   // S a `!` first: Claude's shell mode. The field types it as a terminal does (no autocorrect, no capitals), sends it as typed, and Claude's
   // shell-mode box is still its box: the field stays, a shell chip
   await P.page.focus('#ccmsg'); await P.page.keyboard.type('!'); await sleep(100);
