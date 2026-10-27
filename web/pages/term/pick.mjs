@@ -9,7 +9,7 @@
 // untick it: the text alone ticks it).
 // Claude's permission dialogs (perm, claudePerm, 2026-10-27): the question is the title, every row above the options as Claude drew it (a diff's
 // rows in its colours), scrolled to its end; a tap answers (the number; the folder-trust question's unnumbered options: arrows and Enter).
-import { el, icon } from './dom.mjs';
+import { dragToClose, el, icon } from './dom.mjs';
 
 const KEYS = { Enter: '\r', Esc: '\x1b', Tab: '\t', Space: ' ' }, UP = '\x1b[A', DN = '\x1b[B';
 const CHECK = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
@@ -23,11 +23,18 @@ export function picker(term) {
   let shown = '', free = /** @type {string | null} */ (null), focusFree = false; // the free option's field: null shut, else what is typed in it (kept across redraws)
   const press = k => { const s = p && p.keys.some(x => x.key === k) ? keyOf(k) : ''; if (s) term.input(s); };
   wrap.addEventListener('click', e => { if (e.target === wrap) press('Esc'); });
+  // a swipe down closes it, as a native sheet: Claude's esc, as Cancel (the phone, 2026-10-27). It goes at once and stays shut for SHUT ms
+  // while Claude takes its dialog away: a scan before Claude redraws must not bring it back. ponytail: one Claude ignores the esc reopens on
+  // its next redraw after that
+  const SHUT = 1000;
+  let shut = 0;
+  dragToClose(wrap, pan, () => { wrap.classList.remove('open'); shown = ''; free = null; shut = Date.now(); term.input('\x1b'); });
   document.body.append(wrap);
   const btn = (cls, label, fn, kids = []) => { const b = el('button', { type: 'button', className: cls }, label, ...kids); b.addEventListener('click', fn); return b; };
 
   /** what Claude shows now; null closes the sheet */
   function show(/** @type {any} */ next) {
+    if (next && Date.now() - shut < SHUT) return;
     const k = next ? JSON.stringify(next) : '';
     if (k === shown) return;
     shown = k; p = next;

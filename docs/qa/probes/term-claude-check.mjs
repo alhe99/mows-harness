@@ -388,13 +388,13 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} 1 agent detail: ‹ is the run, then the list; closed on a detail, the sheet opens on the list`, back === 'run:5:false' && reopen === 'false:flex' && new URL(agReq.at(-1)).searchParams.get('run') === null, [back, reopen]);
   await P.page.mouse.click(w / 2, 40); await sleep(300);
   // the sheet follows a finger down, as a native one (2026-10-26): a short drag moves it and springs back, a long one closes it
-  const drag = async (dy, wait = 350) => {
-    const g = await P.page.locator('#ccsheet .grab').boundingBox(), x = g.x + g.width / 2, y = g.y + 2, at = d => [{ identifier: 7, clientX: x, clientY: y + d }];
-    await P.page.dispatchEvent('#ccsheet .grab', 'touchstart', { touches: at(0), changedTouches: at(0) });
-    for (const d of [8, dy / 2, dy]) { await P.page.dispatchEvent('#ccsheet .grab', 'touchmove', { touches: at(d), changedTouches: at(d) }); await sleep(dy < 100 ? 120 : 40); } // short: slow, no flick
-    const mid = await P.page.evaluate(() => document.querySelector('#ccsheet .pan').style.transform);
-    await P.page.dispatchEvent('#ccsheet .grab', 'touchend', { touches: [], changedTouches: at(dy) }); await sleep(wait);
-    return { mid, open: await P.page.evaluate(() => document.getElementById('ccsheet').classList.contains('open')), after: await P.page.evaluate(() => document.querySelector('#ccsheet .pan').style.transform) };
+  const drag = async (dy, wait = 350, id = 'ccsheet') => {
+    const G = `#${id} .grab`, g = await P.page.locator(G).boundingBox(), x = g.x + g.width / 2, y = g.y + 2, at = d => [{ identifier: 7, clientX: x, clientY: y + d }];
+    await P.page.dispatchEvent(G, 'touchstart', { touches: at(0), changedTouches: at(0) });
+    for (const d of [8, dy / 2, dy]) { await P.page.dispatchEvent(G, 'touchmove', { touches: at(d), changedTouches: at(d) }); await sleep(dy < 100 ? 120 : 40); } // short: slow, no flick
+    const mid = await P.page.evaluate(i => document.querySelector(`#${i} .pan`).style.transform, id);
+    await P.page.dispatchEvent(G, 'touchend', { touches: [], changedTouches: at(dy) }); await sleep(wait);
+    return { mid, open: await P.page.evaluate(i => document.getElementById(i).classList.contains('open'), id), after: await P.page.evaluate(i => document.querySelector(`#${i} .pan`).style.transform, id) };
   };
   await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await sleep(450);
   const dShort = await drag(40), dLong = await drag(400);
@@ -623,6 +623,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} P5 "Use this session only" is Claude's s: Opus 4.8 at xhigh, the sheet gone, the chip follows`, F.scene === 'idle' && F.how === 'session' && F.model === 'Opus 4.8 (xhigh)' && !k.open && c.name === 'Opus 4.8' && c.effort === 'xhigh', [F.scene, F.how, F.model, k.open, c]);
   await P.page.locator('#ccmodel').click(); await opened(); await tapIn('.hd button'); k = await sheet();
   check(`${tag} P6 Cancel is Claude's esc: nothing changes`, F.scene === 'idle' && F.model === 'Opus 4.8 (xhigh)' && !k.open, [F.scene, F.model, k.open]);
+  // swiped down, as a native sheet (2026-10-27): a short drag springs back, a long one is Claude's esc, and the sheet does not come back
+  await P.page.locator('#ccmodel').click(); await opened();
+  const pShort = await drag(40, 350, 'ccpick'), pLong = await drag(400, 900, 'ccpick');
+  check(`${tag} P6 a drag: the picker follows the finger; short springs back, long is Claude's esc and it stays shut`, pShort.mid === 'translateY(40px)' && pShort.open && pShort.after === '' && pLong.mid === 'translateY(400px)' && !pLong.open && F.scene === 'idle' && F.model === 'Opus 4.8 (xhigh)', [pShort, pLong, F.scene]);
   await P.page.locator('#ccmodel').click(); await opened(); await tapIn('.opt:has-text("Sonnet 5.5")'); await tapIn('.adj button:first-child'); await tapIn('.adj button:first-child'); await tapIn('.acts .pri'); k = await sheet(); c = await chips();
   check(`${tag} P7 "Set as default" is Claude's Enter: Sonnet 5.5 at medium, the default, the sheet gone`, F.scene === 'idle' && F.how === 'default' && F.model === 'Sonnet 5.5 (medium)' && !k.open && c.name === 'Sonnet 5.5' && c.effort === 'medium', [F.scene, F.how, F.model, k.open, c]);
   await sleep(800); s = await st(P);
