@@ -52,6 +52,9 @@ class FakeClaude {
     if (s[0] !== '0') return;
     let d = s.slice(1);
     (this.inputs ||= []).push(d); // every byte the page sent, for the writing checks
+    // tmux's prefix (^Q), then a command line: the ⋯ sheet's restart is `respawn-pane -k`. The pane goes blank, Claude comes back bootMs later
+    if (d === '\x11') { this.tcmd = ''; return; }
+    if (this.tcmd !== undefined && this.tcmd !== null) { if (d !== '\r') { this.tcmd += d; return; } const c = this.tcmd; this.tcmd = null; if (/^:respawn-pane -k$/.test(c)) this.respawn(); return; }
     if (this.scene === 'shell') { for (const c of d) { if (c === '\r') { this.log.push('dev@box:~$ ' + this.draft); this.draft = ''; } else if (c >= ' ') this.draft += c; } this.redraw(); return; }
     while (d) {
       let m;
@@ -102,12 +105,18 @@ class FakeClaude {
       if (c === '\x03') { if (this.draft) this.draft = ''; else this.exitWarn = true; continue; } // Claude: ctrl+c clears a non-empty input; on an empty one it warns
       if (c >= ' ') this.draft += c;
     }
+    if (!this.sh && this.draft[0] === '!') { this.sh = true; this.draft = this.draft.slice(1); } // a `!` first: shell mode, as Claude does
     this.redraw();
+  }
+  respawn() {
+    clearTimeout(this.job); Object.assign(this, { log: [], scene: 'boot', draft: '', sh: false }); this.redraw();
+    setTimeout(() => { this.log.push('\x1b[38;5;174m✻\x1b[0m Welcome back', ''); this.scene = 'idle'; this.redraw(); }, this.bootMs || 1500);
   }
   ask(scene) { Object.assign(this, { scene, ahl: 1, atext: '', ticks: [false, false, false] }); this.redraw(); }
   answer(x) { this.log.push(`\x1b[2m  ⎿  answered ${x}\x1b[0m`, ''); this.scene = 'idle'; }
   submit() {
     const p = this.draft.trim(); this.last = p; this.draft = '';
+    if (this.sh) { this.sh = false; this.ran = p; this.log.push(`\x1b[38;5;211m!\x1b[0m ${p}`, `  ⎿  ran ${p}`, ''); this.redraw(); return; }
     this.log.push(`\x1b[48;5;237m\x1b[38;5;246m❯ \x1b[38;5;231m${p}\x1b[0m`, '');
     this.scene = 'working'; this.redraw();
     this.job = setTimeout(() => { this.log.push('\x1b[32m●\x1b[0m Done: ' + p.slice(0, 60), ''); this.scene = 'idle'; this.redraw(); }, this.work || 400);
@@ -123,7 +132,8 @@ class FakeClaude {
     const R = '\x1b[38;5;244m' + '─'.repeat(this.cols) + '\x1b[0m';
     const wrap = l => { const plain = l.replace(/\x1b\[[0-9;]*m/g, ''); if (plain.length <= this.cols) return [l]; const out = []; for (let i = 0; i < plain.length; i += this.cols) out.push(plain.slice(i, i + this.cols)); return out; };
     let tail;
-    if (this.scene === 'shell') tail = ['dev@box:~$ ' + this.draft, TMUX];
+    if (this.scene === 'boot') tail = [TMUX]; // respawned: a blank pane until Claude prints
+    else if (this.scene === 'shell') tail = ['dev@box:~$ ' + this.draft, TMUX];
     else if (this.scene === 'model') {
       this.win = Math.min(Math.max(this.win, this.hl - WIN), this.hl - 1);
       const w = this.win, rows = PICK.slice(w, w + WIN).map(([name, what], j) => {
@@ -157,9 +167,9 @@ class FakeClaude {
       // the input line: what is typed in the default colour; empty, the last prompt as Claude's dimmed suggestion under its inverse cursor
       // as Claude draws it: wrapped at the box's width, the first row after ❯, the rest indented two
       const w = Math.max(8, this.cols - 2), rowsOf = t => t.split('\n').flatMap(p => { const out = []; for (let i = 0; i < Math.max(1, p.length); i += w) out.push(p.slice(i, i + w)); return out; });
-      const input = this.draft ? rowsOf(this.draft).map((r, i) => (i ? '  ' : '\x1b[38;5;246m❯\u00a0\x1b[39m') + r) : ['\x1b[38;5;246m❯\u00a0\x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1, w) + '\x1b[0m'];
+      const input = this.sh ? ['\x1b[38;5;211m!\u00a0\x1b[39m' + this.draft] : this.draft ? rowsOf(this.draft).map((r, i) => (i ? '  ' : '\x1b[38;5;246m❯\u00a0\x1b[39m') + r) : ['\x1b[38;5;246m❯\u00a0\x1b[7m' + this.last[0] + '\x1b[27m\x1b[2m' + this.last.slice(1, w) + '\x1b[0m'];
       tail = [...(this.scene === 'working' ? ['\x1b[38;5;173m✻ Simmering…\x1b[0m \x1b[2m(3s · esc to interrupt)\x1b[0m', ''] : []), R, ...input, R,
-        `  🤖 ${this.model} | 💰 $17.17 session`, MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX];
+        ...(this.sh ? ['  \x1b[38;5;211m! for shell mode\x1b[0m', TMUX] : [`  🤖 ${this.model} | 💰 $17.17 session`, MODES[this.mode] ? `  \x1b[38;5;114m${MODES[this.mode]}\x1b[0m (shift+tab to cycle) · 3 shells` : '  \x1b[2m? for shortcuts\x1b[0m', TMUX])];
     }
     const all = [...this.log.flatMap(wrap), ...tail];
     // tmux cuts its status line to the width (written whole, a phone's narrow pane wrapped it onto a second row)
@@ -629,11 +639,42 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await kb(P, h); await sleep(900); await kb(P, Math.round(h * 0.52)); await sleep(900);
   s = await st(P);
   check(`${tag} 9 the second key row, the keyboard down and up: never two inputs, no flash, no strip at the top`, s.two === 0 && s.flips === 0 && s.shown && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
+  // a permission dialog as a sheet too (the phone, 2026-10-27: it still read as the old terminal UI): its question the title, every row above the
+  // options as Claude drew them, a tap is Claude's number
   F.scene = 'dialog'; F.redraw(); await sleep(400); s = await st(P);
-  check(`${tag} 10 a permission dialog: nothing hidden, the field asks for 1–3, no mode chip, no sheet (Claude's words, as drawn)`, s.ph === 'Pick a number, or ↑ ↓ then send…' && s.shown && !s.chip && s.two === 0 && !(await sheet()).open, s);
+  k = await sheet();
+  const pvt = await P.page.evaluate(() => document.querySelector('#ccpick .pv')?.textContent || '');
+  check(`${tag} 10 a permission dialog: a sheet, its question the title, the command above the options, no mode chip`, k.open && k.title === 'Do you want to proceed?' && k.rows.length === 3 && k.rows[1].startsWith("Yes, and don't ask again for git pu") /* the fake cuts it at an SE's width */ && pvt.includes('Bash(git push origin feat/term-cockpit)') && !s.chip && s.two === 0, [k, pvt, s]);
   await shot(P, `${tag}-10-dialog`);
-  await P.page.fill('#ccmsg', ''); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
-  check(`${tag} 11 send with nothing typed is the dialog's Enter (after ↑ ↓)`, F.scene === 'idle' && F.log.some(l => l.includes('answered 1')), F.log.slice(-3));
+  i0 = (F.inputs || []).length;
+  await P.page.locator('#ccpick .opt', { hasText: "don't ask again" }).click(); await sleep(500);
+  check(`${tag} 11 a tap answers: Claude gets 2, the sheet goes`, F.scene === 'idle' && F.log.some(l => l.includes('answered 2')) && (F.inputs || []).slice(i0).join('') === '2' && !(await sheet()).open, [F.scene, F.log.slice(-3), (F.inputs || []).slice(i0)]);
+  // S a `!` first: Claude's shell mode. The field types it as a terminal does (no autocorrect, no capitals), sends it as typed, and Claude's
+  // shell-mode box is still its box: the field stays, a shell chip
+  await P.page.focus('#ccmsg'); await P.page.keyboard.type('!'); await sleep(100);
+  const sm = await P.page.evaluate(() => { const t = document.getElementById('ccmsg'); return { sh: document.getElementById('cccomp').classList.contains('sh'), ac: t.getAttribute('autocorrect'), cap: t.getAttribute('autocapitalize'), focus: document.activeElement === t }; });
+  check(`${tag} S1 a \`!\` first: the field types a command (autocorrect and capitals off), keeps the focus`, sm.sh && sm.ac === 'off' && sm.cap === 'off' && sm.focus, sm);
+  await P.page.keyboard.press('Backspace'); await sleep(100);
+  const pr = await P.page.evaluate(() => ({ sh: document.getElementById('cccomp').classList.contains('sh'), ac: document.getElementById('ccmsg').getAttribute('autocorrect') }));
+  check(`${tag} S2 the \`!\` gone: prose again`, !pr.sh && pr.ac === 'on', pr);
+  i0 = (F.inputs || []).length;
+  await P.page.fill('#ccmsg', '!ls -la'); await P.page.press('#ccmsg', 'Enter'); await sleep(600); s = await st(P);
+  check(`${tag} S3 sent as typed, Claude ran it in its shell mode, the field still the input`, F.ran === 'ls -la' && (F.inputs || []).slice(i0).join('').includes('!ls -la') && s.shown && s.two === 0, [F.ran, (F.inputs || []).slice(i0), s]);
+  await P.page.fill('#ccmsg', '!'); await P.page.evaluate(() => document.getElementById('ccmsg').dispatchEvent(new Event('input'))); F.sh = true; F.redraw(); await sleep(500); s = await st(P);
+  check(`${tag} S4 Claude's shell-mode box (its \`!\` prompt) is its box: the field stays, the chip says shell`, s.shown && s.chip === '! shell' && s.two === 0, s);
+  await P.page.fill('#ccmsg', '!pwd'); await P.page.press('#ccmsg', 'Enter'); await sleep(600);
+  check(`${tag} S5 already in shell mode, the field's \`!\` is not typed twice`, F.ran === 'pwd', F.ran);
+  // R the ⋯ sheet's restart: the pane goes blank while Claude starts again (seconds, for a long conversation): the loader, not a black terminal
+  // and the key bar, until Claude's box is back
+  F.bootMs = 2600; await P.page.evaluate(() => document.activeElement?.blur());
+  await P.page.locator('#cckb > button[data-k="Menu"]').click(); await P.page.waitForSelector('#ccsheet.open .pan'); await sleep(400);
+  const rst = P.page.locator('#ccsheet button', { hasText: 'Restart this pane' }); await rst.click(); await sleep(150); await P.page.locator('#ccsheet button', { hasText: 'Tap again' }).click();
+  await sleep(2000);
+  const mid = await P.page.evaluate(() => ({ boot: document.body.classList.contains('ccboot'), load: document.querySelector('#ccload .st')?.textContent }));
+  check(`${tag} R1 restarting: the loader while the pane is blank, past the linger`, F.scene === 'boot' && mid.boot && mid.load === 'restarting', [F.scene, mid]);
+  await sleep(1800); s = await st(P);
+  const end = await P.page.evaluate(() => document.body.classList.contains('ccboot'));
+  check(`${tag} R2 Claude back: the terminal and the field, Claude's box hidden`, F.scene === 'idle' && !end && s.shown && s.two === 0, [F.scene, end, s]);
   // A Claude's questions (AskUserQuestion) as a sheet, not the old terminal drawing (the phone, 2026-10-26): asked right after Claude's box
   const ask = () => P.page.evaluate(() => { const w = document.getElementById('ccpick'), f = w.querySelector('.free textarea');
     return { q: w.querySelector('.opts .q')?.textContent, ds: [...w.querySelectorAll('.opt .od')].map(x => x.textContent), ticks: [...w.querySelectorAll('.opt.box')].map(x => x.classList.contains('cur')), field: !!f, focused: document.activeElement === f, cancel: w.querySelector('.hd button')?.textContent, stray: [...w.querySelector('.pan').childNodes].filter(n => n.nodeType === 3).map(n => n.textContent) }; });

@@ -6,8 +6,9 @@
 // they sit under the dock while every visible row is conversation; what a row's remainder leaves is closed by a shift of less than a row. A
 // tap on the terminal brings the keyboard up in the field (from the touch itself: iOS ignores a focus moved inside a focus event). What Claude holds in its box (an attached image's [Image #1], a prompt recalled with ↑) shows as the draft chip, and send
 // submits it with whatever is typed; with an empty field, send submits the draft alone. The mode line comes back as the mode chip (tap =
-// shift+tab). A permission dialog: nothing is hidden, a bare digit picks; a picker (/model) comes up as a sheet (pick.mjs). A shell or a
-// full-screen program: no field, the terminal is the one input. ?comp=off turns the composer off.
+// shift+tab). A picker (/model), a question, a permission dialog come up as a sheet (pick.mjs); one the sheet cannot read (taller than the
+// screen): nothing is hidden, a bare digit picks. A `!` first is a shell command for Claude's shell mode, typed as in a terminal (no
+// autocorrect, no capitals). A shell or a full-screen program: no field, the terminal is the one input. ?comp=off turns the composer off.
 // The layout must not depend on the screen from one frame to the next: showing the field resizes the terminal, Claude and tmux redraw, and
 // mid-redraw the box is briefly gone (the phone, 2026-10-23: the field flashed on and off). So the field appears at once and goes only after
 // Claude has been off the screen for LINGER ms, and the shift and the chips are kept through the same window.
@@ -59,7 +60,11 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, ta, el('div', { className: 'cbar' }, add, mode, model, draft, send));
   let booting = true, got = false, cap = 0;
   document.body.classList.add('ccboot');
-  const ready = () => { if (booting) { booting = false; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
+  const ready = () => { if (booting) { booting = false; back = 0; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
+  // a restart (the ⋯ sheet): the entry again, until Claude is back. back 1: Claude still on screen, 2: gone (the pane respawned). A resumed long
+  // conversation takes seconds to print: the phone, 2026-10-27, showed a black terminal and the key bar meanwhile, read as the old UI
+  let back = 0;
+  const reboot = () => { booting = true; back = 1; stage.textContent = 'restarting'; document.body.classList.add('ccboot'); clearTimeout(cap); cap = setTimeout(ready, 30000); };
   // meanwhile, where the newest line will appear: the session and what is happening, under a blinking cursor (the phone, 2026-10-24: a black
   // screen read as stuck). Shown only past 150 ms (term.css), so a quick entry never flashes it
   const stage = el('span', { className: 'st' }, 'connecting');
@@ -117,20 +122,31 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   }
   const submit = () => {
     scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
-    const t = ta.value.replace(/\s+$/, '');
-    ta.value = ''; grow();
+    let t = ta.value.replace(/\s+$/, '');
+    ta.value = ''; grow(); shellMode();
     cmds.hidden = true;
     // a dialog or a picker (Claude's /model, /config, a permission question): a number picks; send with nothing typed is its Enter (after
     // ↑ ↓ on the keys); nothing else is sent into it
     if (choice) { if (/^\d{1,2}$/.test(t)) term.input(t); else if (!t) term.input('\r'); return; }
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
+    if (t[0] === '!' && mode.className === 'sh') t = t.slice(1); // Claude already in shell mode: its `!` is typed
     if (t[0] === '/') askedAt = Date.now();
     sent = held ? null : { t, p: 0 }; // ponytail: a message sent with a draft (an image) is not given back; the draft stays Claude's
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
   };
   form.addEventListener('submit', e => { e.preventDefault(); submit(); });
-  ta.addEventListener('input', () => { grow(); showCmds(); });
+  // a `!` first: Claude's shell mode. A command is not prose: iOS capitalised and corrected it (`!ls` sent as `!Ls`). The keyboard reads a
+  // field's traits when it takes the focus, so the field takes it again (as ime.mjs does)
+  const TRAITS = [['autocorrect', 'on', 'off'], ['autocapitalize', 'sentences', 'off'], ['spellcheck', 'true', 'false']];
+  let shell = false;
+  const shellMode = () => {
+    if (ta.value.startsWith('!') === shell) return;
+    shell = !shell; form.classList.toggle('sh', shell);
+    for (const [k, prose, cmd] of TRAITS) ta.setAttribute(k, shell ? cmd : prose);
+    if (document.activeElement === ta) { ta.blur(); ta.focus(); }
+  };
+  ta.addEventListener('input', () => { shellMode(); grow(); showCmds(); });
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } });
   // a latched ctrl/alt turns the next typed character into a key for the terminal, not text for the field
   ta.addEventListener('beforeinput', (/** @type {any} */ e) => {
@@ -230,7 +246,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (s.box) boxAt = now;
     // the dialog's kind: a question (its `Chat about this` row, read or cut off), a picker, or a permission dialog. Trust carries over only to
     // the same kind, and a dialog of another kind is a new one: it came up now, and needs its own proof (security review 2026-10-26)
-    const kind = !s.choice ? '' : s.picker ? (s.picker.ask ? 'ask' : 'pick') : rows.some(r => /^\s*(?:❯\s*)?\d+\. Chat about this$/.test(r)) ? 'ask' : 'perm';
+    const kind = !s.choice ? '' : s.picker ? (s.picker.perm ? 'perm' : s.picker.ask ? 'ask' : 'pick') : rows.some(r => /^\s*(?:❯\s*)?\d+\. Chat about this$/.test(r)) ? 'ask' : 'perm';
     if (kind !== upKind) { upKind = kind; upAt = kind ? now : 0; if (kind && now - boxAt >= LINGER) need(); } // came up with no box just before: ask the dashboard now
     if (kind && (now - dlgAt < LINGER && kind === dlgKind || front && frontAt > upAt || now - boxAt < LINGER || now - askedAt < ASKED)) { dlgAt = now; dlgKind = kind; }
     trusted = !!s.picker && dlgAt === now;
@@ -260,12 +276,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
     if (draftText.textContent !== held) { draft.hidden = !held; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
-    const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : 'Message Claude…';
+    const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : mode.className === 'sh' && top >= 0 ? 'Shell command…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
     const show = top >= 0 || choice > 0 || recent;
     // the terminal comes into sight once what it shows is final: Claude's whole box, hidden, after any resize has settled; a dialog (nothing is
     // hidden); or no Claude, and not a box tmux has cut mid-resize either (that one is Claude, about to redraw)
-    if (booting && (s.box && t >= 0 && now - resized > SETTLE && extra === Math.min(16, term.rows - t) || choice || !show && s.edge < 0)) ready();
+    if (back === 1 && !s.box && !s.choice) back = 2;
+    if (booting && back !== 1 && (s.box && t >= 0 && now - resized > SETTLE && extra === Math.min(16, term.rows - t) || choice || !back && !show && s.edge < 0)) ready();
     if (form.hidden === show) {
       form.hidden = !show;
       if (!show && document.activeElement === ta) term.focus(); // the keyboard carries on in the terminal, the one input left
@@ -352,5 +369,5 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   };
   /** @param {() => void} fn asks the dashboard for its word now (flows.mjs tick) */
   const ask = fn => { need = fn; };
-  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask };
+  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask, reboot };
 }

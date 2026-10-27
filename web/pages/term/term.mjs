@@ -86,6 +86,7 @@ const stat = new WeakMap(); // per socket: its number and the bytes it received,
 const fonts = fontKeys(term, fit);
 // staged: tmux's assume-paste-time treats a burst as a paste and skips its key bindings (prefix is C-q)
 const restart = () => {
+  comp?.reboot();
   term.input('\x11');
   setTimeout(() => term.input(':'), 120);
   setTimeout(() => term.input('respawn-pane -k'), 260);

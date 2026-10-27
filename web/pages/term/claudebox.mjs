@@ -4,8 +4,9 @@
 // ponytail: a screen heuristic over Claude's TUI. A Claude Code release that redraws the box makes `box` null: the composer then hides nothing and
 // the terminal shows as it is (two inputs, never a lost one). Upgrade path: the rules below, re-captured from a live pane.
 const RULE = /^\s*(?:─{8,}|╭─{6,}╮|╰─{6,}╯)\s*$/;
-const PROMPT = /^\s*(?:│\s?)?[❯>]/;
-const MODE = /(⏵⏵|⏸)\s*([a-z][a-z ]*?)\s+on\b/;
+// `!` is the prompt of Claude's shell mode (a `!` typed first: what follows runs in bash; its mode line reads `! for shell mode`, 2026-10-27)
+const PROMPT = /^\s*(?:│\s?)?[❯>!]/;
+const MODE = /(⏵⏵|⏸)\s*([a-z][a-z ]*?)\s+on\b/, SHELL = /^\s*! for shell mode/;
 const CLS = { 'accept edits': 'ed', 'plan mode': 'pl', 'bypass permissions': 'bad', 'auto mode': 'ok' };
 // the model, from a status line under the box that names it (a custom one: `🤖 Opus 5.5 (high) | …`); Claude's own UI does not show it
 const MODEL = /\b(Opus|Sonnet|Haiku|Fable)(?: (\d+(?:\.\d+)?))?(?:\s*\((low|medium|high|xhigh|max|auto)\))?/;
@@ -37,7 +38,12 @@ export function claudeScreen(rows, typed = rows) {
   // and a box found above or below a real dialog would hide it while return answers it (security reviews 2026-10-23). Only the question's
   // words are read from the box down: above it is conversation, where they are only words.
   const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
-  if (DIALOG.test(tail.join('\n')) || under.some(r => ASK.test(r))) return { box: null, mode: null, model: null, choice: choices(tail), picker: claudePicker(rows), edge: -1 };
+  // Claude on a fresh screen (the folder-trust question at startup) draws from the top: its keys line can sit above the bottom rows
+  const fresh = !box && claudePerm(rows);
+  if (fresh || DIALOG.test(tail.join('\n')) || under.some(r => ASK.test(r))) {
+    const picker = claudePicker(rows) || fresh || claudePerm(rows);
+    return { box: null, mode: null, model: null, choice: choices(tail) || (picker?.opts.length ?? 0), picker, edge: -1 };
+  }
   // edge: the lowest rule with a prompt row under it, bottom rule or not. Mid-resize tmux shows the pane cut to the new size before Claude
   // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
   let edge = -1;
@@ -46,6 +52,7 @@ export function claudeScreen(rows, typed = rows) {
   if (box) {
     for (const r of rows.slice(box.bottom + 1)) { const m = MODEL.exec(r); if (m) { model = { name: m[2] ? `${m[1]} ${m[2]}` : m[1], effort: m[3] || '' }; break; } }
     for (const r of rows.slice(box.bottom + 1)) {
+      if (SHELL.test(r)) { mode = { label: '! shell mode', cls: 'sh' }; break; }
       const m = MODE.exec(r);
       if (m) { mode = { label: `${m[1]} ${m[2]}`, cls: CLS[m[2]] || 'df' }; break; }
     }
@@ -115,4 +122,53 @@ export function claudePicker(rows) {
   // (Submit answers / Cancel, no keys line)
   if (ask && !(p.opts.at(-1)?.label === 'Chat about this' && p.opts.at(-2)?.free || end >= 0 && p.opts.map(o => o.label).join() === 'Submit answers,Cancel')) return null;
   return p.opts.length && p.title && (p.keys.length || ask) ? p : null;
+}
+
+// Claude's permission dialogs (Bash, Edit, a plan to approve; live captures at 50 columns, 2026-10-27) and its folder-trust question (unnumbered
+// options) as a sheet too (the phone, 2026-10-27: they still read as the old terminal UI). Its options are the rows right over the keys line
+// (`Esc to cancel · Tab to amend`), numbered from 1, a question (`Do you want to proceed?`) right over them. Everything above the options is
+// shown as Claude drew it, every row of the screen from the top: never a part picked out of them, since a command shown in the dialog can draw
+// anything, a rule and a title included (security review 2026-10-26), so nothing in it may decide where the dialog starts or what it is called.
+const NUM = /^\s{0,3}(❯)?\s*(\d)\.\s+(\S.*)$/, ITEM = /^\s{0,3}(❯)?\s+(\S.*)$/;
+/** @param {string[]} rows */
+export function claudePerm(rows) {
+  rows = rows.map(r => r.trimEnd());
+  let f = rows.findLastIndex((x, i) => /Esc to cancel/.test(x) || /^\s*cancel\b/.test(x) && /Esc to$/.test(rows[i - 1] || ''));
+  if (f < 0 || rows.slice(f + 1, -1).some(x => x.trim())) return null; // nothing under the keys but tmux's line
+  const foot = /^\s*cancel\b/.test(rows[f]) ? rows[f - 1] + ' ' + rows[f].trim() : rows[f];
+  if (/^\s*cancel\b/.test(rows[f])) f--;
+  let e = f - 1;
+  while (e >= 0 && !rows[e].trim()) e--;
+  const opts = [];
+  // the last `1.` over the keys: what follows it is Claude's (a command shown above can hold a `1.` of its own), each option a number one up
+  // from the last, its wrapped rest indented deeper
+  let s = -1;
+  for (let i = e; i >= Math.max(0, e - 20) && s < 0; i--) if (NUM.exec(rows[i])?.[2] === '1') s = i;
+  const numbered = s >= 0;
+  if (numbered) {
+    for (const r of rows.slice(s, e + 1)) {
+      const m = NUM.exec(r);
+      if (m && +m[2] === opts.length + 1) opts.push({ n: +m[2], on: !!m[1], text: m[3] });
+      else if (!m && opts.length && /^\s{4,}\S/.test(r)) opts.at(-1).text += ' ' + r.trim();
+      else return null;
+    }
+  } else { // unnumbered (the folder-trust question): a short block of rows after a blank one, one of them ❯
+    s = e;
+    while (s > 0 && rows[s - 1].trim()) s--;
+    if (s < 1 || e - s > 8) return null;
+    for (const r of rows.slice(s, e + 1)) { const m = ITEM.exec(r); if (!m || NUM.test(r)) return null; opts.push({ n: opts.length + 1, on: !!m[1], text: m[2] }); }
+  }
+  if (opts.length < 2 || opts.filter(o => o.on).length !== 1) return null;
+  const q = s > 0 && /\?$/.test(rows[s - 1].trim()) ? rows[s - 1].trim() : '';
+  const body = rows.slice(0, q ? s - 1 : s);
+  while (body.length && !body[0].trim()) body.shift();
+  while (body.length && !body.at(-1).trim()) body.pop();
+  const keys = [];
+  for (const k of foot.split(' · ')) { const m = /^\s*(\S+) to (.+?)\s*$/.exec(k); if (m) keys.push({ key: m[1], label: m[2] }); }
+  return {
+    title: q || 'Claude asks', text: '', body, perm: true, arrows: !numbered, more: '', adjust: '', ask: false, submit: null,
+    // `Yes, and switch to auto mode · auto mode handles these prompts for you`: the label, and its note
+    opts: opts.map(o => { const [label, ...d] = o.text.split(' · '); return { n: o.n, label, desc: d.join(' · '), on: o.on, cur: false, up: false, down: false, box: false }; }),
+    keys: keys.filter(k => k.key === 'Esc'), // Tab (amend) opens a field inside Claude's dialog: it stays Claude's
+  };
 }

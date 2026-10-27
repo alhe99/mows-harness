@@ -7,6 +7,8 @@
 // multi-select one it ticks, and Submit is a button); the free option opens a field in the sheet, sent as Claude takes it: the highlight moved
 // there with arrows (a digit would be typed once it is), what was typed before erased, the text, and Enter (on a multi-select one Enter would
 // untick it: the text alone ticks it).
+// Claude's permission dialogs (perm, claudePerm, 2026-10-27): the question is the title, every row above the options as Claude drew it (a diff's
+// rows in its colours), scrolled to its end; a tap answers (the number; the folder-trust question's unnumbered options: arrows and Enter).
 import { el, icon } from './dom.mjs';
 
 const KEYS = { Enter: '\r', Esc: '\x1b', Tab: '\t', Space: ' ' }, UP = '\x1b[A', DN = '\x1b[B';
@@ -37,9 +39,10 @@ export function picker(term) {
     const fr = p.opts.find(o => o.free), rank = n => (p.submit && fr && n > fr.n ? n + 1 : n), from = p.submit?.on && fr ? fr.n + 1 : rank(at.n);
     const go = to => term.input((to > from ? DN : UP).repeat(Math.abs(to - from)));
     const move = n => go(rank(n));
-    const own = p.keys.some(x => x.key !== 'Enter' && x.key !== 'Esc' && keyOf(x.key));
+    const own = !p.perm && p.keys.some(x => x.key !== 'Enter' && x.key !== 'Esc' && keyOf(x.key));
     const opts = el('div', { className: 'opts', role: 'listbox', 'aria-label': p.title });
     if (p.ask && p.text) opts.append(el('p', { className: 'q' }, p.text)); // the question is what is answered: whole, scrolling with the options
+    if (p.perm) opts.append(el('pre', { className: 'pv' }, ...p.body.map(r => el('span', { className: /^\s*\d+ -/.test(r) ? 'del' : /^\s*\d+ \+/.test(r) ? 'add' : '' }, r + '\n'))));
     if (first.up) opts.append(btn('more', 'Show earlier', () => move(first.n - 1)));
     const typed = o => o.free && !/^Type something\.?$/.test(o.label);
     const send = o => {
@@ -51,7 +54,7 @@ export function picker(term) {
       const b = btn('opt' + (o.on ? ' on' : '') + (o.cur ? ' cur' : '') + (o.box ? ' box' : '') + (o.free && !typed(o) ? ' ph' : ''), '', () => {
         if (o.free) { free = free === null ? (typed(o) ? o.label : '') : null; focusFree = true; const k = shown; shown = ''; show(JSON.parse(k)); return; } // the field, open or shut
         if (own) { for (const x of opts.querySelectorAll('.opt')) x.classList.toggle('on', x === b); move(o.n); return; }
-        if (o.n <= 9) term.input(String(o.n)); else { move(o.n); setTimeout(() => term.input('\r'), 60); }
+        if (o.n <= 9 && !p.arrows) term.input(String(o.n)); else { move(o.n); setTimeout(() => term.input('\r'), 60); }
       }, [el('span', { className: 'ol' }, o.free && !typed(o) ? 'Type something…' : o.label), o.desc ? el('span', { className: 'od' }, o.desc) : null,
         o.box ? el('span', { className: 'ck' }, o.cur ? icon(CHECK) : null) : o.cur ? icon(CHECK) : null]);
       b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(o.box ? o.cur : o.on));
@@ -70,7 +73,7 @@ export function picker(term) {
     const acts = own ? p.keys.filter(x => x.key !== 'Esc' && keyOf(x.key)).sort((a, b) => +(a.key === 'Enter') - +(b.key === 'Enter'))
       .map(x => btn(x.key === 'Enter' ? 'pri' : '', cap(x.label), () => press(x.key))) : acts0;
     pan.setAttribute('aria-label', p.title);
-    pan.classList.toggle('ask', !!p.ask);
+    pan.classList.toggle('ask', !!(p.ask || p.perm));
     const had = document.activeElement?.closest?.('#ccpick .free'); // typing in the field when Claude redrew: it stays where it was
     pan.replaceChildren(...[ // replaceChildren writes a null as the text "null"
       el('div', { className: 'grab' }),
@@ -84,6 +87,7 @@ export function picker(term) {
     wrap.classList.add('open');
     // the list where it was, its highlighted row in view (on opening, or moved past the window)
     if (scroll >= 0) opts.scrollTop = scroll;
+    else if (p.perm) opts.scrollTop = opts.scrollHeight; // a dialog opens on its end: the command or the diff, the options
     const fta = /** @type {HTMLTextAreaElement | null} */ (opts.querySelector('.free textarea'));
     if (fta && (had || focusFree)) { fta.focus(); fta.setSelectionRange(fta.value.length, fta.value.length); fta.scrollIntoView({ block: 'nearest' }); }
     else opts.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
