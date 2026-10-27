@@ -78,7 +78,7 @@ intended NOPASSWD path.
   modern trust flow never satisfies — and re-running the same `-w <name>`
   reattaches/reuses it. The tmux
   session gets a `-wt-<name>` suffix and is pre-labeled via `@label`, so dashboard rows,
-  browser tabs and Discord pings all carry the worktree name. From the main checkout:
+  and browser tabs carry the worktree name. From the main checkout:
   `ccwt list` (branch, merged?, dirty?, live session?), `ccwt done <name>` (merge the
   branch into the current one, remove worktree + branch; refuses while any process
   still has its cwd inside the worktree or work is uncommitted), `ccwt drop <name>` (discard,

@@ -110,7 +110,6 @@ docs/assets/phone-menu.png
 docs/assets/phone.png
 docs/assets/stage-demo.sh
 docs/assets/system.png
-docs/assets/term-phone.png
 docs/assets/theme-cycle.gif
 docs/qa/2026-10-11-cockpit-manual-gates.md
 docs/qa/2026-10-11-mobile-facelift-report.md
@@ -370,6 +369,7 @@ web/pages/term/flows.mjs
 web/pages/term/gridkeys.mjs
 web/pages/term/ime.mjs
 web/pages/term/index.html
+web/pages/term/links.mjs
 web/pages/term/menu.mjs
 web/pages/term/paint.mjs
 web/pages/term/pick.mjs

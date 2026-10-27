@@ -231,6 +231,12 @@ print `mdv spec.md` output and you tap it, phone or desktop:
 sed 's/{{DOMAIN}}/<your-domain>/' infra/dashboard/mdv.template | sudo install -m755 /dev/stdin /usr/local/bin/mdv
 ```
 
+Share links, gist-style: `mdv -s <file>` copies a `.md`/`.txt`/`.html` file to
+`~/.local/share/mows/shares/` and prints `https://<domain>/p/<token>`. The Caddyfile's
+`(share)` snippet serves `/p/*` outside the sign-in, and the random 128-bit token is the only
+gate. The page never shows the file's path. Run `mdv -s` on the same file again to refresh the
+same link, `mdv -l` to list your links, and `mdv -u <token|link|file>` to revoke one.
+
 ### 8. Linger
 
 ```bash

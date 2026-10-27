@@ -32,7 +32,7 @@ you leave running, `--all` for the full web cockpit.
 
 **Six layers, install any subset:**
 
-- **claude** — `CLAUDE.md`, 9 commands, 13 skills, an agent, settings + MCP templates
+- **claude** — `CLAUDE.md`, 9 commands, 12 skills, an agent, settings + MCP templates
 - **watchdogs** — 7 cron jobs that restart a wedged agent, reap idle sessions and orphaned
   MCP processes, monitor OS patch health, and auto-continue past usage-limit stalls
 - **infra** — Caddy + Google OAuth, the **mows control** dashboard (Sessions / History /
@@ -52,13 +52,17 @@ you leave running, `--all` for the full web cockpit.
 - 👀 **Know who needs you** — the dashboard classifies each session from its actual terminal
   pane: **waiting on you** floats to the top, working/paused/idle sort below, updated live.
 - 📱 **Run it from your phone** — installable PWA with a bottom tab bar, whole-card tap
-  targets, pull-to-refresh, and a real terminal with an on-screen key bar.
+  targets, pull-to-refresh, and a phone-first terminal: a message field, and Claude's pickers,
+  questions and permission prompts as native sheets.
+- 🔗 **Share a report like a gist** — `mdv -s report.md` prints a secret link anyone can
+  open, no sign-in, and no path from your box in it.
 - 🧑‍✈️ **Many agents, one box** — several Claude identities switched with one command,
   per-session git worktrees so parallel agents never fight over a checkout.
 - 🤖 **Agents can QA real UIs** — an on-demand Android emulator and a takeover browser stream
   straight into the dashboard's Device tab.
-- 🔐 **Locked down by default** — everything behind Google OAuth, every sudo grant a narrow
-  anchored pattern, nothing dangerous installed silently.
+- 🔐 **Locked down by default** — everything behind Google OAuth (except HMAC-signed agent
+  webhooks and the share links you mint), every sudo grant a narrow anchored pattern, nothing
+  dangerous installed silently.
 
 ## What it looks like
 
@@ -108,13 +112,28 @@ no reconnect.
 
 <img src="docs/assets/theme-cycle.gif" alt="The /term web terminal showing a Claude Code session, cycling through the Material Ocean, TokyoNight, Catppuccin Mocha, Nord, Rose Pine, GitHub Light and Material Darker color schemes." width="820">
 
-<img src="docs/assets/term-phone.png" alt="The same web terminal on a phone, in the Nord scheme, with the on-screen key bar along the bottom scrolled to its right end: detach, keyboard toggle, font-size keys, and the theme picker set to Nord." width="210" align="right">
+**On a phone the terminal is built for a thumb.** You type in a message field that stays above
+the keyboard. It holds photos and files you attach with its `+`, and `/` opens Claude's
+commands, skills and plugins. A chip shows the permission mode and cycles it with shift+tab;
+another shows the model and opens Claude's `/model` picker. Claude's own pickers, questions
+and permission prompts open as sheets you swipe down to close, in place of the terminal
+drawing. Start a message with `!` to run it as a shell command. Links in the output open on a
+tap. The ⋯ key opens a sheet with copy and paste, attach, text size, theme, detach, restart
+pane, and the Archify diagrams. That sheet also lists the session's Workflow runs and
+background agents, and you can tap any of them to read its detail as a transcript. Two rows
+of keys hold the keys a phone keyboard lacks (esc, tab, arrows, ctrl and alt that latch).
 
-**Pick a theme per device from the terminal's own key bar** — the choice sticks to that
-browser. A global default lives in the dashboard's `settings.json` (`POST
-/settings/term-theme`); open terminal tabs follow a global change within about 30 seconds.
+**On a desktop, links open in your default browser**, not inside the installed app.
 
-<br clear="right">
+**Pick a theme per device from the ⋯ sheet** — the choice sticks to that browser. A global
+default lives in the dashboard's `settings.json` (`POST /settings/term-theme`); open terminal
+tabs follow a global change within about 30 seconds.
+
+**Markdown and diagrams, one tap away.** `mdv <file>` prints a dashboard link that renders a
+`.md`/`.txt` file, or an Archify `.html` diagram in a sandbox; `/diagrams` lists every Archify
+page. `mdv -s <file>` snapshots the file to a gist-style secret link, `https://<domain>/p/<token>`,
+that opens without sign-in and never shows the file's path; `mdv -s` on the same file again
+refreshes the same link, `mdv -l` lists your links, `mdv -u` revokes one.
 
 **The fleet CLI** — several Claude Code identities on one box, each with its own config dir,
 switched with one command.
@@ -158,7 +177,7 @@ running anything.
 
 | Layer | Flag | What lands where | Reversible? |
 |---|---|---|---|
-| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 13 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
+| **claude** | `--claude` | `CLAUDE.md`, rules, 9 commands, 12 skills, 1 agent, `settings.json`, `mcp-interactive.json` → `~/.claude/` | Yes — prior files backed up to `~/.claude.bak-<ts>/` |
 | **watchdogs** | `--watchdogs` | 7 scripts → `~/.local/bin/` (+ `~/bin/` for the limit shield). Cron block is **printed, never installed** | Yes |
 | **infra** | `--infra` | Renders VPS templates into `./rendered/` **only**. Installs nothing, enables nothing, starts nothing | Yes — nothing leaves the repo dir |
 | **fleet** | `--fleet` | `cc`, `ccname`, `ccswap`, `ccwt`, `claude-rc`, `claude-status`, `reset-claude-env` → `~/.local/bin/` | Yes |
@@ -307,7 +326,7 @@ doesn't match, report it rather than working around it.
 ```bash
 # --claude
 ls ~/.claude/CLAUDE.md ~/.claude/settings.json ~/.claude/mcp-interactive.json
-ls ~/.claude/skills | wc -l            # expect 13
+ls ~/.claude/skills | wc -l            # expect 12
 ls ~/.claude/commands | wc -l          # expect 9
 python3 -m json.tool ~/.claude/settings.json > /dev/null && echo "settings.json OK"
 grep -c '{{' ~/.claude/mcp-interactive.json    # expect 0; nonzero = an unfilled placeholder
@@ -379,13 +398,17 @@ commands: [`infra/SETUP.md`](infra/SETUP.md)):
    systemd and will fail fast without it.
 7. **Web terminal page** — run `infra/webconsole/make-term-index.sh`. Without it, `/term`
    returns 404: the page is `dist/term.html`, built from `web/pages/term/` (xterm.js 6 on
-   ttyd's socket, key bar, PWA geometry, home key, photo/file attach, font size, color themes,
-   keyboard suggestions + reconnect, copy/paste overlay, restart-pane key) and committed, and
+   ttyd's socket, the message field, the two-row key bar and its ⋯ sheet, Claude's pickers,
+   questions and permission prompts as sheets, Workflow runs and agents, tappable links, color
+   themes, keyboard suggestions + reconnect) and committed, and
    the script installs it where Caddy serves it, keeping any page already there as
    `term-index.legacy.html` (rollback is a file swap). Re-run it after a repo update.
    If you want the dashboard to serve the global terminal theme (terminal tabs poll
    `/settings/term-theme.json`), also
    `sudo install -D -m644 infra/webconsole/themes.json /opt/claude-dashboard/themes.json`.
+   For `mdv` and its share links, install the CLI as
+   [`infra/SETUP.md`](infra/SETUP.md) shows. The Caddyfile template already routes `/p/*`
+   outside the sign-in; the 128-bit token is the only gate.
 8. **Verify** — `curl -sI https://<domain>` should redirect toward Google sign-in.
 
 Optional, on demand: the browser-QA watch stack (`infra/qa-watch/SETUP.md`) needs
@@ -459,12 +482,13 @@ flowchart TB
     CFG -.->|CLAUDE_CONFIG_DIR| ARUN
     DASH -.->|/agents tab: 4 actions| MAGENT
     CADDY -->|/wh/*, HMAC-gated, no OAuth| DASH
+    CADDY -->|/p/*, share token, no OAuth| DASH
     DASH -.->|verified webhook: systemctl start| ARUN
 ```
 
 ## What each layer contains
 
-- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 13
+- **`claude/`** — the agentic config: `CLAUDE.md`, a context7 rule, 9 commands, 12
   agentic-dev/harness-ops skills, a PR-summary agent, plus `settings.json` (Remote Control is not auto-started; run `/remote-control` per session)
   and MCP templates. Also installable as a standalone plugin
   (below).
@@ -487,7 +511,7 @@ flowchart TB
 - **`fleet/`** — several Claude identities on one box: named *profiles* under one account
   (`cc`, `claude-rc`, `claude-status`, `reset-claude-env`), or separate Linux-user *agent*
   accounts (`add-agent.sh`). Per-session helpers ride along: `ccname` labels the session
-  you're in (the label shows up in the dashboard and in Discord pings), `ccswap` continues a
+  you're in (the label shows up in the dashboard and the browser tab), `ccswap` continues a
   quota-blocked session on the other account, and `ccwt` manages the per-session git
   worktrees that `cc -w <name>` creates — one branch per session, so two agents in one repo
   never overwrite each other, merged back with `ccwt done`.
@@ -539,6 +563,11 @@ opt-in you add yourself, understanding what it removes:
 # already accepted that risk.
 alias claude="claude --dangerously-skip-permissions"
 ```
+
+`cc` and the web terminal's launcher do pass `--allow-dangerously-skip-permissions`. That flag
+skips nothing. Each session still starts in its profile's `defaultMode`, and the flag only adds
+bypass as one of the modes shift+tab (and the terminal's mode chip) cycles through, so you have
+to pick it deliberately. A managed `permissions.disableBypassPermissionsMode` still takes it away.
 
 **Scoped sudoers, never `NOPASSWD: ALL`.** Every sudo grant this harness ships
 (`infra/os/sudoers.d/claude-harness.template`, `claude-harness-agent.template`) is a named,
