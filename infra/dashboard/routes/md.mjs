@@ -2,10 +2,10 @@
 // document (inline styles, mermaid@12 floating, no script policy); --ui=next with the /md document of ARCHITECTURE section 5: the same body on the
 // built tokens.css + md.css, and the CSP of K-10 (BASE_CSP + one script source: the pinned CDN and the hash of the loader below).
 import { createHash } from 'node:crypto';
-import { promises as fsp } from 'node:fs';
+import { constants as FS, promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { BASE_CSP, TMUX_HOME, send, sh, userCmd } from '../core.mjs';
-import { DOC_META, footerHtml, mdDocument, mdNotice, mdParts, pageChrome } from '../legacy.mjs';
+import { DOC_META, footerHtml, mdDocument, mdNotice, mdParts, mdShareDocument, pageChrome } from '../legacy.mjs';
 import { assetUrl } from '../static.mjs';
 
 // Mermaid is never in dist/ (388 IPv4-shaped tokens trip the preflight; ledger A-03, O-3). The page loads this one pinned file from the CDN, with
@@ -84,6 +84,36 @@ export async function mdView(req, res, url, next = false) {
   }
   if (next) return send(req, res, 200, mdNextDocument(real, st, src, req.headers.host || ''), 'text/html; charset=utf-8', { 'content-security-policy': MD_CSP });
   send(req, res, 200, mdDocument(real, st, src, req.headers.host));
+}
+
+// ---------- /p/<token>: a share link, gist-style ----------
+// `mdv -s <file>` copies the file to SHARE_DIR/<token>.<ext> (128 random bits) beside <token>.src (the source path, never served) and prints
+// https://<host>/p/<token>. Caddy's (share) snippet lets /p/* past the sign-in, so the link alone opens it: no path in the URL or the page, no
+// listing, nothing to guess. The copy is a snapshot: `mdv -s` on the same file refreshes the same link, `mdv -u` revokes it, `mdv -l` lists them.
+// O_NOFOLLOW because this reads as root from a directory the tmux user owns: a symlink planted as <token>.html must not publish what it points at.
+const SHARE_DIR = `${TMUX_HOME}/.local/share/mows/shares`;
+export async function shareView(req, res, token, url) {
+  const priv = { 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-cache' };
+  if (/^[A-Za-z0-9_-]{22}$/.test(token)) for (const ext of ['html', 'md', 'txt']) {
+    let fh;
+    try { fh = await fsp.open(`${SHARE_DIR}/${token}.${ext}`, FS.O_RDONLY | FS.O_NOFOLLOW); } catch { continue; }
+    try {
+      const st = await fh.stat();
+      if (!st.isFile() || st.size > 16 * 1024 * 1024) break;
+      const buf = await fh.readFile();
+      const src = await fsp.readFile(`${SHARE_DIR}/${token}.src`, 'utf8').catch(() => '');
+      const name = path.basename(src.trim()) || `shared.${ext}`;
+      if (url.searchParams.get('dl')) {
+        res.writeHead(200, { ...priv, 'content-type': 'application/octet-stream', 'content-length': buf.length,
+          'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
+        return res.end(buf);
+      }
+      if (ext === 'html') return send(req, res, 200, buf, 'text/html; charset=utf-8',
+        { ...priv, 'content-security-policy': HTML_CSP, 'cross-origin-opener-policy': 'same-origin' });
+      return send(req, res, 200, mdShareDocument(name, st, buf.toString('utf8'), `/p/${token}?dl=1`), 'text/html; charset=utf-8', priv);
+    } finally { await fh.close(); }
+  }
+  res.writeHead(404, { ...priv, 'content-type': 'text/plain' }); res.end('not found');
 }
 
 // ---------- /diagrams: every Archify page under the user's home, newest first, each opening in /md above ----------

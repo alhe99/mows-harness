@@ -3,9 +3,42 @@
 # The dashboard's /md route renders it in the browser, phone and desktop alike; the printed
 # URL is clickable in /term (ttyd's xterm ships the web-links addon) and cmd-clickable in
 # most local terminals. Install: fill {{DOMAIN}} and copy to /usr/local/bin/mdv (chmod +x).
+#
+# Share links, gist-style (the dashboard's /p/<token>, outside the sign-in):
+#   mdv -s <file>              snapshot the file and print https://<domain>/p/<token>; again on the same file refreshes the same link
+#   mdv -l                     list your share links and the file each came from
+#   mdv -u <token|link|file>   revoke
+# Anyone with the link can open it; nobody can list them or see the file's path.
 set -euo pipefail
-f=${1:?usage: mdv <file.md>}
-f=$(realpath "$f")
 base=${MDV_BASE:-https://{{DOMAIN}}}
-printf '%s/md?f=%s\n' "$base" \
-  "$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$f")"
+S=$HOME/.local/share/mows/shares
+tok_of() { { grep -lxF -- "$1" "$S"/*.src 2>/dev/null || true; } | head -1 | sed 's#.*/##; s#\.src$##'; }
+case "${1-}" in
+  -s|--share)
+    f=$(realpath -- "${2:?usage: mdv -s <file>}")
+    [ -f "$f" ] || { echo "mdv: not a file: $f" >&2; exit 1; }
+    case "$f" in
+      *.md|*.markdown) ext=md ;; *.txt) ext=txt ;; *.html|*.htm) ext=html ;;
+      *) echo "mdv: only .md, .markdown, .txt and .html files can be shared" >&2; exit 1 ;;
+    esac
+    mkdir -p -m700 "$S"
+    t=$(tok_of "$f")
+    [ -n "$t" ] || t=$(head -c16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')
+    rm -f "$S/$t".html "$S/$t".md "$S/$t".txt
+    cp -- "$f" "$S/$t.$ext"; chmod 600 "$S/$t.$ext"
+    printf '%s\n' "$f" > "$S/$t.src"
+    echo "$base/p/$t" ;;
+  -l|--list)
+    for s in "$S"/*.src; do [ -f "$s" ] || continue; t=${s##*/}; printf '%s/p/%s  %s\n' "$base" "${t%.src}" "$(cat "$s")"; done ;;
+  -u|--unshare)
+    a=${2:?usage: mdv -u <token|link|file>}
+    if [ -e "$a" ]; then t=$(tok_of "$(realpath -- "$a")"); else t=${a##*/}; fi
+    [[ ${t-} =~ ^[A-Za-z0-9_-]{22}$ ]] && [ -f "$S/$t.src" ] || { echo "mdv: no share for $a" >&2; exit 1; }
+    rm -f "$S/$t".html "$S/$t".md "$S/$t".txt "$S/$t.src"
+    echo "revoked $base/p/$t" ;;
+  *)
+    f=${1:?usage: mdv <file.md> | mdv -s|-l|-u}
+    f=$(realpath "$f")
+    printf '%s/md?f=%s\n' "$base" \
+      "$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))' "$f")" ;;
+esac

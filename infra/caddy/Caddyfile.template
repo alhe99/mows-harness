@@ -100,6 +100,15 @@
     }
 }
 
+# --- /p/*: share links (mdv -s), gist-style. Outside the sign-in on purpose: the 128-bit token in the
+# path IS the access check, so whoever holds the link reads that one snapshot and nothing else. The
+# dashboard serves it with no chrome, no file path, noindex. Import BEFORE gauth, like (webhook). ---
+(share) {
+    handle /p/* {
+        reverse_proxy 127.0.0.1:3005
+    }
+}
+
 # --- PWA statics skip the auth gate: OS installers fetch manifest/icons/sw without
 # cookies; they contain nothing private (an app name + a drawn icon) ---
 (pwa) {
@@ -146,6 +155,7 @@
     route {
         import pwa
         import webhook
+        import share
         import gauth
         import vncproxy
         import droidproxy
@@ -187,6 +197,7 @@
     route {
         import pwa
         import webhook
+        import share
         import gauth
         import vncproxy
         import droidproxy

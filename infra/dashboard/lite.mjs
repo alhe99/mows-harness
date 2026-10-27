@@ -66,7 +66,7 @@ import { workflowsJson } from './routes/workflows.mjs';
 import { agentAction, webhookView } from './routes/agents.mjs';
 import { action, delSession, reclaimAction, restartAll, shotUpload, switchAction, tabAction, termThemeAction } from './routes/actions.mjs';
 import { droidAction, watchAction } from './routes/device.mjs';
-import { diagramsView, mdView } from './routes/md.mjs';
+import { diagramsView, mdView, shareView } from './routes/md.mjs';
 import { cli as twofaCli, twofaView } from './routes/twofa.mjs';
 
 // `lite.mjs 2fa enroll|revoke|list`: the second factor's CLI (routes/twofa.mjs), run over SSH; never starts the server
@@ -122,6 +122,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(204); return res.end();
     }
     if (p.startsWith('/wh/')) return await webhookView(req, res, p.slice(4));
+    if (p.startsWith('/p/')) return await shareView(req, res, p.slice(3), url); // public share links: Caddy's (share) skips the sign-in for /p/*
     if (p === '/agents') return await agentsView(req, res);
     if (p.startsWith('/agents/')) {
       const [name, run] = p.slice(8).split('/');

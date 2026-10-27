@@ -1430,6 +1430,17 @@ export function mdParts(real, st, src) {
 <article class="mdv">${art}</article>`;
   return { title: `${path.basename(real)} · mows`, body, mermaid: art.includes('data-lang="mermaid"') };
 }
+// /p/<token>'s markdown page (routes/md.mjs shareView): read by someone with the link and no login, so no dashboard chrome, no path, and any
+// link that is not absolute leads nowhere (it would point into this box's files or behind the sign-in)
+export function mdShareDocument(name, st, src, dl) {
+  const art = (/\.txt$/i.test(name) ? `<pre>${esc(src)}</pre>` : mdHtml(src)).replace(/href="(?!https?:|mailto:|#)[^"]*"/g, 'href="#"');
+  const kb = st.size < 1024 ? `${st.size} B` : `${(st.size / 1024).toFixed(1)} KB`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><meta name="robots" content="noindex">
+<title>${esc(name)}</title><style>${cssText()}${MD_CSS}</style>${art.includes('data-lang="mermaid"') ? MD_MERMAID : ''}</head><body>
+<div class="mdhead"><b>${esc(name)}</b><span>${kb} · updated ${new Date(st.mtimeMs).toISOString().slice(0, 10)}</span><a class="mddl" href="${esc(dl)}" download>⬇ Download</a></div>
+<article class="mdv">${art}</article></body></html>`;
+}
 export function mdDocument(real, st, src, host) {
   const { title, body, mermaid } = mdParts(real, st, src);
   return page(title, body, `<style>${MD_CSS}</style>${mermaid ? MD_MERMAID : ''}`, '', '', false, null, host);
