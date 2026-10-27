@@ -35,6 +35,15 @@ export function linkAt(term, x, y) {
   return '';
 }
 
+// iOS, the home-screen app: its scope is this whole origin, so a link here opened inside the app, full screen, with no browser bar and no way
+// back, and the share page (/p/) has no chrome of its own (2026-10-27). Share links go to Safari instead (x-safari-https:, iOS 17+): the
+// address bar, its share button, and the app one swipe away. The dashboard's own pages stay in the app (Safari has none of its sign-in cookies).
+export const open = uri => {
+  const u = new URL(uri);
+  if (/** @type {any} */ (navigator).standalone && u.origin === location.origin && u.pathname.startsWith('/p/')) location.href = 'x-safari-' + uri;
+  else window.open(uri, '_blank', 'noopener');
+};
+
 export function tapLinks(term) {
   let sx = 0, sy = 0;
   document.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { capture: true, passive: true });
@@ -44,6 +53,6 @@ export function tapLinks(term) {
     const uri = linkAt(term, p.clientX, p.clientY);
     if (!uri) return;
     e.preventDefault(); e.stopImmediatePropagation(); // no composer focus, no emulated click for xterm to act on as well
-    window.open(uri, '_blank', 'noopener');
+    open(uri);
   }, { capture: true });
 }
