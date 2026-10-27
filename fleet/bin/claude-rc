@@ -415,9 +415,11 @@ case "$cmd" in
     [ -f "$s" ] || { echo "set-effort: no settings.json at $s" >&2; exit 1; }
     command -v jq >/dev/null 2>&1 || { echo "set-effort: jq not found — sudo apt-get install -y jq" >&2; exit 1; }
     case "$lvl" in
-      low|medium|high|xhigh) expr='.effortLevel=$l | del(.env.CLAUDE_CODE_EFFORT_LEVEL)' ;;
+      # per-model choices (/model's "Set as default": modelSettings.<model>.effortLevel) outrank effortLevel, so they follow it; the env var
+      # pins every turn (ultrathink cannot lift one to xhigh: no rainbow, no boost, 2026-10-27), so only max, which effortLevel cannot hold, uses it
+      low|medium|high|xhigh) expr='.effortLevel=$l | del(.env.CLAUDE_CODE_EFFORT_LEVEL) | if .modelSettings then .modelSettings |= with_entries(.value.effortLevel=$l) else . end' ;;
       max)                   expr='del(.effortLevel) | .env.CLAUDE_CODE_EFFORT_LEVEL="max"' ;;
-      auto)                  expr='del(.effortLevel) | del(.env.CLAUDE_CODE_EFFORT_LEVEL)' ;;
+      auto)                  expr='del(.effortLevel) | del(.env.CLAUDE_CODE_EFFORT_LEVEL) | if .modelSettings then .modelSettings |= with_entries(.value |= del(.effortLevel)) else . end' ;;
       *) echo "set-effort: use low|medium|high|xhigh|max|auto" >&2; exit 1 ;;
     esac
     if [ "$DRY_RUN" = 1 ]; then
