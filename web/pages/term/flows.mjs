@@ -1,17 +1,15 @@
 // flows.mjs — the session's Workflow runs and background agents (2026-10-26). Claude's "Background tasks" panel does not render on the phone,
 // and its /workflows overlay takes the terminal over, so this page asks the dashboard instead: /app/workflows.json
 // (infra/dashboard/routes/workflows.mjs), every POLL while the page is visible. A badge on the key bar's ⋯ (term.mjs puts it there) counts
-// what is running, or marks a run ended less than RECENT ago; ⋯ opens the menu sheet, whose top block (box) lists every run of the last day
-// with its agents, then the background agents (Agent calls) with what each is doing. Not a pill over the terminal: that covered Claude's
+// what is running; ⋯ opens the menu sheet, whose top block (box) lists the runs still running with their agents, then the background agents
+// (Agent calls) still running with what each is doing. What has ended is not listed: a day of finished runs buried the live one (2026-10-28). Not a pill over the terminal: that covered Claude's
 // text (2026-10-26). A tap goes deeper in the same block, Claude's /workflows view laid out for a phone: a run shows its description, its
 // phases with their counts and under each its agents (model, tokens, time); an agent shows its result once it ends and what it did, newest
 // first (?agent=). The rest of the sheet steps aside (term.css); ‹ goes back a level, the next open starts at the list (home). Touch only.
 import { el } from './dom.mjs';
 
-const POLL = 5000, RECENT = 15 * 60_000;
+const POLL = 5000;
 const MARK = { running: '●', done: '✓', failed: '✕', stale: '?' };
-const ago = ms => (ms < 90_000 ? Math.round(ms / 1000) + 's' : ms < 5_400_000 ? Math.round(ms / 60_000) + 'm' : (ms / 3_600_000).toFixed(1) + 'h');
-const kt = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : Math.round(n / 1e3) + 'k');
 const tk = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e3).toFixed(1) + 'k'); // as /workflows prints it: 156.6k
 /** a span as /workflows prints it: 42s, 4m20s, 1h40m */
 const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + 's' : s < 3600 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${Math.floor(s / 3600)}h${String(Math.floor(s / 60) % 60).padStart(2, '0')}m`; };
@@ -85,28 +83,26 @@ export function flows(on) {
   /** @param {any[]} runs @param {any[]} agents */
   const render = (runs, agents) => {
     last = { runs, agents };
-    const now = Date.now();
     const line = r => {
       const done = r.agents.filter(a => a.state !== 'running').length, pi = r.phases.indexOf(r.phase);
-      if (r.status === 'running') return `${r.phase || 'starting'}${pi >= 0 ? ` (${pi + 1}/${r.phases.length})` : ''} · ${done}/${r.agents.length} agents`;
-      return `${r.status}${r.ms ? ' · ' + ago(r.ms) : ''}${r.tokens ? ' · ' + kt(r.tokens) + ' tokens' : ''} · ${ago(now - r.last)} ago`;
+      return `${r.phase || 'starting'}${pi >= 0 ? ` (${pi + 1}/${r.phases.length})` : ''} · ${done}/${r.agents.length} agents`;
     };
-    const busy = agents.filter(a => a.state === 'running');
-    box.hidden = !sel && !runs.length && !agents.length;
-    if (!sel) box.replaceChildren(...runs.map(r => el('div', { className: 'run ' + r.status, 'data-run': r.id, role: 'button' },
+    const live = runs.filter(r => r.status === 'running'), busy = agents.filter(a => a.state === 'running');
+    box.hidden = !sel && !live.length && !busy.length;
+    if (!sel) box.replaceChildren(...live.map(r => el('div', { className: 'run ' + r.status, 'data-run': r.id, role: 'button' },
       el('div', { className: 'rh' }, el('b', {}, r.name, el('em', {}, '›')), el('small', {}, line(r))),
       el('ul', {}, ...r.agents.map(a => el('li', { className: a.state }, el('i', {}, MARK[a.state] || '·'), el('span', {}, a.label), el('small', {}, a.phase)))))),
-    agents.length ? el('div', { className: 'run ags' },
+    busy.length ? el('div', { className: 'run ags' },
       el('div', { className: 'rh' }, el('b', {}, 'Agents'), el('small', {}, `${busy.length} running`)),
-      el('ul', {}, ...agents.map(a => el('li', { className: a.state, title: a.desc, 'data-id': a.id }, el('i', {}, MARK[a.state] || '·'),
-        el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null), el('small', {}, a.state === 'running' ? '' : ago(now - a.last))))))
+      el('ul', {}, ...busy.map(a => el('li', { className: a.state, title: a.desc, 'data-id': a.id }, el('i', {}, MARK[a.state] || '·'),
+        el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null)))))
     : null);
     if (sel) show();
-    const going = runs.filter(r => r.status === 'running').length + busy.length, ended = !going && runs.find(r => now - r.last < RECENT);
-    badge.hidden = !going && !ended;
-    badge.className = going ? 'running' : ended ? ended.status : '';
-    badge.textContent = going ? String(going) : ended ? MARK[ended.status === 'completed' ? 'done' : 'failed'] : '';
-    const say = going ? `${going} running` : ended ? `${ended.name} ${ended.status}` : '';
+    const going = live.length + busy.length;
+    badge.hidden = !going;
+    badge.className = going ? 'running' : '';
+    badge.textContent = going ? String(going) : '';
+    const say = going ? `${going} running` : '';
     badge.parentElement?.setAttribute('aria-label', 'terminal actions' + (say ? ', ' + say : ''));
   };
   const tick = () => {

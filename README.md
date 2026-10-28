@@ -130,7 +130,7 @@ and permission prompts open as sheets you swipe down to close, in place of the t
 drawing. Start a message with `!` to run it as a shell command. Links in the output open on a
 tap. The ⋯ key opens a sheet with copy and paste, attach, text size, theme, detach, restart
 pane, and the Archify diagrams. That sheet also lists the session's Workflow runs and
-background agents, and you can tap any of them to read its detail as a transcript. Two rows
+background agents that are still running, and you can tap any of them to read its detail as a transcript. Two rows
 of keys hold the keys a phone keyboard lacks (esc, tab, arrows, ctrl and alt that latch).
 
 **On a desktop, links open in your default browser**, not inside the installed app.
