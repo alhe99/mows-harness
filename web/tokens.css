@@ -629,7 +629,7 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 .gnav :is(.pnav,.vsw){height:28px;padding:2px;border-radius:999px;background:var(--navbg);border-color:var(--navbd)}
 .gnav a{padding:0 12px;border-radius:999px;border:0!important;font:500 12px var(--sans);text-decoration:none}.gnav .vsw a.on{box-shadow:0 1px 3px rgba(0,0,0,.4)}
 /* the pane header: name in the sans of the tabs, the state a badge in its colour (as .chip.on), the pane's buttons ghost buttons. Waiting on
-   you pulses the badge, not the whole header */
+   you pulses the badge's dot, not the whole header */
 .gph{display:flex;align-items:center;gap:8px;height:36px;box-sizing:border-box;padding:0 6px 0 14px;background:var(--card);border-bottom:1px solid var(--bd);font:500 12px var(--sans);color:var(--mut);cursor:default;user-select:none;flex-shrink:0}
 .gp.on .gph{background:var(--card2)}.gph b{font-weight:500;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gp.on .gph b{color:var(--fg)}.gph .gsp{flex:1}
 .gst{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border:1px solid var(--bd);border-radius:999px;font:500 11px var(--sans);white-space:nowrap}
@@ -648,9 +648,9 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 #gsb .gr .gren,#gsb .gr .gkill{transition:opacity .15s,background-color .15s,border-color .15s,color .15s}
 #gsb .gr .gkc,#gnotice{animation:g-rise .18s ease backwards}
 .gph,.gph b,.gdot{transition:background-color .2s,color .2s}
-.gp.needs .gst{animation:gpulse 1.6s ease-in-out infinite}
+.gp.needs .gst::before{animation:gpulse 1.6s ease-in-out infinite}
 }
-@keyframes gpulse{50%{opacity:.5}}
+@keyframes gpulse{50%{opacity:.25}}
 @keyframes g-pane{from{opacity:0;transform:scale(.985)}}
 @keyframes g-zoom{from{opacity:.4;transform:scale(.97)}}
 @keyframes g-drop{from{opacity:0;transform:translateY(-4px)}}
