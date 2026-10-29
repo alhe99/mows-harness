@@ -97,10 +97,11 @@ function onMsg(e) {
   if (name) { const at = S.find(st.value, name); if (at) dispatch(s => S.focusPane(s, at.tab, at.i)); }
   act(e.data.key);
 }
-// an iframe taking focus is the one event the parent sees of a click inside a terminal
+// an iframe taking focus is the one event the parent sees of a click inside a terminal: it also closes the pages menu (the popover's
+// own click-outside never sees a click in a frame)
 // (and the one that follows our own focusPaneFrame: that pane is the focused one already, so nothing is dispatched, which also keeps a notice
 // such as a refused split on the strip instead of clearing it with the no-op update)
-function onBlur() { setTimeout(() => { const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const s = st.value, at = name && s && S.find(s, name); if (at && (at.tab !== s.active || s.tabs.find(t => t.id === at.tab)?.focus !== at.i)) dispatch(x => S.focusPane(x, at.tab, at.i)); } }, 0); }
+function onBlur() { setTimeout(() => { document.querySelector('#gmenu:popover-open')?.hidePopover(); const a = document.activeElement; if (a && a.classList.contains('gfr')) { const name = a.closest('.gp')?.getAttribute('data-name'); const s = st.value, at = name && s && S.find(s, name); if (at && (at.tab !== s.active || s.tabs.find(t => t.id === at.tab)?.focus !== at.i)) dispatch(x => S.focusPane(x, at.tab, at.i)); } }, 0); }
 // parking (spec: 10 min hidden): a tab off screen for S.CAPS.park ms unmounts its panes (their sockets close) and shows the .gpark
 // placeholder until clicked. The page hidden that long parks every tab, the one on screen included (a background browser tab holds no
 // sockets); back on screen, that one remounts at once and the others stay parked until clicked. Swept every minute and on every state
@@ -305,7 +306,8 @@ function Strip({ fm }) {
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
     h('button', { class: 'gnew', type: 'button', title: 'new session (the terminal picker, in a tab here)', 'aria-label': 'new session', onClick: () => go(S.newPane) }, I.plus())),
     h('span', { id: 'gnotice', hidden: !s.notice }, s.notice),
-    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), h('span', { class: 'pnav' }, NAV.map(([t, p]) => h('a', { href: base() + p }, t)))));
+    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), h('button', { class: 'gmb', type: 'button', popovertarget: 'gmenu', 'aria-label': 'pages' }), // the menu is a popover: Escape and a click outside close it
+      h('div', { id: 'gmenu', popover: '' }, NAV.map(([t, p]) => h('a', { href: base() + p, 'data-p': p.slice(1) }, t)))));
 }
 
 export default function Grid() {

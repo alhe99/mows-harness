@@ -34,6 +34,12 @@
 --ico-restart:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a9 9 0 1 1-3-6.7'/%3E%3Cpath d='M21 3v6h-6'/%3E%3C/svg%3E");
 --ico-activity:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-4l-3 9L9 3l-3 9H2'/%3E%3C/svg%3E");
 --ico-send:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.33333' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.69 14.46a.5.5 0 0 0 .62-.02L14.65 1.77a.33.33 0 0 0-.42-.42L1.56 5.68a.33.33 0 0 0-.02.63l5.29 2.12a2 2 0 0 1 1.13 1.13z'/%3E%3Cpath d='M14.57 1.43 7.28 8.72'/%3E%3C/svg%3E");
+--ico-list:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'/%3E%3C/svg%3E");
+--ico-grid:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z'/%3E%3C/svg%3E");
+--ico-menu:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16M4 12h16M4 18h16'/%3E%3C/svg%3E");
+--ico-history:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2'/%3E%3C/svg%3E");
+--ico-device:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8M10 19v-4M7 19h5M18 12h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z'/%3E%3C/svg%3E");
+--ico-agents:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'/%3E%3C/svg%3E");
 --tbo:max(10px,calc(env(safe-area-inset-bottom,0px) - 8px))}
 }
 @layer base{
@@ -624,10 +630,19 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
    display:none, so the toggle slides; its content keeps its width and is clipped, not reflowed. A drag of its edge is instant (#grid.drag),
    and the panes' terminals refit once, coalesced (term.mjs fit). */
 #grid.nosb{grid-template-columns:0px 0px minmax(0,1fr);padding-left:0}#grid.nosb #gsb{visibility:hidden;opacity:0;border-width:0}#gsb>*{min-width:calc(var(--gsb,256px) - 2px)}
-/* the grid's cockpit nav: the pill nav (.pnav) and the list|grid switch as a pill of the same make, sized to the grid's 38 px tab strip */
-.gnav{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0;padding:0 8px}
-.gnav :is(.pnav,.vsw){height:28px;padding:2px;border-radius:999px;background:var(--navbg);border-color:var(--navbd)}
-.gnav a{padding:0 12px;border-radius:999px;border:0!important;font:500 12px var(--sans);text-decoration:none}.gnav .vsw a.on{box-shadow:0 1px 3px rgba(0,0,0,.4)}
+/* the grid's cockpit nav (C3 of the 2026-10-29 tab proposals): list|grid as two icons in a soft-square switch, then one menu button whose
+   popover (#gmenu, top layer, fixed under it) lists the other pages. Icons are masks of the --ico-* lines, picked per element by --i */
+.gnav{margin-left:auto;align-self:center;display:flex;align-items:center;gap:6px;flex-shrink:0;padding:0 8px}
+.gnav .vsw{height:auto;margin:0;padding:2px;gap:2px;border:1px solid var(--bd2);border-radius:8px;background:none}
+.gnav .vsw a{width:26px;height:24px;padding:0;justify-content:center;border:0!important;border-radius:6px;font-size:0}
+:is(.gnav .vsw a,.gmb,#gmenu a)::before{content:'';width:14px;height:14px;flex-shrink:0;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
+.gnav [data-v=list]{--i:var(--ico-list)}.gnav [data-v=grid]{--i:var(--ico-grid)}.gmb{--i:var(--ico-menu)}
+#gmenu [data-p=history]{--i:var(--ico-history)}#gmenu [data-p=system]{--i:var(--ico-activity)}#gmenu [data-p=device]{--i:var(--ico-device)}#gmenu [data-p=agents]{--i:var(--ico-agents)}
+.gmb{min-height:0;width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:none;border:1px solid var(--bd2);border-radius:8px;color:var(--mut);cursor:pointer}
+.gmb:hover,.gmb:has(+:popover-open){background:var(--card2);color:var(--fg)}
+#gmenu{position:fixed;inset:44px 8px auto auto;margin:0;width:200px;padding:4px;box-sizing:border-box;flex-direction:column;gap:1px;background:var(--card2);border:1px solid var(--bd2);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.55)}
+#gmenu:popover-open{display:flex}
+#gmenu a{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:6px;font:500 13px var(--sans);color:var(--fg2);text-decoration:none}#gmenu a:is(:hover,:focus-visible){background:var(--pop);color:var(--fg)}
 /* the pane header: name in the sans of the tabs, the state a badge in its colour (as .chip.on), the pane's buttons ghost buttons. Waiting on
    you pulses the badge's dot, not the whole header */
 .gph{display:flex;align-items:center;gap:8px;height:36px;box-sizing:border-box;padding:0 6px 0 14px;background:var(--card);border-bottom:1px solid var(--bd);font:500 12px var(--sans);color:var(--mut);cursor:default;user-select:none;flex-shrink:0}
@@ -646,7 +661,7 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 #gtabs .gt{transition:background-color .15s,color .15s,opacity .15s;animation:g-drop .2s cubic-bezier(.32,.72,0,1) backwards}
 #gsb .gr{transition:background-color .15s,border-left-color .2s,opacity .15s;animation:g-drop .2s ease backwards}
 #gsb .gr .gren,#gsb .gr .gkill{transition:opacity .15s,background-color .15s,border-color .15s,color .15s}
-#gsb .gr .gkc,#gnotice{animation:g-rise .18s ease backwards}
+#gsb .gr .gkc,#gnotice{animation:g-rise .18s ease backwards}#gmenu:popover-open{animation:g-drop .16s ease}
 .gph,.gph b,.gdot{transition:background-color .2s,color .2s}
 .gp.needs .gst::before{animation:gpulse 1.6s ease-in-out infinite}
 }
