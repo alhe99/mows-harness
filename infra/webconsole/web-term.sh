@@ -39,6 +39,12 @@
 # tmux — only when stdin is a tty and it isn't already inside one (see cc's own header) —
 # and ttyd always hands its child a real pty, so that branch always fires here; the
 # direct-exec fallback path is never taken from this script.
+# First thing: drop the other terminals' pty masters ttyd handed us. ttyd 1.7.4's fd_set_cloexec has its test inverted and never sets
+# the flag, so every child inherits the masters open at fork time and keeps them alive after their own tab closes. ttyd's epoll then
+# keeps firing for that dead pty under its old fd number; once the number is reused for a new terminal, the spurious read returns
+# EAGAIN, ttyd's read_cb stops reading for good, and the tab shows a black screen with a cursor (2026-10-29: payments-methods-api,
+# seven reloads black in a row; ~5% of the Mac grid's connections over a week).
+for f in /proc/$$/fd/*; do [ "$(readlink "$f" 2>/dev/null)" = /dev/ptmx ] && eval "exec ${f##*/}>&-"; done
 set -euo pipefail
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export LANG=C.UTF-8
