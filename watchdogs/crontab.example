@@ -5,6 +5,7 @@
 */10 * * * * $HOME/.local/bin/claude-mem-health
 17   * * * * $HOME/.local/bin/reap-idle-claude
 */15 * * * * $HOME/.local/bin/reap-mcp-orphans
+*/5  * * * * $HOME/.local/bin/unit-loop-alert
 23   4 * * * $HOME/.local/bin/patch-health
 */5  * * * * $HOME/bin/claude-limit-shield.sh >/dev/null 2>&1
 @reboot      $HOME/.local/bin/log-boot

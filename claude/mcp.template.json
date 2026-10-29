@@ -4,9 +4,9 @@
     "context7": {"type": "http", "url": "https://mcp.context7.com/mcp",
                  "headers": {"CONTEXT7_API_KEY": "{{CONTEXT7_API_KEY}}"}},
     "chrome-devtools": {"type": "stdio", "command": "{{HOME}}/.local/mcp-npm/bin/chrome-devtools-mcp",
-      "args": ["--headless", "--isolated", "--no-usage-statistics", "--executablePath", "{{HOME}}/.local/mcp-npm/chromium", "--chromeArg=--no-sandbox"]},
+      "args": ["--headless", "--isolated", "--no-usage-statistics", "--executablePath", "{{HOME}}/.local/mcp-npm/chromium"]},
     "playwright": {"type": "stdio", "command": "{{HOME}}/.local/mcp-npm/bin/playwright-mcp",
-      "args": ["--headless", "--isolated", "--no-sandbox", "--browser", "chromium"]},
+      "args": ["--headless", "--isolated", "--browser", "chromium"]},
     "_comment_codegraph": "codegraph is an optional external CLI — remove the entry if not installed.",
     "_comment": "watch-mode variants (CDP :9222) intentionally not listed here - they fail without the layer-3 qa stack. Copy them from infra/qa-watch/SETUP.md after installing it."
   }

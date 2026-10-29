@@ -38,6 +38,7 @@ claude/mcp.template.json
 claude/rules/context7.md
 claude/scripts/discord-send.sh
 claude/scripts/discord-via-agy.sh
+claude/scripts/statusline.py
 claude/settings.template.json
 claude/skills/build-with-agent-team/SKILL.md
 claude/skills/context7-mcp/SKILL.md
@@ -254,6 +255,8 @@ infra/droid/SETUP.md
 infra/droid/up.sh
 infra/droid/ws-scrcpy.patch
 infra/droid/ws-scrcpy.service.template
+infra/mcp/apparmor-playwright-chromium
+infra/mcp/mcp-mongo@.service
 infra/oauth2-proxy/emails.txt.template
 infra/oauth2-proxy/oauth2-proxy.cfg.template
 infra/oauth2-proxy/oauth2-proxy.service
@@ -347,6 +350,7 @@ watchdogs/bin/log-boot
 watchdogs/bin/patch-health
 watchdogs/bin/reap-idle-claude
 watchdogs/bin/reap-mcp-orphans
+watchdogs/bin/unit-loop-alert
 watchdogs/crontab.example
 watchdogs/logrotate.d/claude-harness
 web/contract.d.ts

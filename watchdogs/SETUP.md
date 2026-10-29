@@ -1,9 +1,9 @@
 # Layer 2 watchdogs — setup
 
-Seven small, profile-agnostic cron scripts that keep the host and the Claude Code
+Eight small, profile-agnostic cron scripts that keep the host and the Claude Code
 remote-control fleet healthy: unit/wedge recovery, memory-capture verification, idle-session
-reaping, orphaned MCP-server reaping, usage-limit auto-continue, a boot log, and an OS
-patch-health monitor. All fleet-facing scripts discover profiles dynamically (`default` +
+reaping, orphaned MCP-server reaping, usage-limit auto-continue, a boot log, an OS
+patch-health monitor, and a restart-loop alert for the box's services. All fleet-facing scripts discover profiles dynamically (`default` +
 every `~/.claude-<suffix>` directory) — nothing here is hardcoded to a specific account
 name, and every script is a no-op (exit 0) on a box with no matching profiles or units
 configured yet.
@@ -13,6 +13,7 @@ configured yet.
 ```bash
 install -m755 watchdogs/bin/claude-health watchdogs/bin/claude-mem-health \
   watchdogs/bin/reap-idle-claude watchdogs/bin/reap-mcp-orphans watchdogs/bin/log-boot \
+  watchdogs/bin/unit-loop-alert \
   watchdogs/bin/patch-health \
   "$HOME/.local/bin/"
 mkdir -p "$HOME/bin"
@@ -20,7 +21,7 @@ install -m755 watchdogs/bin/claude-limit-shield.sh "$HOME/bin/"
 ```
 
 `claude-limit-shield.sh` installs to `~/bin/` (matching `crontab.example` below); the
-other six go to `~/.local/bin/`.
+other seven go to `~/.local/bin/`.
 
 ## Crontab
 
@@ -81,11 +82,12 @@ config files don't expand it either. Render it to an absolute path before instal
 | `reap-mcp-orphans` | `*/15 * * * *` | Kills MCP server processes reparented to init (ppid==1, age>5min) — excludes tmux/claude/remote-control processes so a daemonized tmux server hosting a live session is never mistaken for an orphan. |
 | `patch-health` | `23 4 * * *` | Detects stalled OS security updates: non-empty `dpkg --audit`, apt update stamp >3d old or missing, or reboot pending >7d. Logs findings to `patch-health.log`; optionally notifies via `agy-notify` (rate-limited to 1/day). |
 | `claude-limit-shield.sh` | `*/5 * * * *` | Scans tmux panes for a stalled usage-limit banner past its parsed reset time and types a continue-nudge. Run `claude-limit-shield.sh selftest` any time to verify end-to-end behavior in a disposable throwaway session. |
+| `unit-loop-alert` | `*/5 * * * *` | Posts to Discord (`~/.claude/scripts/discord-send.sh`) when one of the box's service units (dashboard, web terminal, tmux, caddy, oauth2-proxy, the `mcp-mongo@` servers; override with `UNIT_LOOP_UNITS`) restarted 3+ times in the last 5 min or sits failed, with systemd's reason (`oom-kill`, …). Once per unit per hour; `unit-loop-alert --once` prints the snapshot. |
 | `log-boot` | `@reboot` | Appends one line per boot (kernel version + uptime) to `~/.local/state/boot-log.txt`. |
 
 ## Logs
 
 Everything lands under `~/.local/state/`: `claude-health.log`, `claude-mem-health.log`
 (plus `.alert` and `.seen`), `reap-idle-claude.log`, `reap-mcp-orphans.log`,
-`patch-health.log`, `claude-limit-shield/shield.log`, and `boot-log.txt`. The first six are
+`patch-health.log`, `claude-limit-shield/shield.log`, `unit-loop-alert/alerts.log`, and `boot-log.txt`. The first six are
 covered by `logrotate.d/claude-harness`; `boot-log.txt` is small and append-only, so it isn't rotated.

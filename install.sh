@@ -235,7 +235,8 @@ layer_claude(){
   # The browser MCP servers, installed once instead of `npx -y …@latest` per session: npx left an npm and a sh process beside every
   # server (122 processes, 3 GB RAM + 3.7 GB swap across ~10 sessions on 2026-10-29) and asked the registry at each start.
   # chrome-devtools-mcp's own default (Chrome stable) is an x86-64 build here on aarch64 and never launched: it gets Playwright's
-  # Chromium, through a link that follows the newest revision installed.
+  # Chromium, through a link that follows the newest revision installed. Its sandbox needs the AppArmor userns exemption in
+  # infra/mcp/apparmor-playwright-chromium (root; see its header) — without it Chromium will not start sandboxed on Ubuntu.
   npm install -g --prefix "$HOME/.local/mcp-npm" --no-fund --no-audit chrome-devtools-mcp@1.12.0 @playwright/mcp@0.0.83 >/dev/null
   local chromium; chromium=$(ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1 || true)
   if [ -n "$chromium" ]; then ln -sfn "$chromium" "$HOME/.local/mcp-npm/chromium"

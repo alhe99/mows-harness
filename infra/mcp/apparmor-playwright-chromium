@@ -1,0 +1,13 @@
+# Playwright's Chromium, named for AppArmor so it may create the user namespaces its sandbox needs. Ubuntu restricts unprivileged
+# user namespaces (kernel.apparmor_restrict_unprivileged_userns=1) and ships this exemption for /opt/google/chrome/chrome only, so the
+# browser MCP servers ran Chromium with --no-sandbox (2026-10-29). Same shape as Ubuntu's own /etc/apparmor.d/chrome: unconfined,
+# userns allowed. Install: sudo cp infra/mcp/apparmor-playwright-chromium /etc/apparmor.d/playwright-chromium
+#                          sudo apparmor_parser -r /etc/apparmor.d/playwright-chromium
+abi <abi/4.0>,
+include <tunables/global>
+
+profile playwright-chromium /home/*/.cache/ms-playwright/chromium-*/chrome-linux*/chrome flags=(unconfined) {
+  userns,
+
+  include if exists <local/playwright-chromium>
+}

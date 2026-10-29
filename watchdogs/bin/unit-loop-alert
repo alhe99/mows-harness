@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# unit-loop-alert — cron every 5 min. Posts to Discord when a service unit is restart-looping or has failed, so a crash loop is
+# seen in minutes. 2026-10-29: claude-dash-lite was OOM-killed and restarted ~170 times in an hour and nobody noticed; the phone
+# and the Mac just saw the dashboard drop and reload. Alert = the unit's automatic restarts grew by >= 3 since the last run, or it
+# sits failed. One alert per unit per hour; systemd's Result (oom-kill, exit-code, …) says why. `unit-loop-alert --once` prints
+# the snapshot without posting. A unit that does not exist on this box is skipped.
+set -euo pipefail
+
+UNITS=${UNIT_LOOP_UNITS:-"claude-dash-lite claude-web-term claude-tmux caddy oauth2-proxy $(systemctl list-units --no-legend --plain 'mcp-mongo@*' 2>/dev/null | awk '{print $1}' | tr '\n' ' ')"}
+ST="$HOME/.local/state/unit-loop-alert"
+SEND="$HOME/.claude/scripts/discord-send.sh"
+mkdir -p "$ST"
+now=$(date +%s)
+
+for u in $UNITS; do
+  load=$(systemctl show -p LoadState --value "$u" 2>/dev/null || true)
+  [ "$load" = loaded ] || continue
+  n=$(systemctl show -p NRestarts --value "$u"); state=$(systemctl is-active "$u" 2>/dev/null || true); why=$(systemctl show -p Result --value "$u")
+  prev=$(cat "$ST/$u.n" 2>/dev/null || echo "$n")
+  [ "$n" -lt "$prev" ] && prev=0 # a manual (re)start resets NRestarts
+  echo "$n" > "$ST/$u.n"
+  d=$((n - prev))
+  [ "${1:-}" = --once ] && { printf '%-32s %-10s restarts=%s (+%s) result=%s\n' "$u" "$state" "$n" "$d" "$why"; continue; }
+  if [ "$d" -ge 3 ]; then msg="🔁 $u restarted $d times in the last 5 min (last result: $why). It is $state now."
+  elif [ "$state" = failed ]; then msg="❌ $u has failed (result: $why) and is not restarting."
+  else continue; fi
+  last=$(cat "$ST/$u.alerted" 2>/dev/null || echo 0)
+  [ $((now - last)) -lt 3600 ] && continue
+  echo "$now" > "$ST/$u.alerted"
+  echo "$(date '+%F %T') $msg" >> "$ST/alerts.log"
+  [ -x "$SEND" ] && "$SEND" -m "$(hostname): $msg" >/dev/null 2>&1 || true
+done
+exit 0
