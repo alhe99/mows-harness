@@ -598,6 +598,16 @@ export const runAsCode = (envs, cmd, args, t = 30000) => new Promise(r =>
 // lives in this one script, called the same way every other tmux-mutating action is.
 export const WEBTERM_SH = process.env.WEBTERM_SH || '/opt/claude-dashboard/web-term.sh';
 
+// runAs, in a cgroup scope of its own with its own memory cap. For ccusage, which holds an account's every transcript in memory: 513 MB
+// for the work account on 2026-10-29, past this unit's MemoryMax=400M. As a child of the unit, its OOM killed the whole dashboard, and
+// usage() runs at boot, so the unit restarted into the same kill every ~10 s (170 times in an hour). In its own scope an OOM costs only
+// the spend cards ("?"). Root only (systemd-run --scope on the system manager); a non-root dev box runs it plainly.
+const runScoped = (envs, cmd, args, t = 30000) => new Promise(r => {
+  const [c, a] = userCmd(['env', 'HOME=' + TMUX_HOME, 'PATH=' + RUN_PATH, ...envs, cmd, ...args]);
+  const [c2, a2] = process.getuid?.() === 0 ? ['systemd-run', ['--scope', '-q', '--collect', '-p', 'MemoryMax=1G', '--', c, ...a]] : [c, a];
+  execFile(c2, a2, { timeout: t, maxBuffer: 32e6 }, (e, out) => r(e ? '' : out));
+});
+
 const jp = s => { try { return JSON.parse(s); } catch { return null; } };
 
 export const mshort = m => String(m).replace(/^claude-/, '');
@@ -615,7 +625,7 @@ async function collectUsage(force) {
     quota[m[1]] = { h5: isNaN(parseFloat(m[2])) ? null : parseFloat(m[2]), wk: isNaN(parseFloat(m[3])) ? null : parseFloat(m[3]) };
   const thr = +(qline.match(/threshold (\d+)/) || [])[1] || 70;
   const accts = {};
-  const cc = (env, args, t) => runAs(env, 'nice', ['-n', '19', 'ionice', '-c', '3', 'ccusage', ...args], t).then(jp);
+  const cc = (env, args, t) => runScoped(env, 'nice', ['-n', '19', 'ionice', '-c', '3', 'ccusage', ...args], t).then(jp);
   for (const a of UACCTS) {
     const env = ['CLAUDE_CONFIG_DIR=' + a.dir];
     // one daily call covers today AND the week: per-day rows since 7 days ago + totals
