@@ -3,10 +3,10 @@
     "codegraph": {"type": "stdio", "command": "codegraph", "args": ["serve", "--mcp"]},
     "context7": {"type": "http", "url": "https://mcp.context7.com/mcp",
                  "headers": {"CONTEXT7_API_KEY": "{{CONTEXT7_API_KEY}}"}},
-    "chrome-devtools": {"type": "stdio", "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--headless", "--isolated", "--no-usage-statistics"]},
-    "playwright": {"type": "stdio", "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated", "--no-sandbox", "--browser", "chromium"]},
+    "chrome-devtools": {"type": "stdio", "command": "{{HOME}}/.local/mcp-npm/bin/chrome-devtools-mcp",
+      "args": ["--headless", "--isolated", "--no-usage-statistics", "--executablePath", "{{HOME}}/.local/mcp-npm/chromium", "--chromeArg=--no-sandbox"]},
+    "playwright": {"type": "stdio", "command": "{{HOME}}/.local/mcp-npm/bin/playwright-mcp",
+      "args": ["--headless", "--isolated", "--no-sandbox", "--browser", "chromium"]},
     "_comment_codegraph": "codegraph is an optional external CLI — remove the entry if not installed.",
     "_comment": "watch-mode variants (CDP :9222) intentionally not listed here - they fail without the layer-3 qa stack. Copy them from infra/qa-watch/SETUP.md after installing it."
   }

@@ -117,7 +117,7 @@ done < <(git ls-files -z)
 [ "$CTRLBAD" = 0 ] || bad "shipped file(s) contain raw control bytes (see above)"
 
 # 4. placeholder lint: only the sanctioned {{ VARS }}
-ALLOWED='DOMAIN|EXAMPLE_SUB|OAUTH_CLIENT_ID|OAUTH_CLIENT_SECRET|COOKIE_SECRET|ADMIN_EMAIL|CONTEXT7_API_KEY|VPS_HOST|PROJECTS_ROOT|ADMIN_USER'
+ALLOWED='HOME|DOMAIN|EXAMPLE_SUB|OAUTH_CLIENT_ID|OAUTH_CLIENT_SECRET|COOKIE_SECRET|ADMIN_EMAIL|CONTEXT7_API_KEY|VPS_HOST|PROJECTS_ROOT|ADMIN_USER'
 # exclude this script: it documents the {{VAR}} convention in comments/patterns
 if git grep -hoE '\{\{[A-Z0-9_]+\}\}' -- . ':!scripts/preflight.sh' | sort -u | grep -vE "^\{\{($ALLOWED)\}\}$"; then bad "unsanctioned placeholder"; fi
 
