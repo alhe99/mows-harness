@@ -618,12 +618,16 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 }}
 }
 @view-transition{navigation:auto}
-/* Grid motion (views/grid.mjs; here because the grid route sits at its 15 kB budget). As the phone's sheets: transform and opacity only,
+/* Grid motion and nav (views/grid.mjs; here because the grid route sits at its 15 kB budget). As the phone's sheets: transform and opacity only,
    the sheets' curve (term.css), and no transform left once a move ends (backwards fill). A pane animates whenever its box is made: a split,
    a tab shown again, a zoom in or out (.gw.z renames the animation so it replays). The hidden sidebar's two columns go to 0, not
    display:none, so the toggle slides; its content keeps its width and is clipped, not reflowed. A drag of its edge is instant (#grid.drag),
    and the panes' terminals refit once, coalesced (term.mjs fit). */
 #grid.nosb{grid-template-columns:0px 0px minmax(0,1fr);padding-left:0}#grid.nosb #gsb{visibility:hidden;opacity:0;border-width:0}#gsb>*{min-width:calc(var(--gsb,256px) - 2px)}
+/* the grid's cockpit nav: the pill nav (.pnav) and the list|grid switch as a pill of the same make, sized to the grid's 38 px tab strip */
+.gnav{margin-left:auto;display:flex;align-items:center;gap:8px;flex-shrink:0;padding:0 8px}
+.gnav :is(.pnav,.vsw){height:28px;padding:2px;border-radius:999px;background:var(--navbg);border-color:var(--navbd)}
+.gnav a{padding:0 12px;border-radius:999px;border:0!important;font:500 12px var(--sans);text-decoration:none}.gnav .vsw a.on{box-shadow:0 1px 3px rgba(0,0,0,.4)}
 @media(prefers-reduced-motion:no-preference){
 #grid{transition:grid-template-columns .24s cubic-bezier(.32,.72,0,1),padding-left .24s cubic-bezier(.32,.72,0,1)}#grid.drag{transition:none}
 #gsb{transition:opacity .2s ease,visibility .24s}

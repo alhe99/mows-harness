@@ -304,7 +304,7 @@ function Strip({ fm }) {
       h('button', { class: 'gx', type: 'button', 'aria-label': 'close tab', onClick: e => { e.stopPropagation(); dispatch(s => { let x = s; for (let i = t.panes.length - 1; i >= 0; i--) x = S.closePane(x, t.id, i); return x; }); } }, I.x12()))),
     h('button', { class: 'gnew', type: 'button', title: 'new session (the terminal picker, in a tab here)', 'aria-label': 'new session', onClick: () => go(S.newPane) }, I.plus())),
     h('span', { id: 'gnotice', hidden: !s.notice }, s.notice),
-    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), NAV.map(([t, p]) => h('a', { href: base() + p }, t))));
+    h('nav', { class: 'gnav', 'aria-label': 'cockpit' }, h(ViewSwitch, { on: 'grid' }), h('span', { class: 'pnav' }, NAV.map(([t, p]) => h('a', { href: base() + p }, t)))));
 }
 
 export default function Grid() {
