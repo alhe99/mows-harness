@@ -22,6 +22,7 @@ const I = {
   expand: () => svg(14, '#858585', ['M8.75 1.75H12.25V5.25', 'M12.25 1.75L8.16667 5.83333', 'M1.75 12.25L5.83333 8.16667', 'M5.25 12.25H1.75V8.75']),
   shrink: () => svg(14, '#858585', ['M2.33333 8.16667H5.83333V11.6667', 'M11.6667 5.83333H8.16667V2.33333', 'M8.16667 5.83333L12.25 1.75', 'M1.75 12.25L5.83333 8.16667']),
   x14: () => svg(14, '#858585', ['M10.5 3.5L3.5 10.5', 'M3.5 3.5L10.5 10.5']),
+  own: () => svg(14, '#858585', ['M12.25 7.58v3.5a1.17 1.17 0 0 1-1.17 1.17H2.92a1.17 1.17 0 0 1-1.17-1.17V2.92a1.17 1.17 0 0 1 1.17-1.17h3.5', 'M12.25 1.75L7 7', 'M8.75 1.75h3.5v3.5']), // lucide square-arrow-out-up-right
   panel: () => svg(14, '#858585', ['M2.917 2.333h8.166a1.167 1.167 0 0 1 1.167 1.167v7a1.167 1.167 0 0 1-1.167 1.167H2.917A1.167 1.167 0 0 1 1.75 10.5v-7a1.167 1.167 0 0 1 1.167-1.167z', 'M5.25 2.333v9.334']),
 };
 const mint = () => [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -250,8 +251,8 @@ function Pane({ tab, i, name, f, hiddenByZoom, cell }) {
   const on = tab.focus === i, state = f ? f.state : 'ended', picker = S.isPicker(name);
   return h('div', { class: `gp${on ? ' on' : ''}${state === 'needs-you' ? ' needs' : ''}${f || picker ? '' : ' ended'}`, 'data-name': name, style: hiddenByZoom ? 'display:none' : cell,
       onPointerDown: () => go(s => S.focusPane(s, tab.id, i)) },
-    h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', null, picker ? 'picker' : f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
-      tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', onClick: () => go(s => S.detachPane(s, tab.id, i)) }, '⧉') : null,
+    h('header', { class: 'gph' }, h('b', null, labelOf(f, name)), h('span', { class: 'gst', 'data-state': picker ? 'idle' : state }, picker ? 'picker' : f ? WORD[f.state] : 'ended'), h('span', { class: 'gsp' }),
+      tab.panes.length > 1 ? h('button', { class: 'gown', type: 'button', title: 'move to its own tab', 'aria-label': 'move to its own tab', onClick: () => go(s => S.detachPane(s, tab.id, i)) }, I.own()) : null,
       h('button', { class: 'gzoom', type: 'button', title: 'zoom', onClick: () => go(s => S.toggleZoom(S.focusPane(s, tab.id, i))) }, tab.zoom === i ? I.shrink() : I.expand()),
       h('button', { class: 'gclose', type: 'button', title: 'close pane', onClick: () => go(s => S.closePane(s, tab.id, i)) }, I.x14())),
     h('iframe', { class: 'gfr', src: picker ? `/term/?arg=menu&arg=&arg=${tabids.get(name)}&v=3` : `/term/?arg=attach&arg=${encodeURIComponent(name)}&arg=${tabids.get(name)}&v=3`, title: picker ? 'new session' : name, onLoad: postMod }));

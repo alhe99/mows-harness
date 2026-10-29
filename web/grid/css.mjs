@@ -52,24 +52,17 @@ ${/* tab strip: 38 px, the shell's pill-nav language (.pnav): the tabs a capsule
 #gtabs .gx{min-height:0;height:18px;width:18px;padding:0;margin-left:-2px;border-radius:50%;background:transparent;border:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#gtabs .gx:hover{background:var(--card2)}
 #gtabs :is(.gnew,.gsbt){min-height:0;height:28px;width:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--navbg);border:1px solid var(--navbd);border-radius:50%;cursor:pointer;flex-shrink:0}#gtabs .gnew{height:auto;width:22px;background:0;border:0}#gtabs :is(.gnew,.gsbt):hover{background:var(--card2)}
 #gtabs .gsbt path{stroke:var(--mut)}#gtabs .gsbt:hover path{stroke:var(--fg)}
-#gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}.gph button path{stroke:var(--mut)}#gtabs .gx:hover path,#gtabs .gnew:hover path,.gph button:hover path{stroke:var(--fg)}
+#gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}#gtabs .gx:hover path,#gtabs .gnew:hover path{stroke:var(--fg)}
 #gnotice{font:11px/16.5px var(--mono);color:var(--warn);padding:0 16px;white-space:nowrap}
 ${/* the cockpit nav (.gnav) is styled in tokens.css (Grid motion and nav), for the budget */''}
 .gw{flex:1;min-height:0;display:grid;grid-auto-rows:minmax(0,1fr);gap:0;overflow:hidden}
 .gw[hidden]{display:none}
 .gp{display:flex;flex-direction:column;min-width:0;min-height:0}
-${/* pane header: name, state, then the own-tab / zoom / close icons; the focused pane's name is the bright one */''}
-.gph{display:flex;align-items:center;gap:12px;padding:8px 16px 7px;background:var(--card);border-bottom:1px solid var(--bd);font:400 13px/19.5px var(--mono);color:var(--mut);cursor:default;user-select:none;flex-shrink:0}
-.gp.on .gph{background:var(--card2)}.gph b{font-weight:400;color:var(--mut)}.gp.on .gph b{color:var(--fg)}.gp.ended .gph{color:var(--warn)}
-.gph .gsp{flex:1}
-.gph button{min-height:0;height:14px;padding:0;background:transparent;border:0;display:inline-flex;align-items:center;cursor:pointer;color:var(--mut);font:13px/1 var(--mono)}.gph button:hover{color:var(--fg)}
-.gp.needs .gph{animation:gpulse 1.6s ease-in-out infinite}
-@keyframes gpulse{0%,100%{background:var(--card2)}50%{background:rgba(255,185,0,.14)}}
+${/* the pane header (.gph) is styled in tokens.css (Grid chrome), for the budget */''}
 .gfr{flex:1;width:100%;border:0;background:var(--bg);min-height:0}
 #grid.drag iframe{pointer-events:none}
 #grid.tabdrag .gw:not([hidden]),#grid.tabdrag .gempty{outline:2px dashed var(--mut);outline-offset:-3px;cursor:copy}#gsb .gr.dragging{opacity:.5}
 #gsb .gdb{box-shadow:inset 0 2px 0 var(--ring)}#gsb .gda{box-shadow:inset 0 -2px 0 var(--ring)}
 .gpark,.gempty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--mut);font:13px var(--mono)}
 [data-view=grid-phone]{padding:24px 8px;color:var(--mut);font:15px var(--sans)}
-@media(prefers-reduced-motion:reduce){.gp.needs .gph{animation:none;background:rgba(255,185,0,.14)}}
 `;
