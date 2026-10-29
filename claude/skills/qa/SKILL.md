@@ -58,9 +58,9 @@ real status read, never a UI checkmark.
 - `templates/` — journey.template.md, cookbook.skeleton.md, report-template.md, smoke.md.
 
 ## Troubleshooting
-- **chrome-devtools tools missing from a session**: the npx cache can drop the exec bit when
-  `chrome-devtools-mcp@latest` updates in place. Registrations self-heal (sh -c chmod wrapper),
-  but a manual fix is: `chmod +x ~/.npm/_npx/*/node_modules/chrome-devtools-mcp/build/src/bin/*.js`
-  then start a new session (or `/mcp` → reconnect).
+- **chrome-devtools / playwright tools missing from a session**: both are installed once in
+  `~/.local/mcp-npm` (install.sh), not run through npx. Check `~/.local/mcp-npm/bin/` has them and
+  `/opt/playwright-chromium/chrome` exists (root-owned); "No usable sandbox" means the AppArmor
+  profile `infra/mcp/apparmor-playwright-chromium` is not loaded. Then `/mcp` → reconnect.
 - **`*-watch` servers show failed at session start**: normal when the watch Chrome (:9222) is
   down — start the watch-stack (step 4), then `/mcp` → reconnect them.

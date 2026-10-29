@@ -234,13 +234,11 @@ layer_claude(){
   chmod 600 "$HOME/.claude/mcp-interactive.json" # it carries API keys and tokens; ~/.claude itself is world-readable
   # The browser MCP servers, installed once instead of `npx -y …@latest` per session: npx left an npm and a sh process beside every
   # server (122 processes, 3 GB RAM + 3.7 GB swap across ~10 sessions on 2026-10-29) and asked the registry at each start.
-  # chrome-devtools-mcp's own default (Chrome stable) is an x86-64 build here on aarch64 and never launched: it gets Playwright's
-  # Chromium, through a link that follows the newest revision installed. Its sandbox needs the AppArmor userns exemption in
-  # infra/mcp/apparmor-playwright-chromium (root; see its header) — without it Chromium will not start sandboxed on Ubuntu.
+  # Both run /opt/playwright-chromium/chrome (chrome-devtools-mcp's own default, Chrome stable, is an x86-64 build here on aarch64
+  # and never launched): a root-owned copy of Playwright's Chromium, the only path the AppArmor userns exemption in
+  # infra/mcp/apparmor-playwright-chromium attaches to, so it runs sandboxed. Both are root steps, in that file's header.
   npm install -g --prefix "$HOME/.local/mcp-npm" --no-fund --no-audit chrome-devtools-mcp@1.12.0 @playwright/mcp@0.0.83 >/dev/null
-  local chromium; chromium=$(ls -d "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1 || true)
-  if [ -n "$chromium" ]; then ln -sfn "$chromium" "$HOME/.local/mcp-npm/chromium"
-  else echo "no Playwright Chromium yet: the headless chrome-devtools MCP needs one (npx playwright install chromium), then re-run"; fi
+  [ -x /opt/playwright-chromium/chrome ] || echo "no /opt/playwright-chromium yet: the browser MCPs need it (root steps in infra/mcp/apparmor-playwright-chromium)"
 
   # Marketplaces/plugins, DERIVED from claude/settings.template.json at runtime (not a
   # second hand-maintained copy) — extraKnownMarketplaces for the `marketplace add` calls,

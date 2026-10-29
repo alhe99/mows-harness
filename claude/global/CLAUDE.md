@@ -104,7 +104,7 @@ Journeys are markdown (NL steps) driven via the chrome-devtools / playwright MCP
 (registered at user scope AND in each account's `mcp-interactive.json`) — present in
 every project, in phone/remote-control sessions and `cc` interactive sessions alike.
 Reports land in <project>/docs/qa/. If browser tools are missing from a session, see
-Troubleshooting in ~/.claude/skills/qa/SKILL.md (npx exec-bit self-heal, *-watch reconnect).
+Troubleshooting in ~/.claude/skills/qa/SKILL.md (browser MCP install, sandbox profile, *-watch reconnect).
 
 Modes (journey frontmatter `mode:`):
 - headless (default) — fully automated, no display. Cap 2 concurrent (qa-precheck guard).
