@@ -269,7 +269,7 @@ function colDrag(e, tab, k) {
 function Tab({ tab, active, fm }) {
   const isParked = parked.value.has(tab.id), zoomed = tab.zoom != null, n = tab.cols.length, rows = Math.ceil(tab.panes.length / n) || 1;
   const cols = zoomed ? '1fr' : tab.cols.map(c => `minmax(${S.CAPS.minCol}px,${c}fr)`).join(' 6px ');
-  return h('div', { class: 'gw', 'data-tab': tab.id, hidden: !active, style: `grid-template-columns:${cols};grid-template-rows:repeat(${zoomed ? 1 : rows},minmax(0,1fr))` },
+  return h('div', { class: zoomed ? 'gw z' : 'gw', 'data-tab': tab.id, hidden: !active, style: `grid-template-columns:${cols};grid-template-rows:repeat(${zoomed ? 1 : rows},minmax(0,1fr))` },
     isParked ? h('div', { class: 'gpark' }, 'parked · click the tab to reattach') : [
       ...tab.panes.map((name, i) => h(Pane, { key: name, tab, i, name, f: fm.get(name), hiddenByZoom: zoomed && tab.zoom !== i, cell: zoomed ? '' : `grid-area:${(i / n | 0) + 1}/${2 * (i % n) + 1}` })),
       ...(zoomed ? [] : tab.cols.slice(1).map((_, k) => h('div', { class: 'gh', 'data-k': k, key: 'h' + k, style: `grid-column:${2 * k + 2}`, onPointerDown: e => colDrag(e, tab, k) })))]);

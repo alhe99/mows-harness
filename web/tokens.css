@@ -618,3 +618,23 @@ background:linear-gradient(180deg,rgba(39,39,42,.55),rgba(24,24,27,.35));box-sha
 }}
 }
 @view-transition{navigation:auto}
+/* Grid motion (views/grid.mjs; here because the grid route sits at its 15 kB budget). As the phone's sheets: transform and opacity only,
+   the sheets' curve (term.css), and no transform left once a move ends (backwards fill). A pane animates whenever its box is made: a split,
+   a tab shown again, a zoom in or out (.gw.z renames the animation so it replays). The hidden sidebar's two columns go to 0, not
+   display:none, so the toggle slides; its content keeps its width and is clipped, not reflowed. A drag of its edge is instant (#grid.drag),
+   and the panes' terminals refit once, coalesced (term.mjs fit). */
+#grid.nosb{grid-template-columns:0px 0px minmax(0,1fr);padding-left:0}#grid.nosb #gsb{visibility:hidden;opacity:0;border-width:0}#gsb>*{min-width:calc(var(--gsb,256px) - 2px)}
+@media(prefers-reduced-motion:no-preference){
+#grid{transition:grid-template-columns .24s cubic-bezier(.32,.72,0,1),padding-left .24s cubic-bezier(.32,.72,0,1)}#grid.drag{transition:none}
+#gsb{transition:opacity .2s ease,visibility .24s}
+.gp{animation:g-pane .22s cubic-bezier(.32,.72,0,1) backwards}.gw.z .gp{animation-name:g-zoom}
+#gtabs .gt{transition:background-color .15s,color .15s,opacity .15s;animation:g-drop .2s cubic-bezier(.32,.72,0,1) backwards}
+#gsb .gr{transition:background-color .15s,border-left-color .2s,opacity .15s;animation:g-drop .2s ease backwards}
+#gsb .gr .gren,#gsb .gr .gkill{transition:opacity .15s,background-color .15s,border-color .15s,color .15s}
+#gsb .gr .gkc,#gnotice{animation:g-rise .18s ease backwards}
+.gph,.gph b,.gdot{transition:background-color .2s,color .2s}
+}
+@keyframes g-pane{from{opacity:0;transform:scale(.985)}}
+@keyframes g-zoom{from{opacity:.4;transform:scale(.97)}}
+@keyframes g-drop{from{opacity:0;transform:translateY(-4px)}}
+@keyframes g-rise{from{opacity:0;transform:translateY(4px)}}

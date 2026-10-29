@@ -41,7 +41,7 @@ ${/* service row: one line hanging off the agent above by an elbow drawn from th
 #gsb .gr .gkc .gkyes{color:var(--bad)}#gsb .gr .gkc .gkyes:hover{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.35)}
 .gdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}.gh:hover,#grid.drag .gh{background:var(--pop)}
-#grid.nosb{grid-template-columns:minmax(0,1fr);padding-left:0}#grid.nosb #gsb,#grid.nosb #gh-sb{display:none} ${/* one column: the main is the only grid item then (a hidden item does not hold its column) */''}
+${/* the hidden sidebar and the grid's motion are in tokens.css (Grid motion): this route sits at its 15 kB budget */''}
 #gmain{display:flex;flex-direction:column;min-width:0;min-height:0}
 ${/* tab strip: 38 px, each tab a 16 px cell with a right hairline, the active one lifted to the card; then +, the notice, the cockpit nav */''}
 #gtabs{display:flex;align-items:center;height:38px;flex-shrink:0;border-bottom:1px solid var(--hair)}
