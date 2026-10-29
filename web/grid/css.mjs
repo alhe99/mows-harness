@@ -43,15 +43,14 @@ ${/* service row: one line hanging off the agent above by an elbow drawn from th
 #gh-sb,.gh{cursor:col-resize;background:transparent;touch-action:none}.gw .gh{grid-row:1/-1}.gh:hover,#grid.drag .gh{background:var(--pop)}
 ${/* the hidden sidebar and the grid's motion are in tokens.css (Grid motion and nav): this route sits at its 15 kB budget */''}
 #gmain{display:flex;flex-direction:column;min-width:0;min-height:0}
-${/* tab strip: 38 px, each tab a 16 px cell with a right hairline, the active one lifted to the card; then +, the notice, the cockpit nav */''}
-#gtabs{display:flex;align-items:center;height:38px;flex-shrink:0;border-bottom:1px solid var(--hair)}
-#gtabs .gts{display:flex;align-items:center;min-width:0;overflow-x:auto;scrollbar-width:none}#gtabs .gts::-webkit-scrollbar{display:none}
-#gtabs .gt{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-right:1px solid var(--hair);color:var(--mut);font:400 13px/19.5px var(--mono);cursor:pointer;user-select:none;white-space:nowrap;touch-action:none;flex-shrink:0}
-#gtabs .gt.on{background:var(--card2);color:var(--fg)}#gtabs .gt:not(.on):hover{color:var(--fg2)}#gtabs .gt.dragging{opacity:.5}
-#gtabs .gt .gdot{border:0;background:var(--bd3);box-shadow:none}#gtabs .gt .gdot[data-state=working]{background:var(--ok)}#gtabs .gt .gdot[data-state=needs-you],#gtabs .gt .gdot[data-state=paused]{background:var(--warn)}
-#gtabs .gx{min-height:0;height:12px;width:20px;padding:0 0 0 8px;box-sizing:border-box;background:transparent;border:0;display:inline-flex;align-items:center;cursor:pointer}
-#gtabs .gnew{display:inline-flex;align-items:center;height:38px;padding:0 16px;background:transparent;border:0;border-right:1px solid var(--hair);cursor:pointer;flex-shrink:0}
-#gtabs .gsbt{min-height:0;height:38px;width:36px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;border-right:1px solid var(--hair);cursor:pointer;flex-shrink:0}
+${/* tab strip: 38 px, the shell's pill-nav language (.pnav): the tabs a capsule of pills, the focused one raised; the sidebar toggle a round button of the same make, + the capsule's last pill */''}
+#gtabs{display:flex;align-items:center;gap:6px;height:38px;padding-left:8px;flex-shrink:0;border-bottom:1px solid var(--hair)}
+#gtabs .gts{display:flex;gap:2px;height:28px;box-sizing:border-box;padding:2px;min-width:0;overflow-x:auto;scrollbar-width:none;background:var(--navbg);border:1px solid var(--navbd);border-radius:999px}#gtabs .gts::-webkit-scrollbar{display:none}
+#gtabs .gt{display:inline-flex;align-items:center;gap:8px;padding:0 4px 0 12px;border-radius:999px;color:var(--mut);font:500 12px var(--sans);cursor:pointer;user-select:none;white-space:nowrap;touch-action:none;flex-shrink:0}
+#gtabs .gt.on{background:var(--pop);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.4)}#gtabs .gt:not(.on):hover{color:var(--fg2);background:var(--card2)}#gtabs .gt.dragging{opacity:.5}
+#gtabs .gt .gdot{background:var(--bd3)}#gtabs .gt .gdot[data-state=working]{background:var(--ok)}#gtabs .gt .gdot[data-state=needs-you],#gtabs .gt .gdot[data-state=paused]{background:var(--warn)}
+#gtabs .gx{min-height:0;height:18px;width:18px;padding:0;margin-left:-2px;border-radius:50%;background:transparent;border:0;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#gtabs .gx:hover{background:var(--card2)}
+#gtabs :is(.gnew,.gsbt){min-height:0;height:28px;width:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--navbg);border:1px solid var(--navbd);border-radius:50%;cursor:pointer;flex-shrink:0}#gtabs .gnew{height:auto;width:22px;background:0;border:0}#gtabs :is(.gnew,.gsbt):hover{background:var(--card2)}
 #gtabs .gsbt path{stroke:var(--mut)}#gtabs .gsbt:hover path{stroke:var(--fg)}
 #gtabs .gx path,#gtabs .gnew path{stroke:var(--dimmer)}.gph button path{stroke:var(--mut)}#gtabs .gx:hover path,#gtabs .gnew:hover path,.gph button:hover path{stroke:var(--fg)}
 #gnotice{font:11px/16.5px var(--mono);color:var(--warn);padding:0 16px;white-space:nowrap}
