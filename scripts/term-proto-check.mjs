@@ -259,7 +259,7 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
     '  🤖 Opus 5.5 (high) | 💰 $107.72 session / $0.00 today | ⏳ 5h 0% · wk 21% | 🧠 114k (11%)',
     '  ⏵⏵ bypass permissions on (shift+tab to cycle) · 1 agent', '[cc-work-a0:bash*'];
   const s = claudeScreen(rows), u = s.use;
-  check('claudeScreen: status-line figures (cost, quota, context, agents)', u?.cost === '$107.72' && u.today === '$0.00' && u.h5 === 0 && u.wk === 21 && u.ctx === '114k' && u.pct === 11 && u.agents === 1 && s.model?.name === 'Opus 5.5', u);
+  check('claudeScreen: status-line figures (cost, quota, context, agents)', u?.cost === '$107.72' && u.h5 === 0 && u.wk === 21 && u.ctx === '114k' && u.pct === 11 && u.agents === 1 && s.model?.name === 'Opus 5.5', u);
   check('claudeScreen: no status line, no figures', claudeScreen(rows.slice(0, 4)).use === null, claudeScreen(rows.slice(0, 4)).use);
 }
 

@@ -102,7 +102,7 @@ const theme = themes(term);
 // terminal: in Claude's box an image path becomes a real attachment ([Image #1]), which the composer then shows as its draft chip.
 const put = t => { if (!comp?.insert(t)) term.paste(t); };
 const clip = clipboard(term, put);
-const att = attach(term);
+const att = attach(term, (path, f) => !coarse() && !!comp?.attach(path, f)); // a desktop: a token in the field's text
 const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
 const chord = gridKeys(term);
 const comp = composer(term, tc, () => fit(true), att.recent, att.pick, chord);

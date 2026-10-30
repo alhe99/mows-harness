@@ -9,7 +9,7 @@
 // untick it: the text alone ticks it).
 // Claude's permission dialogs (perm, claudePerm, 2026-10-27): the question is the title, every row above the options as Claude drew it (a diff's
 // rows in its colours), scrolled to its end; a tap answers (the number; the folder-trust question's unnumbered options: arrows and Enter).
-import { dragToClose, el, icon } from './dom.mjs';
+import { coarse, dragToClose, el, icon } from './dom.mjs';
 
 const KEYS = { Enter: '\r', Esc: '\x1b', Tab: '\t', Space: ' ' }, UP = '\x1b[A', DN = '\x1b[B';
 const CHECK = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
@@ -30,13 +30,6 @@ export function picker(term) {
   let shut = 0;
   dragToClose(wrap, pan, () => { wrap.classList.remove('open'); shown = ''; free = null; shut = Date.now(); term.input('\x1b'); });
   document.body.append(wrap);
-  // a keyboard (a desktop, 2026-10-30): while the sheet is up the keys are Claude's, as in the terminal: the arrows, Enter, Esc, a digit or a
-  // picker's letter (`s`). The free option's field keeps its own
-  addEventListener('keydown', e => {
-    if (!wrap.classList.contains('open') || e.ctrlKey || e.altKey || e.metaKey || /** @type {any} */ (e.target)?.closest?.('#ccpick .free, #cccomp')) return; // the composer's field sends them itself
-    const k = { ArrowUp: UP, ArrowDown: DN, ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C', Enter: '\r', Escape: '\x1b' }[e.key] ?? (/^[a-z0-9]$/i.test(e.key) ? e.key : '');
-    if (k) { e.preventDefault(); term.input(k); }
-  });
   const btn = (cls, label, fn, kids = []) => { const b = el('button', { type: 'button', className: cls }, label, ...kids); b.addEventListener('click', fn); return b; };
 
   /** what Claude shows now; null closes the sheet */
@@ -46,7 +39,8 @@ export function picker(term) {
     if (k === shown) return;
     shown = k; p = next;
     if (!p) { wrap.classList.remove('open'); free = null; return; }
-    if (!wrap.classList.contains('open')) /** @type {any} */ (document.activeElement)?.blur?.(); // the keyboard down: the sheet is the input
+    // a phone's keyboard down: the sheet is the input. A desktop's field keeps the focus and sends Claude its keys (composer.mjs)
+    if (!wrap.classList.contains('open') && coarse()) /** @type {any} */ (document.activeElement)?.blur?.();
     const old = pan.querySelector('.opts'), scroll = old ? old.scrollTop : -1;
     const at = p.opts.find(o => o.on) || p.opts[0], first = p.opts[0], last = p.opts.at(-1);
     // the highlight's order: on a multi-select question the Submit row sits after the free option, before `Chat about this`

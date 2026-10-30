@@ -63,9 +63,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // field says it, in the keyword's colours
   const uth = el('div', { className: 'uth', 'aria-live': 'polite' }, 'Deeper reasoning requested for this turn');
   // Claude's figures from the status line under its box (claudebox.mjs usage), which goes under the dock with the box: background agents, the
-  // 5 h / week quota, the session's cost (today's in its title) and the context used, as a ring
+  // 5 h / week quota, the session's cost and the context used, as a ring
   // the agents chip is Claude's `← 1 agent`: its agents view (the account's background sessions), opened with ← from an empty box; esc returns
-  const agents = el('button', { type: 'button', id: 'ccagents', hidden: true, title: "Claude's agents view (esc returns)" });
+  const agents = el('button', { type: 'button', id: 'ccagents', hidden: true });
   const quota = el('span', { className: 'q' }), cost = el('span', { className: 'c' }), ctxN = el('span');
   const ring = icon('<circle class="bg" cx="12" cy="12" r="9"/><circle class="rg" cx="12" cy="12" r="9" stroke-dasharray="0 57"/>');
   const ctx = el('span', { className: 'x' }, ring, ctxN);
@@ -77,12 +77,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     use.hidden = !u || !(u.cost || u.h5 !== null || u.ctx);
     if (use.hidden) return;
     txt(quota, u.h5 !== null ? `5h ${u.h5}% · wk ${u.wk}%` : '');
-    txt(cost, u.cost); cost.title = u.today ? 'today ' + u.today : '';
+    txt(cost, u.cost);
     ctx.hidden = !u.ctx;
     if (ctxN.textContent !== u.ctx) ctxN.textContent = u.ctx;
-    ring.querySelector('.rg')?.setAttribute('stroke-dasharray', `${(56.5 * (u.pct ?? 0) / 100).toFixed(1)} 57`);
-    ctx.classList.toggle('hi', (u.pct ?? 0) >= 80);
-    ctx.title = u.pct !== null ? `context ${u.ctx}, ${u.pct}% used` : 'context ' + u.ctx;
+    ring.querySelector('.rg')?.setAttribute('stroke-dasharray', `${0.565 * (u.pct ?? 0)} 57`);
   };
   const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, uth, ta, el('div', { className: 'cbar' }, add, mode, model, agents, draft, use, send));
   let booting = true, got = false, cap = 0;
@@ -151,6 +149,35 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (!hits.length) cmds.append(el('div', { className: 'none' }, 'No command matches /' + m[1]));
     cmds.hidden = false;
   }
+  // a desktop's attachments (2026-10-30): a file attached, pasted or dropped is a token in the text, where the cursor was (`[image: red.png]`),
+  // not Claude's draft chip ahead of the whole message (it read as an outside attachment). On send the message goes into Claude's box in its
+  // order: the text up to the token, the image's path (Claude turns it into its [Image #N] right there), the rest. Any other file is its path
+  // in backticks: a message that starts with `/` would be a command
+  /** @type {Map<string, { path: string, image: boolean }>} */
+  const files = new Map();
+  const imgs = () => (held.match(/\[Image #\d+\]/g) || []).length;
+  let sending = false;
+  const wait = (/** @type {number} */ ms) => new Promise(r => setTimeout(r, ms));
+  const inline = async (/** @type {string} */ t) => {
+    const re = new RegExp('(' + [...files.keys()].map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')');
+    let text = '', want = imgs();
+    const flush = async () => { if (text) { term.paste(text); text = ''; await wait(80); } };
+    sending = true;
+    for (const p of t.split(re)) {
+      const f = files.get(p);
+      if (!f) text += p;
+      else if (!f.image) text += '`' + f.path + '`';
+      else {
+        await flush();
+        term.paste(f.path); want++;
+        // Claude reads the image and puts its [Image #N] in. ponytail: 2.5 s, then on regardless (a wrapped token is not counted)
+        for (let i = 0; i < 25 && imgs() < want; i++) await wait(100);
+      }
+    }
+    await flush();
+    files.clear(); sending = false;
+    setTimeout(() => term.input('\r'), 60);
+  };
   const submit = () => {
     scan(); // what is on screen right now, not 30 ms ago: a dialog that just appeared takes a digit, not a paste and an Enter
     let t = ta.value.replace(/\s+$/, '');
@@ -162,6 +189,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (!t) { if (held) term.input('\r'); return; } // the draft alone (an attached image, a recalled prompt): it is on screen, in the chip
     if (t[0] === '!' && mode.className === 'sh') t = t.slice(1); // Claude already in shell mode: its `!` is typed
     if (t[0] === '/') askedAt = Date.now();
+    if ([...files.keys()].some(k => t.includes(k))) { sent = null; inline(t); return; }
     sent = held ? null : { t, p: 0 }; // ponytail: a message sent with a draft (an image) is not given back; the draft stays Claude's
     term.paste(t);
     setTimeout(() => term.input('\r'), 60);
@@ -179,9 +207,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   };
   ta.addEventListener('input', () => { shellMode(); grow(); showCmds(); });
   // a keyboard (a desktop, or one on a tablet): the keys Claude's own box takes go to Claude, as from the terminal: shift+tab (its mode), esc
-  // (stop it), ctrl+c (the field cleared if it holds text, else Claude's ctrl+c; with text selected in the terminal, a copy of it), and ↑ ↓ with
-  // nothing typed (its history) or on a dialog Claude drew. A /grid chord goes up to the grid
-  const ARROW = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B' };
+  // (stop it), ctrl+c (the field cleared if it holds text, else Claude's ctrl+c; with text selected in the terminal, a copy of it), ↑ ↓ with
+  // nothing typed (its history), and on a dialog the arrows (its sheet's too: the field keeps the focus). A /grid chord goes up to the grid
+  const ARROW = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C' };
   ta.addEventListener('keydown', e => {
     if (e.isComposing || chord(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
@@ -194,7 +222,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       if (ta.selectionStart !== ta.selectionEnd) return; // the field's own copy
       if (ta.value) { e.preventDefault(); ta.value = ''; grow(); shellMode(); showCmds(); return; }
       k = '\x03';
-    } else if (ARROW[e.key] && plain && !e.shiftKey && (choice || !ta.value) && cmds.hidden) k = ARROW[e.key];
+    } else if (ARROW[e.key] && plain && !e.shiftKey && cmds.hidden && (choice || !ta.value && /[UD]/.test(e.key))) k = ARROW[e.key]; // ← on an empty box is Claude's agents view: not from here
     if (k) { e.preventDefault(); term.input(k); }
   });
   // a latched ctrl/alt turns the next typed character into a key for the terminal, not text for the field
@@ -330,7 +358,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
-    if (draftText.textContent !== held) { draft.hidden = !held; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
+    if (draftText.textContent !== held) { draft.hidden = !held || sending; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
     const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : mode.className === 'sh' && top >= 0 ? 'Shell command…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
     const show = top >= 0 || choice > 0 || recent;
@@ -428,5 +456,19 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const ask = fn => { need = fn; };
   /** the page took the focus (a /grid pane chosen): the field while it is the input, else the terminal */
   const focus = () => { if (!form.hidden) ta.focus(); else term.focus(); };
-  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask, reboot, focus };
+  /** a file this page uploaded (attach.mjs), on a desktop: its token at the cursor. false while the field is not the input (a dialog): its
+   *  path then goes to the terminal, as on a phone */
+  const attach = (/** @type {string} */ path, /** @type {File} */ f) => {
+    if (form.hidden || choice) return false;
+    const image = /\.(png|jpe?g|gif|webp)$/i.test(path), kind = image ? 'image' : 'file';
+    const name = f.name && f.name !== 'image.png' ? f.name : 'pasted'; // a pasted screenshot comes as image.png
+    let tok = `[${kind}: ${name}]`;
+    for (let n = 2; files.has(tok); n++) tok = `[${kind}: ${name} ${n}]`;
+    files.set(tok, { path, image });
+    const a = ta.selectionStart, b = ta.selectionEnd, before = ta.value.slice(0, a), after = ta.value.slice(b);
+    ta.setRangeText((before && !/\s$/.test(before) ? ' ' : '') + tok + (/^\s/.test(after) ? '' : ' '), a, b, 'end');
+    grow(); ta.focus();
+    return true;
+  };
+  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask, reboot, focus, attach };
 }

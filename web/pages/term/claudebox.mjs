@@ -63,15 +63,15 @@ export function claudeScreen(rows, typed = rows) {
   return { box, mode, model, use, choice: 0, picker: null, edge };
 }
 
-// the figures of our status line (claude/scripts/statusline.py: `$3.00 session / $1.50 today`, `5h 19% · wk 71%`, `🧠 50k (25%)`) and Claude's
+// the figures of our status line (claude/scripts/statusline.py: `$3.00 session`, `5h 19% · wk 71%`, `🧠 50k (25%)`) and Claude's
 // own count of background agents on its mode line (`· 1 agent`); a row that wraps in a narrow pane is read joined. null when none is there
 const CTX = /(\d+)k \((\d+)%\)/, AGENTS = /\b(\d+) (?:background )?(?:agents?|tasks?|shells?)\b/;
 /** @param {string} s the rows under the box, joined */
 export function usage(s) {
-  const cost = /\$(\d+(?:\.\d+)?) session/.exec(s), today = /\$(\d+(?:\.\d+)?) today/.exec(s), q = /\b5h (\d+)% · wk (\d+)%/.exec(s);
+  const cost = /\$(\d+(?:\.\d+)?) session/.exec(s), q = /\b5h (\d+)% · wk (\d+)%/.exec(s);
   const c = CTX.exec(s), a = AGENTS.exec(s);
   if (!cost && !q && !c && !a) return null;
-  return { cost: cost ? '$' + cost[1] : '', today: today ? '$' + today[1] : '', h5: q ? +q[1] : null, wk: q ? +q[2] : null,
+  return { cost: cost ? '$' + cost[1] : '', h5: q ? +q[1] : null, wk: q ? +q[2] : null,
     ctx: c ? c[1] + 'k' : '', pct: c ? +c[2] : null, agents: a ? +a[1] : 0 };
 }
 

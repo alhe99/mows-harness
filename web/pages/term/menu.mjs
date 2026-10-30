@@ -1,6 +1,6 @@
 // menu.mjs — the actions sheet behind the strip's ⋯ (2026-10-23): what the old key bar carried that is not a key. Copy text (the overlay),
 // paste, attach a file; text size; the terminal theme; detach from tmux; restart the pane (two taps: whatever runs is killed); the Archify diagrams (/diagrams); all sessions.
-// The session's workflow runs on top (flows.mjs). Touch, or a mouse and esc on a desktop (2026-10-30). The backdrop, a chosen action, or a drag down (dragToClose) closes it.
+// The session's workflow runs on top (flows.mjs). Touch only. The backdrop, a chosen action, or a drag down (dragToClose) closes it.
 import { dragToClose, el, icon, say } from './dom.mjs';
 
 const I = {
@@ -50,6 +50,5 @@ export function menu({ clip, att, fonts, theme, detach, restart, title, top = nu
   };
   const close = () => { sheet.classList.remove('open'); shut?.(); };
   document.body.append(sheet);
-  addEventListener('keydown', e => { if (e.key === 'Escape' && sheet.classList.contains('open')) { e.preventDefault(); e.stopImmediatePropagation(); close(); } }, true); // a keyboard (a desktop); first, so the composer's field does not send it on to Claude
   return { open, close };
 }

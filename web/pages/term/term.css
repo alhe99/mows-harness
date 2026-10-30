@@ -109,7 +109,7 @@ background:var(--c-surface);border:1px solid var(--c-line2);border-radius:16px;p
 #ccmode{height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-mut);font:500 12px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;flex:none}
 #ccmode[hidden]{display:none}
 /* the model chip: the name, its effort dim, a chevron (it opens a picker); it gives way first when the row is short, and to the draft chip */
-#ccmodel{flex:0 1 auto;min-width:0;height:30px;padding:0 8px 0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);
+#ccmodel,#ccagents{flex:0 1 auto;min-width:0;height:30px;padding:0 8px 0 10px;border-radius:999px;border:1px solid var(--c-line2);background:var(--c-bg);color:var(--c-fg2);
 font:500 12px var(--c-mono);display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden}
 #ccmodel span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 #ccmodel small{flex:0 100 auto;min-width:0;overflow:hidden;font:400 11px var(--c-mono);color:var(--c-dim)} /* the effort gives way before the name */
@@ -144,17 +144,15 @@ font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflo
 #ccmode:hover,#ccmodel:hover,#ccadd:hover,#ccagents:hover{background:var(--c-raised)}
 /* Claude's figures, from our status line (claudebox.mjs usage): background agents as a chip, then quota, cost and the context ring at the end of
    the bar, before send. Only where the bar has the room for them */
-#ccagents{flex:none;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);
-background:var(--c-bg);color:var(--c-fg2);font:500 12px var(--c-mono);white-space:nowrap}
+#ccagents{flex:none;padding:0 10px;gap:6px} /* the model chip's look (above) */
 #ccagents::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--c-warn)}
-#ccuse{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px;font:12px var(--c-mono);color:var(--c-dim);white-space:nowrap}
+#ccuse{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px;font:12px var(--c-mono);color:var(--c-mut);white-space:nowrap}
 #ccagents[hidden],#ccuse[hidden],#ccuse>span[hidden]{display:none}
-#ccuse>:not([hidden])~:not([hidden]){padding-left:10px;border-left:1px solid var(--c-raised)}
-#ccuse .c,#ccuse .x{color:var(--c-mut)}
+#ccuse>:not([hidden])~*{padding-left:10px;border-left:1px solid var(--c-raised)}
 #ccuse .x{display:inline-flex;align-items:center;gap:6px}
 #ccuse svg{width:16px;height:16px;transform:rotate(-90deg)}
-#ccuse svg circle{fill:none;stroke-width:3.5}
-#ccuse svg .bg{stroke:var(--c-raised)} #ccuse svg .rg{stroke:var(--c-fg2)} #ccuse .x.hi svg .rg{stroke:var(--c-warn)}
+#ccuse svg circle{fill:none;stroke-width:3}
+#ccuse svg .bg{stroke:var(--c-raised)} #ccuse svg .rg{stroke:var(--c-fg2)}
 #ccuse:not([hidden])~#ccsend{margin-left:0}
 @media(max-width:600px){#ccuse{display:none!important} #ccuse~#ccsend{margin-left:auto!important}}
 @media(max-width:480px){#ccagents{display:none!important}} /* a phone: the model chip keeps the room; agents are in the ⋯ sheet */
@@ -165,16 +163,16 @@ body.dk{display:flex;flex-direction:column}
 body.dk #terminal-wrap{flex:1;min-height:0;height:auto}
 body.dk #terminal-container{display:flex;flex-direction:column;justify-content:flex-end;height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
 body.dk #terminal-container .terminal{flex:none;height:auto}
-body.dk #ccdock{display:block;flex:none;padding:2px 12px 12px;background:var(--c-bg)}
+body.dk #ccdock{display:block;flex:none;padding:2px 12px 12px}
 body.dk #cccomp{border-radius:16px;padding:8px 8px 8px 14px;gap:4px}
 body.dk #ccmsg{font-size:14px;height:30px;min-height:30px;padding:5px 0}
 body.dk #cccomp .cbar{margin-left:-6px;gap:6px}
 body.dk :is(#ccmode,#ccmodel,#ccagents){height:28px;border-radius:8px}
 body.dk #ccmode.bad{border-color:rgba(255,100,103,.3);background:rgba(255,100,103,.1)}
-body.dk #ccadd{width:28px;height:28px;border-radius:8px}
-body.dk #ccsend{width:32px;height:32px}
-body.dk #cccomp .dchip{height:28px}
-body.dk :is(#ccpick,#ccsheet) .pan{max-width:640px;margin:0 auto} /* Claude's pickers: a panel over the bar, not a full-width sheet */
+body.dk .pan{max-width:640px;margin:0 auto}
+/* the backdrop: on a phone the sheet covers Claude's own drawing of the picker; a desktop's narrow panel left it readable on both sides (the
+   user, 2026-10-30: "I saw the old menu behind"), so it is dark and blurred */
+body.dk #ccpick{background:rgba(9,9,11,.82);backdrop-filter:blur(10px)} /* Claude's pickers: a panel over the bar, not a full-width sheet */
 
 /* status overlay and toast */
 #ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:999px;background:var(--c-raised);border:1px solid var(--c-line2);
