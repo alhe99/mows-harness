@@ -146,7 +146,12 @@ setTimeout(() => requestAnimationFrame(() => {
   } catch { /* a beacon is best effort */ }
 }), 900);
 
-client.start();
+// A /grid tab restored hidden (every tab but the shown one after the app restarts) has no box yet: fit() skips it and xterm keeps its 80×24,
+// which the socket's first frame then gave the whole session (tmux, window-size latest), Claude redrawing its conversation at 80 columns
+// (2026-10-30). Its socket waits for a size instead
+const sized = () => !!(wrap.offsetWidth && wrap.offsetHeight);
+if (sized()) client.start();
+else { const ro = new ResizeObserver(() => { if (!sized()) return; ro.disconnect(); fit(true); client.start(); }); ro.observe(wrap); }
 
 // WebGL, Chromium only and lazy: iOS and WebKit keep the DOM renderer. A lost context drops back to it.
 if (/\b(Chrome|Edg)\//.test(navigator.userAgent) && !/CriOS|FxiOS/.test(navigator.userAgent)) {

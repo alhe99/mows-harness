@@ -20,6 +20,7 @@ const b = await pw[type].launch(), ctx = await b.newContext({ viewport: { width:
 await ctx.route(u => new URL(u).hostname === 'mows.test', r => {
   const p = new URL(r.request().url()).pathname;
   if (p === '/grid') return r.fulfill({ contentType: 'text/html', body: PARENT });
+  if (p === '/grid-hidden') return r.fulfill({ contentType: 'text/html', body: PARENT.replace('<div id="gw">', '<div id="gw" hidden>') }); // a tab restored hidden
   if (p === '/term/') return r.fulfill({ contentType: 'text/html; charset=utf-8', body: PAGE });
   if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
   if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : 'text/javascript' }); }
@@ -38,6 +39,13 @@ await page.evaluate(() => { document.getElementById('gw').hidden = false; }); aw
 const shown = sizes.slice(first.length + hidden.length);
 await page.setViewportSize({ width: 1000, height: 700 }); await sleep(1500);
 const resized = sizes.slice(first.length + hidden.length + shown.length);
+// a tab that LOADS hidden (every tab but the shown one after the app restarts): its first frame used to claim xterm's 80×24 (2026-10-30)
+await page.setViewportSize({ width: 1400, height: 900 });
+const k = sizes.length;
+await page.goto('http://mows.test/grid-hidden'); await sleep(2000);
+const loadHidden = sizes.slice(k);
+await page.evaluate(() => { document.getElementById('gw').hidden = false; }); await sleep(2000);
+const loadShown = sizes.slice(k + loadHidden.length);
 await b.close();
 
 let fail = 0;
@@ -47,6 +55,8 @@ check('the attach sends the pane its full size', first.length >= 1 && first.ever
 check('hidden: no size sent (no 9×5)', hidden.length === 0, hidden);
 check('shown again: nothing to resize', shown.length === 0, shown);
 check('a real window resize still reaches the pty, smaller', resized.length >= 1 && +resized.at(-1).split('x')[0] < +first.at(-1).split('x')[0], resized);
+check('loaded hidden: no size sent', loadHidden.length === 0, loadHidden);
+check('loaded hidden, then shown: its full size', loadShown.length >= 1 && loadShown.every(big), loadShown);
 check('no page errors', errs.length === 0, errs);
 console.log(`term-hidden-tab ${type}: ${fail ? fail + ' FAIL' : 'ALL PASS'}`);
 process.exit(fail ? 1 : 0);
