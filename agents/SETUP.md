@@ -42,9 +42,11 @@ everything else — budget, refusal, run records, escalation, triggers. Design:
 | `deny` | `[]` | permission rules passed as `--disallowedTools`; deny wins over allow |
 
 Permissions: the run and every chat turn pass the file's top-level `permissionMode` (default `dontAsk`:
-allowed calls always run, anything else is refused — no classifier judgement) and run with hooks off,
-because a PreToolUse hook that answers `allow` (rtk's rewriter does, for every command it rewrites)
-outranks deny rules. Command patterns go in `mows.allow`/`mows.deny`, never in frontmatter
+allowed calls always run, anything else is refused — no classifier judgement) and run with **all hooks
+off**: a PreToolUse hook that answers `allow` (rtk's rewriter does, for every command it rewrites)
+outranks deny rules. Hooks therefore protect nothing in a `mows-agent` session; the write guard is
+`permissionMode: dontAsk` plus `mows.allow`/`mows.deny` (kit-managed agents load `project,local`
+settings instead, so a hook in the workdir's `.claude/settings*.json` still runs for them). Command patterns go in `mows.allow`/`mows.deny`, never in frontmatter
 `disallowedTools`: a `Bash(...)` entry there removes the whole Bash tool (lint error).
 
 ## Kit-managed agents — the `kit:` block (mowa-kit)
@@ -279,8 +281,10 @@ runner only stops it once `claude` has already exited on its own; the dashboard 
   or the runner can guarantee.** Lint only WARNs when a `webhook` trigger (untrusted, no human
   in the loop) is paired with write tools; it has no way to warn about Bash-as-write at all.
 - **Precondition, not a caveat: an agent with shell capability that reads a repository
-  accepting outside contributions needs a `PreToolUse` write-deny hook, configured before the
-  agent ever runs.** The exposure is untrusted content landing in the working directory —
+  accepting outside contributions needs a write guard configured before the agent ever runs** —
+  for a `mows:` agent that is `permissionMode: dontAsk` with an explicit `mows.allow` (hooks are off
+  in its sessions, see Manifest); for a kit-managed agent, a `PreToolUse` write-deny hook in the
+  workdir's project settings. The exposure is untrusted content landing in the working directory —
   commit messages, PR bodies, issue text the agent reaches with `git log`/`git show`/`gh`/
   grep — not the trigger type: a `webhook` trigger's request body is authenticated and then
   discarded (see Webhook setup), so it is never fed to the agent and is not the input channel

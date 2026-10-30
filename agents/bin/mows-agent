@@ -124,9 +124,10 @@ perm_args(){
   local pm a d; pm=$(mget "$1" .permissionMode); a=$(jq -r '.mows.allow // [] | join(",")' <<<"$1")
   d=$(jq -r '.mows.deny // [] | join(",")' <<<"$1")
   [ "$pm" = bypassPermissions ] && pm=dontAsk   # lint refuses it; chat does not lint, so refuse it here too
-  # No hooks: the operator's PreToolUse hooks (rtk) answer permissionDecision "allow" for every command they
-  # rewrite, which outranks deny rules and the mode — `gh pr merge` ran under a deny rule until this. kit gets
-  # the same effect from --setting-sources project,local.
+  # No hooks: the operator's PreToolUse hook (rtk) answers permissionDecision "allow" for every command it
+  # rewrites, which outranks deny rules and the mode — `gh pr merge` ran under a deny rule until this. Narrower
+  # cuts fail: kit's --setting-sources project,local also hides the user-level agent file from --agent, and
+  # RTK_DISABLED does not quiet the hook. So an agent's write guard is dontAsk + mows.deny, never a hook (SETUP.md).
   PERM_ARGS=(--permission-mode "${pm:-dontAsk}" --settings '{"disableAllHooks":true}')
   [ -n "$a" ] && PERM_ARGS+=(--allowedTools "$a")
   [ -n "$d" ] && PERM_ARGS+=(--disallowedTools "$d")
@@ -869,18 +870,18 @@ cmd_residents(){
 # ---------- model: the dashboard's Small/Medium/High selector writes here ----------
 # Aliases, never a pinned id: `sonnet` is always the newest Sonnet the CLI knows, so a level never goes stale.
 cmd_model(){
-  local n=${1:-} lv=${2:-} f tmp
+  local n=${1:-} lv=${2:-} f tmp d
   [ -n "$n" ] || die "usage: mows-agent model <name> [haiku|sonnet|opus]"
   f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"
   if [ -z "$lv" ]; then mget "$(meta "$f")" .model; return 0; fi
   case $lv in haiku|sonnet|opus) ;; *) die "level must be haiku, sonnet or opus (got $lv)";; esac
-  tmp=$(mktemp) || die "mktemp failed"
+  d=$(mktemp -d) || die "mktemp failed"; tmp="$d/new"   # private 0700 dir: no guessable names in /tmp
   # Only the frontmatter's own `model:` line (between the first two ---); added after name: if absent.
   awk -v lv="$lv" 'NR==1&&/^---$/{fm=1;print;next} fm&&/^---$/{if(!done)print "model: " lv;fm=0;done=1;print;next}
-    fm&&/^model:/&&!done{print "model: " lv;done=1;next} {print}' "$f" > "$tmp" || { rm -f "$tmp"; die "rewrite failed"; }
-  cp "$f" "$tmp.bak"; cat "$tmp" > "$f"; rm -f "$tmp"   # cat >: keeps the file's inode, owner and any symlink
-  if ! cmd_lint "$n" >/dev/null 2>&1; then cat "$tmp.bak" > "$f"; rm -f "$tmp.bak"; die "lint failed after setting model; restored"; fi
-  rm -f "$tmp.bak"; event "$n" "model set: $lv"; echo "$n: model $lv"
+    fm&&/^model:/&&!done{print "model: " lv;done=1;next} {print}' "$f" > "$tmp" || { rm -rf "$d"; die "rewrite failed"; }
+  cp "$f" "$d/orig"; cat "$tmp" > "$f"   # cat >: keeps the file's inode, owner and any symlink
+  if ! cmd_lint "$n" >/dev/null 2>&1; then cat "$d/orig" > "$f"; rm -rf "$d"; die "lint failed after setting model; restored"; fi
+  rm -rf "$d"; event "$n" "model set: $lv"; echo "$n: model $lv"
 }
 
 # ---------- dispatch ----------
