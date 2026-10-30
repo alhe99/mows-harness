@@ -89,6 +89,8 @@ body.ccboot #ccload{display:grid;gap:4px;position:absolute;left:10px;right:10px;
 /* 16 px: iOS zooms the page into a smaller field on focus */
 #ccmsg{width:100%;box-sizing:border-box;height:36px;min-height:36px;max-height:120px;resize:none;border:0;outline:0;background:none;color:var(--c-fg);font:16px/1.5 var(--c-sans);padding:6px 0;margin:0}
 #ccmsg::placeholder{color:var(--c-dim)}
+/* empty: one line (its min-height), whatever height was measured for text before; an emptied field kept two lines (the user, 2026-10-30) */
+#ccmsg:placeholder-shown{height:0!important}
 /* the "/" menu, over the terminal above the field */
 #cccomp{position:relative}
 #cccmds{position:absolute;left:0;right:0;bottom:calc(100% + 6px);max-height:min(46vh,340px);overflow-y:auto;overscroll-behavior:contain;
@@ -141,20 +143,19 @@ font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflo
 #ccsend{margin-left:auto;flex:none;width:36px;height:36px;border-radius:50%;border:0;padding:0;background:var(--c-raised);color:var(--c-dim);display:grid;place-items:center}
 #cccomp.has #ccsend{background:var(--c-ok);color:#04130d}
 #ccsend svg{width:17px;height:17px}
-#ccmode:hover,#ccmodel:hover,#ccadd:hover,#ccagents:hover{background:var(--c-raised)}
+.cbar>button:not(#ccsend):hover{background:var(--c-raised)}
 /* Claude's figures, from our status line (claudebox.mjs usage): background agents as a chip, then quota, cost and the context ring at the end of
    the bar, before send. Only where the bar has the room for them */
 #ccagents{flex:none;padding:0 10px;gap:6px} /* the model chip's look (above) */
 #ccagents::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--c-warn)}
-#ccuse{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px;font:12px var(--c-mono);color:var(--c-mut);white-space:nowrap}
+#ccuse{flex:1;justify-content:flex-end;display:flex;align-items:center;gap:10px;font:12px var(--c-mono);color:var(--c-mut);white-space:nowrap}
 #ccagents[hidden],#ccuse[hidden],#ccuse>span[hidden]{display:none}
 #ccuse>:not([hidden])~*{padding-left:10px;border-left:1px solid var(--c-raised)}
 #ccuse .x{display:inline-flex;align-items:center;gap:6px}
 #ccuse svg{width:16px;height:16px;transform:rotate(-90deg)}
 #ccuse svg circle{fill:none;stroke-width:3}
 #ccuse svg .bg{stroke:var(--c-raised)} #ccuse svg .rg{stroke:var(--c-fg2)}
-#ccuse:not([hidden])~#ccsend{margin-left:0}
-@media(max-width:600px){#ccuse{display:none!important} #ccuse~#ccsend{margin-left:auto!important}}
+@media(max-width:600px){#ccuse{display:none!important}} /* send keeps its margin-left:auto; shown, the figures take the room before it */
 @media(max-width:480px){#ccagents{display:none!important}} /* a phone: the model chip keeps the room; agents are in the ⋯ sheet */
 
 /* a desktop (body.dk, term.mjs): the page is a column as on a phone, the terminal over the composer bar (design A, 2026-10-30); no key bar.
