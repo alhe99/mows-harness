@@ -5,7 +5,7 @@ model: sonnet
 effort: high
 tools: [Read, Glob, Grep, Bash]
 disallowedTools: [Write, Edit, WebFetch, NotebookEdit]
-permissionMode: default
+permissionMode: dontAsk
 maxTurns: 40
 memory: user
 mows:

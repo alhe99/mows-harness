@@ -5,7 +5,7 @@ model: sonnet
 effort: high
 tools: [Read, Glob, Grep, "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git rev-parse:*)", "Bash(git rev-list:*)", "Bash(git status:*)"]
 disallowedTools: [Write, Edit, WebFetch, NotebookEdit]
-permissionMode: default
+permissionMode: dontAsk
 maxTurns: 40
 memory: user
 kit:

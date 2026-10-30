@@ -195,6 +195,20 @@ chk "lint: chat_turns 0 rejected"          'mows-agent lint chatt0 2>&1 | grep -
 chk "lint: chat_turns non-int rejected"    'mows-agent lint chattx 2>&1 | grep -q "chat_turns"'
 mkagent "$A/bypass.md" "$MOWS_BLOCK_OK" "permissionMode: bypassPermissions"
 chk "lint: bypassPermissions forbidden"   'mows-agent lint bypass 2>&1 | grep -q "bypassPermissions is forbidden"'
+mkagent "$A/permdef.md" "$MOWS_BLOCK_OK" "permissionMode: default"
+chk "lint: permissionMode default rejected (not a CLI mode)" 'mows-agent lint permdef 2>&1 | grep -q "no longer a CLI mode"'
+mkagent "$A/bashdeny.md" "$(sed 's/^disallowedTools: .*//' <<<"$MOWS_BLOCK_OK")" 'permissionMode: dontAsk'
+sed -i 's/^disallowedTools: .*/disallowedTools: [Write, "Bash(gh pr merge:*)"]/' "$A/bashdeny.md"
+chk "lint: Bash(...) in disallowedTools rejected"  'mows-agent lint bashdeny 2>&1 | grep -q "removes Bash entirely"'
+mkagent "$A/permrules.md" "$(printf '%s\n  allow: ["Bash(gh pr review:*)"]\n  deny: ["Bash(gh pr merge:*)", "Bash(git push:*)"]' "$MOWS_BLOCK_OK")" 'permissionMode: auto'
+chk "lint: mows.allow/deny accepted"      'mows-agent lint permrules'
+mkagent "$A/permbad.md" "$(printf '%s\n  deny: "Bash(gh pr merge:*)"' "$MOWS_BLOCK_OK")"
+chk "lint: mows.deny must be a list"      'mows-agent lint permbad 2>&1 | grep -q "mows.deny must be a list"'
+mows-agent model permrules opus >/dev/null 2>&1
+chk "model: sets the frontmatter model"    '[ "$(mows-agent model permrules)" = opus ] && [ "$(grep -c "^model:" "$A/permrules.md")" = 1 ]'
+chk "model: rejects an unknown level"      '! mows-agent model permrules gpt5 && [ "$(mows-agent model permrules)" = opus ]'
+chk "model: body untouched"                'grep -qx "You are a test agent." "$A/permrules.md"'
+rm "$A"/{permdef,bashdeny,permbad}.md
 mkagent "$A/unknownkey.md" "$(printf '%s\n  bogus_key: 1' "$MOWS_BLOCK_OK")"
 chk "lint: unknown mows key"              'mows-agent lint unknownkey 2>&1 | grep -q "mows.bogus_key: unknown key"'
 mkagent "$A/badprofile.md" "$(sed 's/profile: default/profile: nope/' <<<"$MOWS_BLOCK_OK")"
@@ -322,6 +336,16 @@ chk "args: --max-budget-usd 1.5"              'grep -A1 -x -- "--max-budget-usd"
 chk "args: --max-turns 40"                    'grep -A1 -x -- "--max-turns" "$CLAUDE_ARGS_FILE" | grep -qx 40'
 chk "args: --strict-mcp-config, no mcp file"  'grep -qx -- "--strict-mcp-config" "$CLAUDE_ARGS_FILE" && ! grep -qx -- "--mcp-config" "$CLAUDE_ARGS_FILE"'
 chk "args: never --dangerously-skip"          '! grep -q dangerously "$CLAUDE_ARGS_FILE"'
+chk "args: --permission-mode dontAsk when unstated" 'grep -A1 -x -- "--permission-mode" "$CLAUDE_ARGS_FILE" | grep -qx dontAsk'
+chk "args: hooks off (a hook allow outranks deny)"  'grep -qx -- "{\"disableAllHooks\":true}" "$CLAUDE_ARGS_FILE"'
+chk "args: no allow/deny flags without mows rules"  '! grep -qx -- "--allowedTools" "$CLAUDE_ARGS_FILE" && ! grep -qx -- "--disallowedTools" "$CLAUDE_ARGS_FILE"'
+mows-agent run permrules >/dev/null 2>&1
+chk "args: permissionMode from the file"            'grep -A1 -x -- "--permission-mode" "$CLAUDE_ARGS_FILE" | grep -qx auto'
+chk "args: mows.allow -> --allowedTools"            'grep -A1 -x -- "--allowedTools" "$CLAUDE_ARGS_FILE" | grep -qx "Bash(gh pr review:\*)"'
+chk "args: mows.deny -> --disallowedTools, joined"  'grep -A1 -x -- "--disallowedTools" "$CLAUDE_ARGS_FILE" | grep -qx "Bash(gh pr merge:\*),Bash(git push:\*)"'
+mows-agent chat permrules "hi" >/dev/null 2>&1
+chk "chat: same permission flags as a run"          'grep -A1 -x -- "--permission-mode" "$CLAUDE_ARGS_FILE" | grep -qx auto && grep -qx -- "--disallowedTools" "$CLAUDE_ARGS_FILE"'
+mows-agent run good >/dev/null 2>&1
 chk "args: task is the manifest task"         'grep -qx "do the thing" "$CLAUDE_ARGS_FILE"'
 chk "args: run context appended"              'grep -q "run_id:" "$CLAUDE_ARGS_FILE" && grep -q "never ask questions" "$CLAUDE_ARGS_FILE"'
 chk "env: CLAUDE_CONFIG_DIR = profile dir"    'grep -qx "CLAUDE_CONFIG_DIR=$HOME/.claude" "$CLAUDE_ARGS_FILE"'

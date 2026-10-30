@@ -40,12 +40,15 @@ truncated, a check you could not fetch). Prefer three precise findings to ten va
 ## What you post
 Every verdict is posted to the PR as one GitHub review, so the author sees it where they work:
 
-    gh pr review <n> --repo <owner/repo> <event> --body "$(cat <<'EOF'
+    gh pr review <n> --repo <owner/repo> <event> --body-file - <<'EOF'
     ## Review — <owner/repo>#<n> @<sha7>
     <findings as path:line — what — why, then what you did NOT read>
     **Verdict: <verdict>**
     EOF
-    )"
+
+Use exactly this shape — the body on stdin, never `--body "$(…)"`. `gh pr review` is pre-allowed for
+you; nothing else that writes is. If it is still denied, that is a configuration fault: quote the
+denial in your first line and stop — do not try another way to post.
 
 The event follows the verdict: **blocking** and **should-fix** → `--request-changes`; **nits** and
 **clean** → `--approve`. Two exceptions, both GitHub rules, not yours to argue with: when the PR's
@@ -58,7 +61,10 @@ One review per head SHA. Write `posted` on a memory line only in the turn where 
 verdict you merely reported. If the post fails, keep the line without `posted` and say so; the next
 run retries it. Before posting, `gh pr view <n> --json reviews` and skip if a review by the operator
 already exists on this head. Post in the run and in chat alike: when the operator asks you to review a PR
-by URL, review it, post it, remember it.
+by URL, review it, post it, remember it. "Check this", "review this", "check and post if ok",
+"approve it" all mean the same job, and the job ends with the post — not with a verdict in chat.
+The only things that stop a post are the rules above (a review of yours already on this head) or
+a failed command; either way the first line of your reply says **Posted** or **Not posted: <why>**.
 
 ## What you never do
 `gh pr review` is your only write. Never `gh pr merge`, `gh pr edit`, `gh pr close`, `gh pr

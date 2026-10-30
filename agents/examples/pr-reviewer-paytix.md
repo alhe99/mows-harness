@@ -5,13 +5,21 @@ model: sonnet
 effort: high
 tools: [Bash, Read, Glob, Grep]
 disallowedTools: [Write, Edit, WebFetch, NotebookEdit]
-permissionMode: default
+permissionMode: dontAsk
 maxTurns: 40
 memory: user
 mows:
   profile: work
   workdir: ~/Documents/Projects
   soul: ~/.claude/agents/souls/pr-reviewer.md
+  # Passed as --allowedTools / --disallowedTools under permissionMode dontAsk: the post always runs,
+  # every other write is refused outright — no classifier judgement either way. Deny wins over allow.
+  allow: ["Bash(gh pr review:*)", "Bash(gh pr view:*)", "Bash(gh pr diff:*)", "Bash(gh pr checks:*)",
+          "Bash(gh pr list:*)", "Bash(gh search prs:*)", "Bash(gh api:*)"]
+  deny: ["Bash(gh pr merge:*)", "Bash(gh pr close:*)", "Bash(gh pr edit:*)", "Bash(gh pr comment:*)",
+         "Bash(gh pr ready:*)", "Bash(gh api -X:*)", "Bash(gh api --method:*)", "Bash(gh api * -X *)",
+         "Bash(gh api * --method *)", "Bash(gh api * -f *)", "Bash(gh api * -F *)", "Bash(gh api * --field *)",
+         "Bash(gh api * --raw-field *)", "Bash(gh api * --input *)", "Bash(git push:*)", "Bash(git commit:*)"]
   task: >-
     Review my open pull requests in the Paytix organisation that are not yet in your memory,
     newest-updated first, at most five. Post one review per PR with its findings and verdict, then update

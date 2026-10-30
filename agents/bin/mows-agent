@@ -4,6 +4,7 @@
 # run records, escalation, triggers. Spec: docs/superpowers/specs/2026-09-15-agents-layer-design.md
 #   mows-agent lint <name>|--all · run <name> [task…] · list · last <name> · logs <name> [run_id] [--raw]
 #              chat <name> [--stream] <message…>|--history|--clear · prune · render <name>|--all · residents [--json]
+#              model <name> [haiku|sonnet|opus]
 # Exit (run): 0 done · 3 failed · 4 budget_exceeded · 5 stalled · 6 refused · 64 usage
 set -uo pipefail
 CFG="$HOME/.config/mows-agents/config"; [ -f "$CFG" ] && . "$CFG"
@@ -114,6 +115,23 @@ all_agents(){ # name<TAB>file, sorted; same resolved-path dedupe as agent_file (
 }
 meta(){ "$META" json "$1"; }
 mget(){ jq -r "$2 // empty" <<<"$1"; }
+# Permission flags for one claude call, from the agent file. --agent alone does NOT apply the file's
+# permissionMode to the session (verified 2026-10-30: the profile's defaultMode won, so reviewers ran in
+# bypassPermissions), and a Bash(...) pattern in frontmatter disallowedTools removes Bash outright. So the
+# mode is passed explicitly — dontAsk when unstated: allowed calls always run, anything else is refused,
+# no classifier judgement — and command-level rules travel as mows.allow / mows.deny.
+perm_args(){
+  local pm a d; pm=$(mget "$1" .permissionMode); a=$(jq -r '.mows.allow // [] | join(",")' <<<"$1")
+  d=$(jq -r '.mows.deny // [] | join(",")' <<<"$1")
+  [ "$pm" = bypassPermissions ] && pm=dontAsk   # lint refuses it; chat does not lint, so refuse it here too
+  # No hooks: the operator's PreToolUse hooks (rtk) answer permissionDecision "allow" for every command they
+  # rewrite, which outranks deny rules and the mode — `gh pr merge` ran under a deny rule until this. kit gets
+  # the same effect from --setting-sources project,local.
+  PERM_ARGS=(--permission-mode "${pm:-dontAsk}" --settings '{"disableAllHooks":true}')
+  [ -n "$a" ] && PERM_ARGS+=(--allowedTools "$a")
+  [ -n "$d" ] && PERM_ARGS+=(--disallowedTools "$d")
+  return 0
+}
 expand_tilde(){ case $1 in "~") echo "$HOME";; "~/"*) echo "$HOME/${1#\~/}";; *) echo "$1";; esac; }
 check_version(){ # --permission-prompts / --max-budget-usd need >= 2.1.217
   local v; v=$("$CLAUDE_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
@@ -381,10 +399,11 @@ cmd_run(){
   STARTED=$(date -Is); CPID=0; write_status working
   cd "$WORKDIR" || die "cannot cd $WORKDIR"
   local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+  perm_args "$M"
   # setsid: claude leads its own process group so a stall kill takes its MCP/tool children too
   # (kill_tree reads the real pgid rather than assuming it equals $!)
   CLAUDE_CONFIG_DIR="$CFGDIR" setsid "$CLAUDE_BIN" -p --agent "$AGENT" \
-      --output-format stream-json --verbose --permission-prompts none \
+      --output-format stream-json --verbose --permission-prompts none "${PERM_ARGS[@]}" \
       --max-budget-usd "$USD_RUN" --max-turns "$MAXT" --strict-mcp-config "${mcp[@]}" \
       --append-system-prompt "$(run_context)" -- "$task" \
       > "$RUNDIR/stream.jsonl" 2> "$RUNDIR/stderr.log" < /dev/null &
@@ -557,6 +576,7 @@ cmd_chat(){
   local cfg; cfg=$(cfg_of "$(mget "$m" .mows.profile)")
   local wd; wd=$(expand_tilde "$(mget "$m" .mows.workdir)")
   local mcp=(); [ -n "$MCP_CONFIG" ] && mcp=(--mcp-config "$MCP_CONFIG")
+  perm_args "$m"
 
   mkdir -p "$dir"
   # Built BEFORE this turn's message is appended below, so the history the model sees is the
@@ -622,7 +642,7 @@ cmd_chat(){
     done < <({ cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
               --agent "$n" --append-system-prompt "$ctx" \
               --output-format stream-json --verbose --include-partial-messages \
-              --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+              --permission-prompts none "${PERM_ARGS[@]}" --strict-mcp-config "${mcp[@]}" \
               --max-turns "$CHAT_TURNS_EFF" --max-budget-usd "$CHAT_USD_EFF" \
               -- "$msg" 2>/dev/null; echo "__mows_rc=$?"; })
     if [ "$rc" != 0 ] || [ "$sawres" = 0 ]; then
@@ -651,7 +671,7 @@ cmd_chat(){
   local out rc
   out=$(cd "$wd" && CLAUDE_CONFIG_DIR="$cfg" timeout "$CHAT_TIMEOUT_SEC" "$CLAUDE_BIN" -p \
         --agent "$n" --append-system-prompt "$ctx" --output-format json \
-        --permission-prompts none --strict-mcp-config "${mcp[@]}" \
+        --permission-prompts none "${PERM_ARGS[@]}" --strict-mcp-config "${mcp[@]}" \
         --max-turns "$CHAT_TURNS_EFF" --max-budget-usd "$CHAT_USD_EFF" \
         -- "$msg" 2>/dev/null)
   rc=$?
@@ -846,6 +866,23 @@ cmd_residents(){
     | while IFS=$'\t' read -r a b c d e f; do printf '%-10s %-9s %-32s %-9s %-18s %s\n' "$a" "$b" "$c" "$d" "$e" "$f"; done
 }
 
+# ---------- model: the dashboard's Small/Medium/High selector writes here ----------
+# Aliases, never a pinned id: `sonnet` is always the newest Sonnet the CLI knows, so a level never goes stale.
+cmd_model(){
+  local n=${1:-} lv=${2:-} f tmp
+  [ -n "$n" ] || die "usage: mows-agent model <name> [haiku|sonnet|opus]"
+  f=$(agent_file "$n") || exit 64; [ -n "$f" ] || die "no agent named $n"
+  if [ -z "$lv" ]; then mget "$(meta "$f")" .model; return 0; fi
+  case $lv in haiku|sonnet|opus) ;; *) die "level must be haiku, sonnet or opus (got $lv)";; esac
+  tmp=$(mktemp) || die "mktemp failed"
+  # Only the frontmatter's own `model:` line (between the first two ---); added after name: if absent.
+  awk -v lv="$lv" 'NR==1&&/^---$/{fm=1;print;next} fm&&/^---$/{if(!done)print "model: " lv;fm=0;done=1;print;next}
+    fm&&/^model:/&&!done{print "model: " lv;done=1;next} {print}' "$f" > "$tmp" || { rm -f "$tmp"; die "rewrite failed"; }
+  cp "$f" "$tmp.bak"; cat "$tmp" > "$f"; rm -f "$tmp"   # cat >: keeps the file's inode, owner and any symlink
+  if ! cmd_lint "$n" >/dev/null 2>&1; then cat "$tmp.bak" > "$f"; rm -f "$tmp.bak"; die "lint failed after setting model; restored"; fi
+  rm -f "$tmp.bak"; event "$n" "model set: $lv"; echo "$n: model $lv"
+}
+
 # ---------- dispatch ----------
 case "${1:-}" in
   lint)  shift; cmd_lint "$@";;
@@ -857,5 +894,6 @@ case "${1:-}" in
   prune) cmd_prune;;
   render) shift; cmd_render "$@";;
   residents) shift; cmd_residents "$@";;
-  *) die "usage: mows-agent lint|run|chat|list|last|logs|prune|render|residents …";;
+  model) shift; cmd_model "$@";;
+  *) die "usage: mows-agent lint|run|chat|list|last|logs|prune|render|residents|model …";;
 esac

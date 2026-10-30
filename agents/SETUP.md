@@ -38,6 +38,14 @@ everything else — budget, refusal, run records, escalation, triggers. Design:
 | `merge.base` | `main` | base branch for `pr` |
 | `escalate.via` | `none` | `discord` posts refusals/failures to `DISCORD_WEBHOOK` |
 | `retention_days` | `30` | `mows-agent prune` deletes older run dirs (never `last`) |
+| `allow` | `[]` | permission rules passed as `--allowedTools`, e.g. `"Bash(gh pr review:*)"` |
+| `deny` | `[]` | permission rules passed as `--disallowedTools`; deny wins over allow |
+
+Permissions: the run and every chat turn pass the file's top-level `permissionMode` (default `dontAsk`:
+allowed calls always run, anything else is refused — no classifier judgement) and run with hooks off,
+because a PreToolUse hook that answers `allow` (rtk's rewriter does, for every command it rewrites)
+outranks deny rules. Command patterns go in `mows.allow`/`mows.deny`, never in frontmatter
+`disallowedTools`: a `Bash(...)` entry there removes the whole Bash tool (lint error).
 
 ## Kit-managed agents — the `kit:` block (mowa-kit)
 

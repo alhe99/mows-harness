@@ -25,7 +25,17 @@ export function runLabel(id, now = new Date()) {
   return `${y + mo + d === today ? '' : `${mo}-${d} `}${hh}:${mm}-${pid}`;
 }
 
-function Telemetry({ policy }) {
+// Level → model alias. Aliases, not pinned ids: each always resolves to the newest model of its size, so a level never goes stale.
+const LEVELS = [['haiku', 'Small'], ['sonnet', 'Medium'], ['opus', 'High']];
+// A plain form POST like Run now: mows-agent rewrites the file's `model:` line, re-lints it and the 303 brings the page back.
+// A model the file names outside the three (a pinned claude-* id, inherit) lights no segment rather than a wrong one.
+const Level = ({ name, model }) => h('form', { class: 'vsw lvl', method: 'post', action: '/a/agent-model', 'aria-label': 'Model level' },
+  h('input', { type: 'hidden', name: 'name', value: name }),
+  h('input', { type: 'hidden', name: 'back', value: `${base()}/agents/${name}` }),
+  LEVELS.map(([v, label]) => h('button', { key: v, name: 'level', value: v, class: model === v ? 'on' : null,
+    'aria-pressed': model === v ? 'true' : 'false', title: `${label}: ${v}` }, label)));
+
+function Telemetry({ policy, name }) {
   if (!policy) return h('p', { class: 'muted' }, 'Its agent file could not be read, so nothing here is known.');
   const b = policy.budget || {};
   // Budget and Daily Cap are each built from two fields that can independently be missing, so they are assembled rather than
@@ -35,6 +45,7 @@ function Telemetry({ policy }) {
                   b.max_turns != null && `${b.max_turns} turns`].filter(Boolean).join(' / ');
   const daily = b.usd_per_day != null ? `$${(+b.usd_per_day).toFixed(2)} per day` : null;
   return h('div', { class: 'tgrid' },
+    h('div', { class: 'trow' }, h('span', { class: 'tk' }, 'Model'), h(Level, { name, model: policy.model })),
     h(Row, { k: 'Profile', v: policy.profile }), h(Row, { k: 'Soul', v: policy.soul }), h(Row, { k: 'Target', v: policy.workdir }),
     h(Row, { k: 'Trigger', v: policy.triggerTypes?.join(', ') }), h(Row, { k: 'Budget', v: budget }), h(Row, { k: 'Daily Cap', v: daily }));
 }
@@ -83,7 +94,7 @@ export default function Agent({ name }) {
         // the exact inversion capability.mjs exists to prevent. Inheriting agents get no hint line.
         chat && h(chat.Chat, { name, events: d.events, tools: d.capability?.effective?.length ? d.capability.effective.join(', ') : null })),
       h('aside', { class: 'agside' },
-        h('div', { class: 'card' }, h('h2', { class: 'cl' }, 'Agent Telemetry'), h(Telemetry, { policy: d.capability?.policy })),
+        h('div', { class: 'card' }, h('h2', { class: 'cl' }, 'Agent Telemetry'), h(Telemetry, { policy: d.capability?.policy, name })),
         // The comp's Capabilities card is chips plus one amber line. Ours is the full honest panel, which runs ~1000px and pushed
         // Recent Runs off the fold. The answer is NOT to trim the panel — it is the safety surface — so the comp's summary is
         // surfaced (chips and the strongest authority, both from the SAME structured fields the panel renders) and the full report

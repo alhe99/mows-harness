@@ -27,11 +27,13 @@ except ImportError:  # python3-yaml is a cloud-init dependency on Ubuntu server;
     print("mows-agent-meta: python3 yaml module missing: sudo apt-get install -y python3-yaml", file=sys.stderr)
     sys.exit(2)
 
-PERM = {"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+# The CLI's --permission-mode choices (2.1.x). "default" is gone: an agent file still saying it is ignored and the
+# session falls to auto, whose classifier decides each write by judgement (it denied gh pr review 6 times in 25 turns).
+PERM = {"manual", "auto", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
 MEM = {"user", "project", "local"}
 ISO = {"worktree", "none"}
 MODEL_ALIAS = {"sonnet", "opus", "haiku", "inherit"}
-MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days", "soul"}
+MOWS_KEYS = {"profile", "workdir", "task", "budget", "triggers", "merge", "escalate", "retention_days", "soul", "allow", "deny"}
 BUDGET_KEYS = {"usd_per_run", "max_turns", "usd_per_day", "quota_floor", "chat_usd", "chat_turns"}
 SOUL_MAX_BYTES = 16384  # a soul is a role, not a manual (spec 2026-09-20 D3)
 TRIGGER_TYPES = {"cron", "path", "webhook"}
@@ -192,6 +194,9 @@ def lint(path):
         E.append(f"memory must be one of {sorted(MEM)} (got {fm['memory']!r})")
     if fm.get("permissionMode") == "bypassPermissions":
         E.append("permissionMode: bypassPermissions is forbidden for agents (spec §7)")
+    elif fm.get("permissionMode") == "default":
+        E.append("permissionMode: default is no longer a CLI mode and is ignored (the session falls to auto); "
+                 "use dontAsk for a fixed allowlist, auto for classifier review, or manual")
     elif "permissionMode" in fm and fm["permissionMode"] not in PERM:
         E.append(f"permissionMode must be one of {sorted(PERM)} (got {fm['permissionMode']!r})")
     if "isolation" in fm and fm["isolation"] not in ISO:
@@ -205,6 +210,11 @@ def lint(path):
         E.append("tools must be a list or comma-separated string")
     if dis is None:
         E.append("disallowedTools must be a list or comma-separated string")
+    # A Bash(...) pattern in frontmatter disallowedTools removes the WHOLE Bash tool from the agent (verified
+    # 2026-10-30: the reviewer came up with Read/Glob/Grep only). Command-level denies belong in mows.deny.
+    for t in dis or []:
+        if isinstance(t, str) and t.startswith("Bash("):
+            E.append(f"disallowedTools: {t!r} removes Bash entirely; put command patterns in mows.deny")
     # "Read-only" from disallowedTools alone is a lie if the agent also has Bash or Task:
     # a shell writes fine through redirection, and Task can hand a subagent its own tools —
     # neither is stopped by disallowing Write/Edit on the parent (SETUP.md's safety posture).
@@ -239,6 +249,10 @@ def lint(path):
         return E, W
     for k in sorted(set(mows) - MOWS_KEYS):
         E.append(f"mows.{k}: unknown key (allowed: {sorted(MOWS_KEYS)})")
+    for k in ("allow", "deny"):
+        v = mows.get(k)
+        if v is not None and not (isinstance(v, list) and all(isinstance(x, str) and x and "," not in x for x in v)):
+            E.append(f"mows.{k} must be a list of permission rules without commas, e.g. \"Bash(gh pr review:*)\"")
     profiles = json.loads(os.environ.get("MOWS_PROFILES_JSON") or "{}")
     prof = mows.get("profile")
     if not prof:

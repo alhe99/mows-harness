@@ -2,7 +2,7 @@ import { promises as fsp, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { wireChatStream } from '../chat-stream.mjs';
-import { RUN_PATH, TMUX_HOME, readBody, runAs, sameOrigin, sh, shOk, userCmd } from '../core.mjs';
+import { RUN_PATH, TMUX_HOME, readBody, runAs, runAsCode, sameOrigin, sh, shOk, userCmd } from '../core.mjs';
 import { chatBroadcast, chatEnd } from '../sse.mjs';
 
 
@@ -202,6 +202,14 @@ export async function agentAction(req, res, act) {
     // manual `sudo install`), and `systemctl start` on a missing unit fails immediately.
     if (!(await shOk('systemctl', ['start', '--no-block', `mows-agent@${name}.service`]))) {
       res.writeHead(409); return res.end('could not start mows-agent@' + name + '.service — is the unit installed? see agents/SETUP.md Triggers');
+    }
+  }
+  else if (act === 'model') {
+    // The Small/Medium/High selector. mows-agent rewrites the one frontmatter line and re-lints, restoring the file on failure.
+    const lv = b.level || '';
+    if (!['haiku', 'sonnet', 'opus'].includes(lv)) { res.writeHead(400); return res.end('bad level'); }
+    if (await runAsCode([], `${TMUX_HOME}/.local/bin/mows-agent`, ['model', name, lv], 15000)) {
+      res.writeHead(409); return res.end('could not set the model for ' + name);
     }
   }
   else if (act === 'pause' || act === 'resume') {
