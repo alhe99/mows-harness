@@ -413,7 +413,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 0 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
-  await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.locator('#ccsend').click(); await sleep(900);
   s = await st(P);
   check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 0, [s, await twos(P)]);
   // the keyboard down and up again as iOS animates it, every painted frame recorded (the phone, 2026-10-23: "a glitch where in a second I saw
@@ -467,7 +467,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.locator('#ccprev .pv-x').click(); await sleep(100);
   check(`${tag} 4 a tap on the chip previews the attached image`, pv.on && pv.img.startsWith('blob:') && pv.cap.startsWith('[Image #1]') && !(await P.page.evaluate(() => document.getElementById('ccprev').classList.contains('on'))), pv);
   await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);
-  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.locator('#ccsend').click(); await sleep(900);
   s = await st(P);
   check(`${tag} 5 send with the image: one prompt "[Image #1] what is wrong here?", the chip clears`, F.last === '[Image #1] what is wrong here?' && !s.draft && s.two === 0, [s, F.last]);
   // attach, then take it back with the chip's ×: one ctrl+c, Claude's input is empty, the chip goes, Claude is not asked to exit
@@ -505,7 +505,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     await P.page.locator('#cccmds .cmd', { hasText: '/effort' }).first().click(); await sleep(100);
     const after = await P.page.evaluate(() => ({ v: document.getElementById('ccmsg').value, open: !document.getElementById('cccmds').hidden, focus: document.activeElement?.id }));
     check(`${tag} 8 a tap puts "/effort " in the field, closes the menu, keeps the keyboard`, after.v === '/effort ' && !after.open && after.focus === 'ccmsg', after);
-    await P.page.keyboard.type('status'); await P.page.press('#ccmsg', 'Enter'); await sleep(700);
+    await P.page.keyboard.type('status'); await P.page.locator('#ccsend').click(); await sleep(700);
     check(`${tag} 8 send runs it in Claude: "/effort status"`, F.last === '/effort status', F.last);
   }
   // ---- writing (the phone, 2026-10-24: a message typed after using the ⋯ menu landed in Claude's box, and the box showed) ----
@@ -522,7 +522,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.keyboard.type(long, { delay: 5 }); await sleep(200);
   s = await st(P);
   check(`${tag} W1 typing a long message: every key in the field, nothing to the terminal, the field grows, no box`, (await P.page.inputValue('#ccmsg')) === long && sent() === n0 && s.two === two0, [sent() - n0, s]);
-  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.locator('#ccsend').click(); await sleep(900);
   check(`${tag} W1 send: Claude has the whole message`, F.last === long, F.last);
   // W2 xterm's own input is disabled while the field is the input: a focus from anywhere (the iOS keyboard bar's ^/v walks the page's text
   // fields) cannot type into Claude's box
@@ -559,7 +559,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} W4 a draft over several rows: hidden, on the chip, never two inputs`, s.draft.startsWith('a recalled prompt') && s.two === two0 && s.shown && s.taH >= 36, [s, await twos(P)]);
   await key(P, 'Esc'); await sleep(400);
   // W5 typing the next message while Claude works on the last one
-  await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(60);
+  await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(60);
   await P.page.keyboard.type('second while it works', { delay: 5 }); await sleep(300);
   s = await st(P);
   check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
@@ -570,7 +570,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   F.work = 3000;
   for (const early of [false, true]) {
     F.early = early;
-    await tapTerm(); await P.page.keyboard.type('a message sent by mistake', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
+    await tapTerm(); await P.page.keyboard.type('a message sent by mistake', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(500);
     const busy = F.scene, c0 = (F.inputs || []).length;
     await key(P, 'Esc'); await sleep(700);
     s = await st(P);
@@ -581,7 +581,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   }
   await P.page.evaluate(() => ((window.__qa.marks ||= {})['E2'] = Math.round(performance.now())));
   // a turn that ends by itself gives nothing back
-  await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(3600);
+  await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(3600);
   check(`${tag} E a turn that ends by itself: the field stays empty`, (await P.page.inputValue('#ccmsg')) === '' && F.last === 'a finished one', [await P.page.inputValue('#ccmsg'), F.last]);
   F.work = 0; F.early = false;
   await P.page.evaluate(() => ((window.__qa.marks ||= {})['M'] = Math.round(performance.now())));
@@ -668,11 +668,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   const pr = await P.page.evaluate(() => ({ sh: document.getElementById('cccomp').classList.contains('sh'), ac: document.getElementById('ccmsg').getAttribute('autocorrect') }));
   check(`${tag} S2 the \`!\` gone: prose again`, !pr.sh && pr.ac === 'on', pr);
   i0 = (F.inputs || []).length;
-  await P.page.fill('#ccmsg', '!ls -la'); await P.page.press('#ccmsg', 'Enter'); await sleep(600); s = await st(P);
+  await P.page.fill('#ccmsg', '!ls -la'); await P.page.locator('#ccsend').click(); await sleep(600); s = await st(P);
   check(`${tag} S3 sent as typed, Claude ran it in its shell mode, the field still the input`, F.ran === 'ls -la' && (F.inputs || []).slice(i0).join('').includes('!ls -la') && s.shown && s.two === 0, [F.ran, (F.inputs || []).slice(i0), s]);
   await P.page.fill('#ccmsg', '!'); await P.page.evaluate(() => document.getElementById('ccmsg').dispatchEvent(new Event('input'))); F.sh = true; F.redraw(); await sleep(500); s = await st(P);
   check(`${tag} S4 Claude's shell-mode box (its \`!\` prompt) is its box: the field stays, the chip says shell`, s.shown && s.chip === '! shell' && s.two === 0, s);
-  await P.page.fill('#ccmsg', '!pwd'); await P.page.press('#ccmsg', 'Enter'); await sleep(600);
+  await P.page.fill('#ccmsg', '!pwd'); await P.page.locator('#ccsend').click(); await sleep(600);
   check(`${tag} S5 already in shell mode, the field's \`!\` is not typed twice`, F.ran === 'pwd', F.ran);
   // R the ⋯ sheet's restart: the pane goes blank while Claude starts again (seconds, for a long conversation): the loader, not a black terminal
   // and the key bar, until Claude's box is back

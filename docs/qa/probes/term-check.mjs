@@ -456,11 +456,15 @@ async function composer() {
   let n = W.inputs().length;
   await W.page.fill('#ccmsg', 'add a probe for the composer');
   await W.page.press('#ccmsg', 'Enter'); await sleep(200);
-  check('return sends the text as one bracketed paste, then \\r', W.inputs().slice(n).join('|') === '\x1b[200~add a probe for the composer\x1b[201~|\r' && (await W.page.inputValue('#ccmsg')) === '', bytes(W.inputs().slice(n)));
+  check('phone: return is a line break in the field and sends nothing', W.inputs().length === n && (await W.page.inputValue('#ccmsg')) === 'add a probe for the composer\n'
+    && (await W.page.getAttribute('#ccmsg', 'enterkeyhint')) === 'enter', bytes(W.inputs().slice(n)));
+  await W.page.fill('#ccmsg', 'add a probe for the composer');
+  await W.page.locator('#ccsend').click(); await sleep(200);
+  check('the send button sends the text as one bracketed paste, then \\r', W.inputs().slice(n).join('|') === '\x1b[200~add a probe for the composer\x1b[201~|\r' && (await W.page.inputValue('#ccmsg')) === '', bytes(W.inputs().slice(n)));
   n = W.inputs().length;
   await W.page.fill('#ccmsg', 'line one'); await W.page.press('#ccmsg', 'Shift+Enter'); await W.page.type('#ccmsg', 'line two'); await W.page.locator('#ccsend').click(); await sleep(200);
   check('shift+return breaks the line inside the one paste; the send button sends', W.inputs().slice(n).join('|') === '\x1b[200~line one\rline two\x1b[201~|\r', bytes(W.inputs().slice(n)));
-  n = W.inputs().length; await W.page.press('#ccmsg', 'Enter'); await sleep(100);
+  n = W.inputs().length; await W.page.locator('#ccsend').click(); await sleep(100);
   check('an empty field sends nothing while Claude\'s box is hidden (no Enter into rows the user cannot see)', W.inputs().length === n, bytes(W.inputs().slice(n)));
   n = W.inputs().length; await W.page.locator('#ccmode').click(); await sleep(100);
   check('the mode chip sends shift+tab', W.inputs().slice(n).join('') === '\x1b[Z', bytes(W.inputs().slice(n)));
@@ -485,7 +489,7 @@ async function composer() {
   check('a box holding a draft stays hidden; the field shows it as the draft chip (one input)', s2.claude && /translateY/.test(s2.tf) && s2.shown && s2.ruleY >= s2.wrapBottom && s2.mode === '\u23f8 plan', s2);
   n1 = W.inputs().length; await W.page.locator('#ccsend').click(); await sleep(150);
   check('send with an empty field submits the draft alone (a bare \\r)', W.inputs().slice(n1).join('') === '\r', bytes(W.inputs().slice(n1)));
-  n1 = W.inputs().length; await W.page.fill('#ccmsg', 'what is this?'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);
+  n1 = W.inputs().length; await W.page.fill('#ccmsg', 'what is this?'); await W.page.locator('#ccsend').click(); await sleep(200);
   check('send with text appends it to the draft: one paste, then \\r', W.inputs().slice(n1).join('|') === '\x1b[200~what is this?\x1b[201~|\r', bytes(W.inputs().slice(n1)));
   // a shell: after the linger the field goes and the terminal is the one input
   W.out('\x1b[H\x1b[2Jdev@box:~$ '); await sleep(1700);
@@ -501,10 +505,17 @@ async function composer() {
   await draw(['● Bash(git push origin feat/x)', '', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', '[wt-a] 0:claude*']); 
   const s3 = await settle(x => x.ph === 'Pick a number, or ↑ ↓ then send…');
   check('a permission dialog: nothing hidden, the field asks for 1–3, no chip', s3.shown && !s3.tf && s3.ph === 'Pick a number, or ↑ ↓ then send…' && s3.mode === null, s3);
-  n = W.inputs().length; await W.page.fill('#ccmsg', '2'); await W.page.press('#ccmsg', 'Enter'); await sleep(200);
+  n = W.inputs().length; await W.page.fill('#ccmsg', '2'); await W.page.locator('#ccsend').click(); await sleep(200);
   check('a digit is sent alone: no paste, no Enter after it', W.inputs().slice(n).join('|') === '2', bytes(W.inputs().slice(n)));
   check('no page errors', W.errors.length === 0, W.errors);
   await shut(W);
+  // a desktop keyboard keeps return = send (the phone's line-break rule is coarse-pointer only). The field is hidden until a Claude screen
+  // is drawn, so the key is dispatched on it directly: the send path is the one that cancels return
+  const K = await open(URL_A, { phone: false });
+  const kd = await K.page.evaluate(() => { const ta = /** @type {HTMLTextAreaElement} */ (document.getElementById('ccmsg'));
+    const e = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }); ta.dispatchEvent(e); return { cancelled: e.defaultPrevented, hint: ta.getAttribute('enterkeyhint') }; });
+  check('desktop: return is the send key (cancelled, not a line break) and the key says send', kd.cancelled && kd.hint === 'send', kd);
+  await shut(K);
   const O = await open(URL_A + '&comp=off');
   check('?comp=off: no composer, the key bar stays', await O.page.evaluate(() => !document.getElementById('cccomp') && !!document.getElementById('cckb')));
   await shut(O);
