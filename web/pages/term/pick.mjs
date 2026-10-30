@@ -9,11 +9,16 @@
 // untick it: the text alone ticks it).
 // Claude's permission dialogs (perm, claudePerm, 2026-10-27): the question is the title, every row above the options as Claude drew it (a diff's
 // rows in its colours), scrolled to its end; a tap answers (the number; the folder-trust question's unnumbered options: arrows and Enter).
+// Claude's other panels (panel, claudePanel, 2026-10-30: /mcp, /config, /resume … read as the old terminal UI): the rows above the list as
+// Claude drew them, the list, a field for its search box (typed into Claude's as it changes), the keys of its keys line as buttons. A tap
+// moves the highlight one arrow at a time until it is on that row (a header or a row of two in between is no count to get wrong): Claude
+// stops on a row it skips, and the seeking with it. It never answers: Enter is a button.
 import { coarse, dragToClose, el, icon } from './dom.mjs';
 
 const KEYS = { Enter: '\r', Esc: '\x1b', Tab: '\t', Space: ' ' }, UP = '\x1b[A', DN = '\x1b[B';
 const CHECK = '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
-const keyOf = k => KEYS[k] ?? (/^[a-z0-9]$/i.test(k) ? k : ''); // a letter is typed; an arrow named in a hint (`↓ to select`) is not a key here
+// a letter is typed, Ctrl+A is ^A; an arrow named in a hint (`↓ to select`) is not a key here
+const keyOf = k => KEYS[k] ?? (/^[a-z0-9]$/i.test(k) ? k : /^ctrl\+[a-z]$/i.test(k) ? String.fromCharCode(k.toUpperCase().charCodeAt(5) - 64) : '');
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** @param {import('@xterm/xterm').Terminal} term */
@@ -21,6 +26,13 @@ export function picker(term) {
   const pan = el('div', { className: 'pan', role: 'dialog' }), wrap = el('div', { id: 'ccpick' }, pan);
   /** @type {any} */ let p = null;
   let shown = '', free = /** @type {string | null} */ (null), focusFree = false; // the free option's field: null shut, else what is typed in it (kept across redraws)
+  /** @type {any} */ let seek = null;
+  let sought = ''; // what the search field typed into Claude's
+  const step = () => { // one arrow on toward the row sought; done on it, past it (Claude skipped it) or when the highlight did not move
+    const i = p.opts.findLastIndex(o => o.on), t = p.opts.findIndex(o => o.label === seek.l && o.desc === seek.d), d = Math.sign(t - i);
+    if (t < 0 || !d || i === seek.i || seek.dir && d !== seek.dir) { seek = null; return; }
+    seek.i = i; seek.dir = d; term.input(d > 0 ? DN : UP);
+  };
   const press = k => { const s = p && p.keys.some(x => x.key === k) ? keyOf(k) : ''; if (s) term.input(s); };
   wrap.addEventListener('click', e => { if (e.target === wrap) press('Esc'); });
   // a swipe down closes it, as a native sheet: Claude's esc, as Cancel (the phone, 2026-10-27). It goes at once and stays shut for SHUT ms
@@ -38,20 +50,21 @@ export function picker(term) {
     const k = next ? JSON.stringify(next) : '';
     if (k === shown) return;
     shown = k; p = next;
-    if (!p) { wrap.classList.remove('open'); free = null; return; }
+    if (!p) { wrap.classList.remove('open'); free = null; seek = null; sought = ''; return; }
+    if (seek) step();
     // a phone's keyboard down: the sheet is the input. A desktop's field keeps the focus and sends Claude its keys (composer.mjs)
     if (!wrap.classList.contains('open') && coarse()) /** @type {any} */ (document.activeElement)?.blur?.();
     const old = pan.querySelector('.opts'), scroll = old ? old.scrollTop : -1;
     const at = p.opts.find(o => o.on) || p.opts[0], first = p.opts[0], last = p.opts.at(-1);
     // the highlight's order: on a multi-select question the Submit row sits after the free option, before `Chat about this`
-    const fr = p.opts.find(o => o.free), rank = n => (p.submit && fr && n > fr.n ? n + 1 : n), from = p.submit?.on && fr ? fr.n + 1 : rank(at.n);
+    const fr = p.opts.find(o => o.free), rank = n => (p.submit && fr && n > fr.n ? n + 1 : n), from = p.submit?.on && fr ? fr.n + 1 : rank(at?.n ?? 1); // a panel with no list (/status): no row
     const go = to => term.input((to > from ? DN : UP).repeat(Math.abs(to - from)));
     const move = n => go(rank(n));
-    const own = !p.perm && p.keys.some(x => x.key !== 'Enter' && x.key !== 'Esc' && keyOf(x.key));
+    const own = p.panel || !p.perm && p.keys.some(x => x.key !== 'Enter' && x.key !== 'Esc' && keyOf(x.key));
     const opts = el('div', { className: 'opts', role: 'listbox', 'aria-label': p.title });
     if (p.ask && p.text) opts.append(el('p', { className: 'q' }, p.text)); // the question is what is answered: whole, scrolling with the options
-    if (p.perm) opts.append(el('pre', { className: 'pv' }, ...p.body.map(r => el('span', { className: /^\s*\d+ -/.test(r) ? 'del' : /^\s*\d+ \+/.test(r) ? 'add' : '' }, r + '\n'))));
-    if (first.up) opts.append(btn('more', 'Show earlier', () => move(first.n - 1)));
+    if (p.body?.length) opts.append(el('pre', { className: 'pv' }, ...p.body.map(r => el('span', { className: /^\s*\d+ -/.test(r) ? 'del' : /^\s*\d+ \+/.test(r) ? 'add' : '' }, r + '\n'))));
+    if (first?.up) opts.append(btn('more', 'Show earlier', () => move(first.n - 1)));
     const typed = o => o.free && !/^Type something\.?$/.test(o.label);
     const send = o => {
       const t = (free || '').replace(/\s+/g, ' ').trim(); if (!t) return;
@@ -61,6 +74,7 @@ export function picker(term) {
     for (const o of p.opts) {
       const b = btn('opt' + (o.on ? ' on' : '') + (o.cur ? ' cur' : '') + (o.box ? ' box' : '') + (o.free && !typed(o) ? ' ph' : ''), '', () => {
         if (o.free) { free = free === null ? (typed(o) ? o.label : '') : null; focusFree = true; const k = shown; shown = ''; show(JSON.parse(k)); return; } // the field, open or shut
+        if (p.panel) { seek = { l: o.label, d: o.desc, i: -2, dir: 0 }; step(); return; }
         if (own) { for (const x of opts.querySelectorAll('.opt')) x.classList.toggle('on', x === b); move(o.n); return; }
         if (o.n <= 9 && !p.arrows) term.input(String(o.n)); else { move(o.n); setTimeout(() => term.input('\r'), 60); }
       }, [el('span', { className: 'ol' }, o.free && !typed(o) ? 'Type something…' : o.label), o.desc ? el('span', { className: 'od' }, o.desc) : null,
@@ -75,19 +89,28 @@ export function picker(term) {
         opts.append(el('div', { className: 'free' }, ta, btn('pri', 'Send', () => send(o))));
       }
     }
-    if (last.down || p.more) opts.append(btn('more', ['Show', /^\+(\d+)/.exec(p.more)?.[1], 'more'].filter(Boolean).join(' '), () => move(last.n + 1)));
-    const esc = p.keys.some(x => x.key === 'Esc'), acts0 = [];
+    if (last?.down || p.more) opts.append(btn('more', ['Show', /^\+(\d+)/.exec(p.more)?.[1], 'more'].filter(Boolean).join(' '), () => move(last.n + 1)));
+    const esc = p.keys.find(x => x.key === 'Esc'), acts0 = [];
+    let srch = null;
+    if (p.search !== null && p.search !== undefined) {
+      const q = /** @type {HTMLInputElement} */ (el('input', { type: 'search', placeholder: p.search, value: sought, 'aria-label': p.search, enterKeyHint: 'search' }));
+      q.addEventListener('input', () => { // what changed, as keys: the common start kept, the rest erased, the new rest typed
+        let c = 0; while (c < sought.length && sought[c] === q.value[c]) c++;
+        term.input('\x7f'.repeat(sought.length - c) + q.value.slice(c)); sought = q.value;
+      });
+      srch = el('div', { className: 'free' }, q);
+    }
     if (p.submit) acts0.push(btn('pri', 'Submit', () => { go(fr ? fr.n + 1 : rank(last.n) + 1); term.input('\r'); }));
     const acts = own ? p.keys.filter(x => x.key !== 'Esc' && keyOf(x.key)).sort((a, b) => +(a.key === 'Enter') - +(b.key === 'Enter'))
       .map(x => btn(x.key === 'Enter' ? 'pri' : '', cap(x.label), () => press(x.key))) : acts0;
     pan.setAttribute('aria-label', p.title);
-    pan.classList.toggle('ask', !!(p.ask || p.perm));
-    const had = document.activeElement?.closest?.('#ccpick .free'); // typing in the field when Claude redrew: it stays where it was
+    pan.classList.toggle('ask', !!(p.ask || p.perm || p.panel));
+    const had = document.activeElement?.closest?.('#ccpick .free'), hadQ = document.activeElement?.matches?.('#ccpick input'); // typing in the field when Claude redrew: it stays where it was
     pan.replaceChildren(...[ // replaceChildren writes a null as the text "null"
       el('div', { className: 'grab' }),
-      el('div', { className: 'hd' }, el('b', {}, p.title), esc ? btn('', 'Cancel', () => press('Esc')) : null),
+      el('div', { className: 'hd' }, el('b', {}, p.title), esc ? btn('', cap(esc.label), () => press('Esc')) : null),
       p.text && !p.ask ? el('p', { className: 'tx' }, p.text) : null,
-      opts,
+      srch, opts,
       p.adjust ? el('div', { className: 'adj' }, btn('', '‹', () => term.input('\x1b[D')), el('span', {}, p.adjust), btn('', '›', () => term.input('\x1b[C'))) : null,
       acts.length ? el('div', { className: 'acts' }, ...acts) : null].filter(x => x));
     pan.querySelector('.adj button')?.setAttribute('aria-label', 'less');
@@ -97,7 +120,9 @@ export function picker(term) {
     if (scroll >= 0) opts.scrollTop = scroll;
     else if (p.perm) opts.scrollTop = opts.scrollHeight; // a dialog opens on its end: the command or the diff, the options
     const fta = /** @type {HTMLTextAreaElement | null} */ (opts.querySelector('.free textarea'));
-    if (fta && (had || focusFree)) { fta.focus(); fta.setSelectionRange(fta.value.length, fta.value.length); fta.scrollIntoView({ block: 'nearest' }); }
+    const fq = /** @type {HTMLInputElement | null} */ (pan.querySelector('.free input'));
+    if (fq && hadQ) fq.focus();
+    else if (fta && (had || focusFree)) { fta.focus(); fta.setSelectionRange(fta.value.length, fta.value.length); fta.scrollIntoView({ block: 'nearest' }); }
     else opts.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
     focusFree = false;
   }

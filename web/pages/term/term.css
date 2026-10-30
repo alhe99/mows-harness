@@ -313,7 +313,7 @@ padding:10px 12px;border:1px solid transparent;border-radius:14px;background:non
 #ccpick .adj{flex:none;display:flex;align-items:center;gap:8px;margin-top:10px;padding:5px;border:1px solid var(--c-line);border-radius:14px;background:var(--c-bg)}
 #ccpick .adj span{flex:1;text-align:center;font:500 13.5px var(--c-mono);color:var(--c-fg2)}
 #ccpick .adj button{flex:none;width:44px;height:36px;padding:0;border-radius:10px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:500 18px var(--c-sans)}
-#ccpick .acts{flex:none;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;margin-top:12px}
+#ccpick .acts{flex:none;display:flex;flex-wrap:wrap;gap:8px;margin-top:12px} #ccpick .acts button{flex:1 1 30%} /* a panel's keys (/resume: five) wrap, three to a row */
 #ccpick .acts button{min-height:46px;padding:6px 10px;border-radius:14px;border:1px solid var(--c-line2);background:var(--c-raised);color:var(--c-fg);font:600 14px/1.25 var(--c-sans)}
 #ccpick .acts .pri{background:var(--c-ok);border-color:var(--c-ok);color:#04130d}
 #ccpick :is(.adj button,.acts button,.more):active{filter:brightness(1.15)}
@@ -327,7 +327,7 @@ padding:10px 12px;border:1px solid transparent;border-radius:14px;background:non
 #ccpick .opt .ck svg{width:14px;height:14px;color:#04130d} #ccpick .opt.cur .ck{background:var(--c-ok);border-color:var(--c-ok)}
 #ccpick .ask .opt.box.cur .ol{color:var(--c-fg)}
 #ccpick .free{display:flex;gap:8px;align-items:flex-end;padding:2px 2px 8px 12px}
-#ccpick .free textarea{flex:1;min-width:0;min-height:44px;box-sizing:border-box;padding:10px 12px;border-radius:14px;border:1px solid var(--c-ok-bd);background:var(--c-bg);color:var(--c-fg);font:16px/1.35 var(--c-sans);resize:none}
+#ccpick .free :is(textarea,input){flex:1;min-width:0;min-height:44px;box-sizing:border-box;padding:10px 12px;border-radius:14px;border:1px solid var(--c-ok-bd);background:var(--c-bg);color:var(--c-fg);font:16px/1.35 var(--c-sans);resize:none}
 #ccpick .free button{flex:none;min-height:44px;padding:0 16px;border-radius:14px;border:1px solid var(--c-ok);background:var(--c-ok);color:#04130d;font:600 14px var(--c-sans)}
 @media(prefers-reduced-motion:no-preference){
 #ccpick{transition:opacity .2s ease,display .25s allow-discrete}

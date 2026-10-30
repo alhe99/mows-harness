@@ -40,10 +40,10 @@ export function claudeScreen(rows, typed = rows) {
   // words are read from the box down: above it is conversation, where they are only words.
   const tail = rows.slice(Math.max(0, n - 16)), under = box ? rows.slice(box.top) : tail;
   // Claude on a fresh screen (the folder-trust question at startup) draws from the top: its keys line can sit above the bottom rows
-  const fresh = !box && claudePerm(rows);
-  if (fresh || DIALOG.test(tail.join('\n')) || under.some(r => ASK.test(r))) {
-    const picker = claudePicker(rows) || fresh || claudePerm(rows);
-    return { box: null, mode: null, model: null, choice: choices(tail) || (picker?.opts.length ?? 0), picker, edge: -1 };
+  const fresh = !box && claudePerm(rows), panel = !box && claudePanel(rows);
+  if (fresh || panel || DIALOG.test(tail.join('\n')) || under.some(r => ASK.test(r))) {
+    const picker = claudePicker(rows) || fresh || claudePerm(rows) || panel || null;
+    return { box: null, mode: null, model: null, choice: choices(tail) || (picker ? picker.opts.length || 1 : 0), picker, edge: -1 };
   }
   // edge: the lowest rule with a prompt row under it, bottom rule or not. Mid-resize tmux shows the pane cut to the new size before Claude
   // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
@@ -75,6 +75,67 @@ export function usage(s) {
     ctx: c ? c[1] + 'k' : '', pct: c ? +c[2] : null, agents: a ? +a[1] : 0 };
 }
 
+// under a dialog's keys only tmux's status line, and in a session with a name Claude's rule that carries it (`──── Agents concept test ─`, under
+// questions, pickers and permission dialogs alike; 2026-10-30, the desktop: a question in a named session stayed in Claude's drawing)
+const below = (/** @type {string[]} */ rows, /** @type {number} */ f) => rows.slice(f + 1, -1).some(x => x.trim() && !RULE.test(x));
+
+// Claude's other panels (/mcp /config /resume /hooks /memory /rewind /tasks /theme /status /effort /permissions /add-dir /fast; live captures
+// at 80 columns, 2026-10-30: they read as the old terminal UI). A ▔ line, a title (the tabs, on a tabbed one), rows, maybe a search box
+// (`│ ⌕ Search… │`), maybe a list: ❯ the highlighted row, whose column is the list's (no ❯ yet on /permissions: its numbered rows), the rows
+// indented deeper its description, `↑ 8 more` / `↓ 37 more` its window; and the keys line last (`Enter to view · Esc to close`, wrapped over
+// two rows on a narrow screen). Rows above the list are shown as Claude drew them, rows under it are left out (/theme's preview). The sheet
+// (pick.mjs) moves the highlight with arrows and answers with the keys of the line: a misread row moves it somewhere else, never picks
+const PTOP = /^\s*▔{8,}/, SEARCH = /^\s*│\s*⌕\s*(.*?)\s*│$/, FIELD = /^\s*│\s*(?:⌕\s*)?(.*?)\s*│$/, MORE_ROW = /^\s*([↑↓])\s+(\d+) more\b/;
+/** @param {string[]} rows */
+export function claudePanel(rows) {
+  rows = rows.map(r => r.trimEnd());
+  let f = rows.length - 2;
+  while (f > 0 && (!rows[f].trim() || RULE.test(rows[f]))) f--;
+  if (f < 1 || !/\bEsc to \S/.test(rows[f])) return null;
+  // a narrow pane wraps it over more rows (/resume at 44 columns: four), at its indent: `Ctrl+A to show all projects · Ctrl+B` / `to only …`
+  let foot = rows[f].trim();
+  const at = rows[f].length - rows[f].trimStart().length;
+  while (f > 1 && rows[f - 1].length - rows[f - 1].trimStart().length === at && /(?:^|\s)to \S|·$/.test(rows[f - 1].trim()) && !/^\s*[❯↑↓]/.test(rows[f - 1])) foot = rows[--f].trim() + ' ' + foot;
+  const r = rows.findLastIndex((x, i) => i < f && PTOP.test(x));
+  if (r < 0 || !rows[r + 1].trim()) return null; // the title right under the line, as Claude draws it
+  const mid = rows.slice(r + 1, f), ind = (/** @type {string} */ x) => x.length - x.trimStart().length;
+  // never a permission question's words, nor Claude's box (as for a picker: a command shown above can draw anything)
+  if (mid.some((x, i) => ASK.test(x) || RULE.test(x) && PROMPT.test(mid[i + 1] || ''))) return null;
+  const sel = mid.findLastIndex(x => /^\s*❯\s/.test(x)), num = mid.find(x => /^\s*(?:[↑↓]\s+)?\d+\.\s/.test(x));
+  const col = sel >= 0 ? mid[sel].indexOf('❯') : num ? ind(num) - 2 : -1;
+  // the rows' column: the text's after ❯, or past a mark column when one row at most has a mark in it (/theme: `✔ Auto` the current one, the
+  // others where its text is, the highlighted one too: `❯   Dark mode`); /mcp and /plugin mark every row (`✔`, `◯`), and the rows deeper
+  // than that are their descriptions
+  const item = col + 2, alt = col >= 0 && mid.filter(x => /^[^\w\s] \S/.test(x.slice(item)) && ind(x) >= col && !MORE_ROW.test(x)).length <= 1 ? item + 2 : item;
+  const p = { title: '', text: '', body: /** @type {string[]} */ ([]), opts: /** @type {any[]} */ ([]), more: '', adjust: '', search: /** @type {string | null} */ (null),
+    keys: /** @type {{ key: string, label: string }[]} */ ([]), panel: true, ask: false, submit: null };
+  let up = false;
+  for (const [i, x] of mid.entries()) { // a field: a boxed row under `╭` (/resume's search `⌕ Search…`, /add-dir's `Directory path…`)
+    const t = x.trim(), o = p.opts.at(-1), m = MORE_ROW.exec(x), q = /^\s*╭/.test(mid[i - 1] || '') && FIELD.exec(x);
+    if (!p.title) { p.title = t.replace(/\s{2,}/g, ' · '); continue; }
+    if (q) { p.search = q[1]; continue; }
+    if (/^\s*[╭╰]/.test(x)) continue;
+    if (col >= 0 && m && ind(x) >= col) { if (m[1] === '↑') up = true; else p.more = '+' + m[2]; continue; }
+    if (col >= 0 && t && (/[❯↑↓]/.test(x[col]) && x[col + 1] === ' ' || ind(x) === item || ind(x) === alt)) {
+      const [label, ...rest] = x.slice(col + 1).trim().replace(/^\d+\.\s+/, '').split(/\s{2,}/);
+      p.opts.push({ n: p.opts.length + 1, label: label.replace(/^✔ /, ''), desc: rest.join(' · '), on: x[col] === '❯', cur: /^✔ /.test(label), up: x[col] === '↑', down: x[col] === '↓', box: false });
+    } else if (o && t && ind(x) > alt) o.desc += (o.desc ? ' · ' : '') + t;
+    else if (!o) p.body.push(x);
+  }
+  if (up && p.opts[0]) p.opts[0].up = true;
+  const cut = Math.min(...p.body.filter(x => x.trim()).map(ind));
+  p.body = p.body.map(x => x.slice(cut));
+  while (p.body.length && !p.body[0].trim()) p.body.shift();
+  while (p.body.length && !p.body.at(-1)?.trim()) p.body.pop();
+  for (const k of foot.split(' · ')) {
+    const m = /^\s*(\S+) to (.+?)\s*$/.exec(k); if (!m) continue;
+    if (m[1] === '←/→') p.adjust = m[2].charAt(0).toUpperCase() + m[2].slice(1);
+    else p.keys.push({ key: m[1].replace(/\/.*$/, ''), label: m[2] }); // `Enter/↓ to select`: Enter
+  }
+  if (p.opts.length && !p.keys.some(k => k.key === 'Enter')) p.keys.push({ key: 'Enter', label: 'open' }); // /resume names no Enter: it opens the row
+  return p.title ? p : null;
+}
+
 // Claude's pickers (/model and the like), as drawn at 46 columns on 2026-10-24: a line (▔), a title, its prose, the numbered options (❯ the
 // highlighted one, ✔ the current one, ↑ / ↓ on the first / last when the list's window hides more, `… +3 models` under it), the
 // descriptions in a column of their own, wrapped; a `←/→ to adjust` line; the keys (`Enter to set as default · s to use this session only ·
@@ -94,11 +155,11 @@ const HEAD = /^\s*(?:←\s+)?[☐☒✔]\s+\S/, BOX = /^\[([ ✔])\]\s+(.*)$/, S
 export function claudePicker(rows) {
   rows = rows.map(r => r.trimEnd()); // the lengths measure the column: a row as xterm reads it keeps the spaces tmux cleared it with
   let f = rows.findLastIndex((x, i) => /Esc to cancel/.test(x) || /^\s*cancel\b/.test(x) && /Esc to$/.test(rows[i - 1] || ''));
-  const end = f < 0 ? rows.findLastIndex((x, i) => i < rows.length - 1 && x.trim()) : -1; // a page with no keys: its last row, if a question's
+  const end = f < 0 ? rows.findLastIndex((x, i) => i < rows.length - 1 && x.trim() && !RULE.test(x)) : -1; // a page with no keys: its last row, if a question's
   if (f < 0) f = end;
   if (f < rows.length - 16 || f < 0) return null;
   const r = rows.findLastIndex((x, i) => i < f && TOP.test(x) && !OPT.test(rows[i + 1] || '')); // not the line over `Chat about this`
-  if (r < 0 || !rows[r + 1]?.trim() || rows.slice(f + 1, -1).some(x => x.trim())) return null;
+  if (r < 0 || !rows[r + 1]?.trim() || below(rows, f) || rows.slice(r, f).some(x => SEARCH.test(x))) return null;
   const ask = HEAD.test(rows[r + 1]);
   if (end >= 0 && !ask) return null;
   // a permission question is never a picker, whatever its rows hold: a command shown in one can carry a ─ line and a `☐ …` row (security
@@ -149,7 +210,7 @@ const NUM = /^\s{0,3}(❯)?\s*(\d)\.\s+(\S.*)$/, ITEM = /^\s{0,3}(❯)?\s+(\S.*)
 export function claudePerm(rows) {
   rows = rows.map(r => r.trimEnd());
   let f = rows.findLastIndex((x, i) => /Esc to cancel/.test(x) || /^\s*cancel\b/.test(x) && /Esc to$/.test(rows[i - 1] || ''));
-  if (f < 0 || rows.slice(f + 1, -1).some(x => x.trim())) return null; // nothing under the keys but tmux's line
+  if (f < 0 || below(rows, f)) return null; // nothing under the keys but tmux's line
   const foot = /^\s*cancel\b/.test(rows[f]) ? rows[f - 1] + ' ' + rows[f].trim() : rows[f];
   if (/^\s*cancel\b/.test(rows[f])) f--;
   let e = f - 1;

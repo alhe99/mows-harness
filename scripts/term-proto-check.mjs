@@ -279,5 +279,145 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   check('claudeScreen: a session name in the top rule is still the box', s.box?.top === 1 && s.box.empty && s.use?.agents === 1, s);
 }
 
+// a named session draws its name in a rule under Claude's dialogs too, and Claude's other panels (/theme, /resume, /status, /permissions) are
+// sheets of their own: live captures at 80 columns, 2026-10-30 (the desktop: a question in a named session stayed in Claude's drawing)
+{
+  const ask = [
+    "─".repeat(80),
+    " ☐ Size limit",
+    "",
+    "│ Should the size limit be raised? Raising it lets larger files through, but it",
+    "│ also increases memory use and the risk of slow requests. Which change do you",
+    "│ want?",
+    "",
+    "❯ 1. Raise to 25 MB",
+    "     A moderate increase that covers most larger files without big memory cost.",
+    "  2. Raise to 50 MB",
+    "     A large increase for heavy uploads, with more memory and timeout risk.",
+    "  3. Keep current limit",
+    "     No change; leave the existing size limit in place.",
+    "  4. Type something.",
+    "─".repeat(80),
+    "  5. Chat about this",
+    "",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    "─".repeat(58) + " Agents concept test ─",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const perm = [
+    "─".repeat(80),
+    " Bash command",
+    " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\"",
+    " below",
+    " Create the permission-check file in /tmp",
+    "╌".repeat(80),
+    " touch /tmp/uit2-perm-check",
+    "╌".repeat(80),
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   2. Yes, and always allow access to /tmp from this project",
+    "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+    "   4. No",
+    "",
+    " Esc to cancel · Tab to amend",
+    "─".repeat(58) + " Agents concept test ─",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const theme = [
+    "▔".repeat(59) + " ◐ medium · /effort ▔",
+    "   Theme",
+    "",
+    "   Choose the text style that looks best with your terminal",
+    "",
+    "   ❯ ✔ Auto (match terminal)",
+    "       Dark mode",
+    "       Light mode",
+    "       Dark mode (colorblind-friendly)",
+    "       Light mode (colorblind-friendly)",
+    "     ↓ 3 more",
+    "",
+    "   " + "╌".repeat(74),
+    "    1  function greet() {",
+    "    2 -  console.log(\"Hello, World!\");",
+    "    2 +  console.log(\"Hello, Claude!\");",
+    "    3  }",
+    "   " + "╌".repeat(74),
+    "    Syntax theme: Monokai Extended (ctrl+t to disable)",
+    "",
+    "   Enter to select · Esc to cancel",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const resume = [
+    "▔".repeat(59) + " ◐ medium · /effort ▔",
+    "   Resume session",
+    "   ╭" + "─".repeat(72) + "╮",
+    "   │ ⌕ Search…                                                              │",
+    "   ╰" + "─".repeat(72) + "╯",
+    "     mows-harness",
+    "",
+    "   ❯ Owl story",
+    "     5 days ago · feat/term-cockpit · 735KB",
+    "",
+    "     Ctrl+A to show all projects · Ctrl+B to only show current branch · Space",
+    "     to preview · Ctrl+R to rename · Type to search · Esc to cancel",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const status = [
+    "▔".repeat(59) + " ◐ medium · /effort ▔",
+    "   Settings  Status   Config   Usage   Stats",
+    "",
+    "   Version:           2.1.314",
+    "   Session name:      Agents concept test",
+    "   Session ID:        00000000-0000-0000-0000-000000000000",
+    "   Session kind:      interactive",
+    "   Peer address:      uds:/tmp/cc-socks/1.sock",
+    "   cwd:               ~/project",
+    "   Login method:      Claude Team account",
+    "   Organization:      example",
+    "   Email:             dev@example.com",
+    "",
+    "   Model:             haiku (claude-haiku-5-5)",
+    "   MCP servers:       14 connected, 1 need auth · /mcp",
+    "   Setting sources:   User settings, Project local settings,",
+    "                      Enterprise managed settings (file)",
+    "   Auto mode server:  Disabled",
+    "",
+    "   Esc to cancel",
+    "",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const perms = [
+    "▔".repeat(59) + " ◐ medium · /effort ▔",
+    "   Permissions  Recently blocked   Allow   Ask   Deny   Auto mode",
+    "    Workspace",
+    "",
+    "   Claude Code won't ask before using allowed tools.",
+    "   ╭" + "─".repeat(47) + "╮",
+    "   │ ⌕ Search…                                     │",
+    "   ╰" + "─".repeat(47) + "╯",
+    "",
+    "     1.  Add a new rule…",
+    "     2.  Bash(claude-rc close:*)",
+    "     3.  Bash(claude-rc listeners)",
+    "     4.  Bash(claude-rc open:*)",
+    "     5.  Bash(claude-rc set-effort:*)",
+    "     6.  Bash(claude-rc set-model:*)",
+    "     7.  Bash(claude-rc switch:*)",
+    "     8.  Bash(doppler *)",
+    "     9.  Bash(doppler secrets:*)",
+    "   ↓ 10. Bash(gh gist create:*)",
+    "",
+    "   ←/→ to switch · ↓ to select · Esc to cancel",
+    "[cc-default-uit2:bash*                      \"x\" 05:31 30-Oct-26"];
+  const q = claudeScreen(ask).picker;
+  check('claudePicker: a question in a named session (its name rule under the keys) is still the question', q?.ask && q.title === 'Size limit' && q.opts.length === 5 && q.opts[3].free && q.opts[4].label === 'Chat about this', q);
+  const d = claudeScreen(perm).picker;
+  check('claudePerm: a permission dialog in a named session is still the dialog', d?.perm && d.opts.length === 4 && d.opts[0].on && d.body.includes(' touch /tmp/uit2-perm-check'), d);
+  const t = claudeScreen(theme).picker;
+  check('claudePanel: /theme: its list under a marked row (✔ the current one), its window, its keys', t?.panel && t.title === 'Theme' && t.opts.map(o => o.label).join() === 'Auto (match terminal),Dark mode,Light mode,Dark mode (colorblind-friendly),Light mode (colorblind-friendly)' && t.opts[0].on && t.opts[0].cur && t.more === '+3' && t.keys.map(k => k.key).join() === 'Enter,Esc', t);
+  const r = claudeScreen(resume).picker;
+  check('claudePanel: /resume: its search box, the keys line wrapped over two rows, Enter added (it names none)', r?.panel && r.search === 'Search…' && r.opts.some(o => o.on && o.label === 'Owl story') && r.keys.map(k => k.key).join() === 'Ctrl+A,Ctrl+B,Space,Ctrl+R,Type,Esc,Enter', r);
+  const st = claudeScreen(status).picker, sc = claudeScreen(status);
+  check('claudePanel: /status: no list, its rows as Claude drew them, still a dialog (the field stays)', st?.panel && !st.opts.length && st.body.some(x => x.startsWith('Version:')) && sc.choice === 1, st);
+  const pm = claudeScreen(perms).picker;
+  check('claudePanel: /permissions: its numbered rows with no highlight yet are its list, not numbers to type (a digit goes to its search)', pm?.panel && pm.opts[0].label === 'Add a new rule…' && !pm.opts.some(o => o.on) && pm.adjust === 'Switch', pm);
+  check('claudePanel: Claude\'s box under a list is no panel', claudeScreen([...theme.slice(0, -2), '─'.repeat(80), '❯ ', '─'.repeat(80), theme.at(-1)]).picker === null);
+}
+
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');
 process.exit(bad ? 1 : 0);
