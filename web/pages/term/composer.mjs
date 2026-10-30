@@ -88,11 +88,17 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // a desktop page on its own: the keys go to the field once it is up, as they went to the terminal (a phone raises no keyboard unasked; a
   // /grid pane is focused by the grid, term.mjs)
   const home = () => { if (!coarse() && window.parent === window && !form.hidden && document.activeElement === document.body) ta.focus(); };
-  const ready = () => { if (booting) { booting = false; back = 0; clearTimeout(cap); document.body.classList.remove('ccboot'); home(); } };
+  const ready = () => { if (booting) { booting = false; back = 0; dark = false; clearTimeout(cap); document.body.classList.remove('ccboot'); home(); } };
   // a restart (the ⋯ sheet): the entry again, until Claude is back. back 1: Claude still on screen, 2: gone (the pane respawned). A resumed long
   // conversation takes seconds to print: the phone, 2026-10-27, showed a black terminal and the key bar meanwhile, read as the old UI
-  let back = 0;
-  const reboot = () => { booting = true; back = 1; stage.textContent = 'restarting'; document.body.classList.add('ccboot'); clearTimeout(cap); cap = setTimeout(ready, 30000); };
+  // The same wait for a screen gone blank once it held something (back 2): a pane restarted from anywhere else (the dashboard, 02:57 on
+  // 2026-10-30: three sessions resumed at once), a socket reopened after the phone slept (ttyd.mjs resets the terminal). Claude draws nothing
+  // for seconds while it loads, and the LINGER without its box dropped the page to the bare terminal and the key bar (the phone, 2026-10-30).
+  // A blank screen is never one to act on. Once something shows after it the wait ends with Claude's box, or 3 s on without it (a shell, a
+  // view of Claude's own); a screen blank for 30 s is shown as it is, and waits again only after it has held something
+  let back = 0, blank = false, drawn = false, dark = false;
+  const hold = (/** @type {number} */ b, /** @type {string} */ t) => { booting = true; back = b; drawn = false; stage.textContent = t; document.body.classList.add('ccboot'); clearTimeout(cap); cap = setTimeout(ready, 30000); };
+  const reboot = () => hold(1, 'restarting');
   // meanwhile, where the newest line will appear: the session and what is happening, under a blinking cursor (the phone, 2026-10-24: a black
   // screen read as stuck). Shown only past 150 ms (term.css), so a quick entry never flashes it
   const stage = el('span', { className: 'st' }, 'connecting');
@@ -325,6 +331,10 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // that does not fit was a blank strip under the status bar (the phone, 2026-10-23); with it the top is always text, faded
     const ch = Math.ceil(cellH());
     if (ch && ch !== cellSet) { cellSet = ch; tc.style.setProperty('--cc-cell', ch + 'px'); fit(); }
+    blank = !rows.slice(0, -1).some(x => x.trim()); // tmux's status line, the last row, does not count
+    if (blank && drawn && !booting) hold(2, 'loading');
+    if (!blank) drawn = true;
+    if (back === 2) { if (blank) dark = true; else if (dark) { dark = false; clearTimeout(cap); cap = setTimeout(ready, 3000); } }
     const s = claudeScreen(rows, typed), now = Date.now();
     // at most 16 rows holding something (box, Claude's status and mode lines, a task list, tmux's line; blank rows a redraw has not reached
     // yet do not count): a misread screen cannot swallow the conversation. Not a share of the rows: with the keyboard up on a small phone the
@@ -371,7 +381,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (draftText.textContent !== held) { draft.hidden = !held || sending; draftText.textContent = held; grow(); match(); } // only on a change: grow() moves the layout
     const ph = choice ? 'Pick a number, or ↑ ↓ then send…' : held ? 'Add a message, or send as it is…' : mode.className === 'sh' && top >= 0 ? 'Shell command…' : 'Message Claude…';
     if (ta.placeholder !== ph) ta.placeholder = ph;
-    const show = top >= 0 || choice > 0 || recent;
+    const show = top >= 0 || choice > 0 || recent || back > 0; // waiting for Claude back: the field stays, under the entry
     // the terminal comes into sight once what it shows is final: Claude's whole box, hidden, after any resize has settled; a dialog (nothing is
     // hidden); or no Claude, and not a box tmux has cut mid-resize either (that one is Claude, about to redraw)
     if (back === 1 && !s.box && !s.choice) back = 2;
@@ -397,7 +407,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const later = () => { pend ||= setTimeout(scan, 30); };
   // the first output starts the entry's clock (a slow network must not use it up): Claude is taken as just seen, and the terminal shows within
   // 2.5 s whatever the screen holds. The refits before it never reached the pty (the socket sends its size when it opens): nothing to settle
-  term.onWriteParsed(() => { if (!got) { got = true; resized = 0; stage.textContent = 'opening'; if (last) seen = Date.now(); cap = setTimeout(ready, 2500); } scan(); });
+  term.onWriteParsed(() => { if (!got) { got = true; resized = 0; stage.textContent = 'opening'; if (last) seen = Date.now(); cap = setTimeout(() => blank ? hold(2, 'loading') : ready(), 2500); } scan(); });
   term.onScroll(later);
   // Claude's box is hidden: the keyboard belongs to the composer, so a tap on the terminal lands there. From the touch itself (a user gesture,
   // which iOS needs to raise the keyboard), cancelled so xterm never takes the focus; a drag is a scroll, not a tap. The focus redirect stays
