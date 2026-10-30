@@ -97,7 +97,7 @@ body.ccboot #ccload{display:grid;gap:4px;position:absolute;left:10px;right:10px;
 background:var(--c-surface);border:1px solid var(--c-line2);border-radius:16px;padding:4px;box-shadow:0 -12px 32px -12px rgba(0,0,0,.8);z-index:6}
 #cccmds[hidden]{display:none}
 #cccmds .cmd{display:flex;flex-direction:column;gap:2px;width:100%;padding:8px 10px;border:0;border-radius:11px;background:none;text-align:left;min-width:0}
-#cccmds .cmd:active{background:var(--c-raised)}
+#cccmds .cmd:active,#cccmds .cmd.on{background:var(--c-raised)}
 #cccmds .cn{font:500 13.5px var(--c-mono);color:var(--c-ok);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #cccmds .ca{color:var(--c-dim);font-weight:400}
 #cccmds .ck{margin-left:8px;font:500 10px var(--c-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--c-mut);border:1px solid var(--c-line2);border-radius:6px;padding:1px 5px;vertical-align:1px}

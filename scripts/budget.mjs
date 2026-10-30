@@ -112,7 +112,7 @@ function report(label, bytes, files) {
 // ARCHITECTURE section 9 / BUDGET in web/contract.d.ts, kB each; a view's budget is its route closure minus the shell's (see --route)
 function all() {
   const views = existsSync('web/views') ? readdirSync('web/views').filter(f => f.endsWith('.mjs')).map(f => basename(f, '.mjs')).sort() : [];
-  const runs = [['--route', 'shell', 30], ...views.map(v => ['--route', v, 15]), ['--chunk', 'marked', 25], ['--file', 'tokens.css', 12], ['--fonts', '', 80], ['--route', 'term', 130], ['--server', '', 140]];
+  const runs = [['--route', 'shell', 30], ...views.map(v => ['--route', v, 15]), ['--chunk', 'marked', 25], ['--file', 'tokens.css', 12], ['--fonts', '', 80], ['--route', 'term', 132], ['--server', '', 140]];
   let bad = 0;
   for (const [flag, name, kb] of runs) {
     const r = spawnSync('node', [process.argv[1], '--dist', DIST, flag, ...(name ? [name] : []), '--max', String(kb), ...(has('--warn') ? ['--warn'] : [])], { encoding: 'utf8' });

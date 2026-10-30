@@ -136,7 +136,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     const q = m[1].toLowerCase();
     const rank = c => (c[0].toLowerCase().startsWith(q) ? 0 : c[0].toLowerCase().includes(q) ? 1 : (c[2] || '').toLowerCase().includes(q) ? 2 : 9);
     const hits = cmdList.map(c => [rank(c), c]).filter(([r]) => r < 9).sort((x, y) => x[0] - y[0] || x[1][0].localeCompare(y[1][0])).slice(0, 60).map(([, c]) => c);
-    cmds.textContent = '';
+    cmds.textContent = ''; at = 0;
     for (const [n, a, d, k] of hits) {
       const b = el('button', { type: 'button', className: 'cmd', role: 'option' },
         el('span', { className: 'cn' }, '/' + n, a ? el('span', { className: 'ca' }, ' ' + a) : null, KIND[k] ? el('span', { className: 'ck' }, KIND[k]) : null),
@@ -147,8 +147,11 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
       cmds.append(b);
     }
     if (!hits.length) cmds.append(el('div', { className: 'none' }, 'No command matches /' + m[1]));
-    cmds.hidden = false;
+    cmds.hidden = false; mark();
   }
+  // a keyboard: ↑ ↓ move the highlight, Tab puts the command in the field, Enter runs it (Claude's own list does the same)
+  let at = 0;
+  const mark = () => cmds.querySelectorAll('.cmd').forEach((b, i) => { b.classList.toggle('on', i === at); if (i === at) b.scrollIntoView({ block: 'nearest' }); });
   // a desktop's attachments (2026-10-30): a file attached, pasted or dropped is a token in the text, where the cursor was (`[image: red.png]`),
   // not Claude's draft chip ahead of the whole message (it read as an outside attachment). On send the message goes into Claude's box in its
   // order: the text up to the token, the image's path (Claude turns it into its [Image #N] right there), the rest. Any other file is its path
@@ -212,6 +215,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const ARROW = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C' };
   ta.addEventListener('keydown', e => {
     if (e.isComposing || chord(e)) return;
+    const bs = /** @type {NodeListOf<HTMLElement>} */ (cmds.querySelectorAll('.cmd'));
+    if (!cmds.hidden && bs.length && !e.shiftKey && /^(ArrowUp|ArrowDown|Tab|Enter)$/.test(e.key)) {
+      e.preventDefault();
+      if (e.key[0] === 'A') { at = (at + (e.key < 'ArrowE' ? 1 : -1) + bs.length) % bs.length; mark(); }
+      else { ta.value = '/' + bs[at].dataset.n; e.key === 'Tab' ? (ta.value += ' ', grow(), showCmds()) : submit(); }
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
     let k = '';

@@ -321,7 +321,7 @@ mode:
 
 | Gate | Where | What it holds |
 |---|---|---|
-| per-route budgets | preflight, `scripts/budget.mjs --all` | shell 30 kB, each view 15 kB, marked 25 kB, `tokens.css` 12 kB, fonts 80 kB, `/term` 130 kB, server 140 kB, no mermaid in `dist/` |
+| per-route budgets | preflight, `scripts/budget.mjs --all` | shell 30 kB, each view 15 kB, marked 25 kB, `tokens.css` 12 kB, fonts 80 kB, `/term` 132 kB (owner decision O-7), server 140 kB, no mermaid in `dist/` |
 | `dist/` is the build | preflight (manifest check) and CI (`node build.mjs && git diff --exit-code -- dist/`) | every committed file hashed in `dist/manifest.json`, two builds byte-identical |
 | served-document ceiling | `e2e-infra.sh` | the real `GET /` response at gzip -9, 20,480 B, with the container's fleet |
 | Lighthouse, parity | `scripts/lh-gate.mjs`, `scripts/parity-diff.mjs` | LCP 2,500 ms and TBT 200 ms on `/`; screenshots within 0.5 % of the frozen baseline |
