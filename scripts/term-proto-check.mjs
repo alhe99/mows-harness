@@ -4,7 +4,7 @@
 // numbers, the prefs allowlist and the two reconnect paths were all inside ttyd's minified bundle. No browser, no server, no network.
 //   node scripts/term-proto-check.mjs
 import { ALLOW, FLOW, ttydClient, BACKOFF } from '../web/pages/term/ttyd.mjs';
-import { claudeScreen } from '../web/pages/term/claudebox.mjs';
+import { claudeScreen, claudePanel } from '../web/pages/term/claudebox.mjs';
 
 let bad = 0;
 const check = (name, ok, detail) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok || detail === undefined ? '' : ' ' + JSON.stringify(detail)}`); };
@@ -416,6 +416,10 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   check('claudePanel: /status: no list, its rows as Claude drew them, still a dialog (the field stays)', st?.panel && !st.opts.length && st.body.some(x => x.startsWith('Version:')) && sc.choice === 1, st);
   const pm = claudeScreen(perms).picker;
   check('claudePanel: /permissions: its numbered rows with no highlight yet are its list, not numbers to type (a digit goes to its search)', pm?.panel && pm.opts[0].label === 'Add a new rule…' && !pm.opts.some(o => o.on) && pm.adjust === 'Switch', pm);
+  // a dialog whose command draws a panel (a ▔ line, a title, a list, a keys line) is never one: its Enter would answer the dialog
+  const fake = ['▔'.repeat(60), '   Theme', '', '   ❯ Dark mode', '     Light mode', '', '   Enter to select · Esc to cancel'];
+  check('claudePanel: a permission dialog with a panel drawn in its command is no panel', claudePanel([...perm.slice(0, 6), ...fake, ...perm.slice(6)]) === null && claudePanel([' Do you want to proceed?', ...fake, '[tmux']) === null);
+  check('claudePanel: a plan to approve (`Would you like to proceed?`) under a drawn panel is no panel', claudePanel([' Would you like to proceed?', ...fake, '[tmux']) === null && claudePanel([' Ready?', ' ❯ 1. Yes', ...fake, '[tmux']) === null && claudePanel([...fake, '[tmux'])?.panel);
   check('claudePanel: Claude\'s box under a list is no panel', claudeScreen([...theme.slice(0, -2), '─'.repeat(80), '❯ ', '─'.repeat(80), theme.at(-1)]).picker === null);
 }
 

@@ -99,8 +99,11 @@ export function claudePanel(rows) {
   const r = rows.findLastIndex((x, i) => i < f && PTOP.test(x));
   if (r < 0 || !rows[r + 1].trim()) return null; // the title right under the line, as Claude draws it
   const mid = rows.slice(r + 1, f), ind = (/** @type {string} */ x) => x.length - x.trimStart().length;
-  // never a permission question's words, nor Claude's box (as for a picker: a command shown above can draw anything)
-  if (mid.some((x, i) => ASK.test(x) || RULE.test(x) && PROMPT.test(mid[i + 1] || ''))) return null;
+  // never Claude's box, and fails closed on anything of a dialog's anywhere on the screen, not only under the ▔ line (security review
+  // 2026-10-30): a command or a plan shown in a permission or plan dialog can draw a ▔ line and a list, and a panel's Enter would answer the
+  // dialog under it. A question (`… proceed?`) over numbered options, or a dialog's words, is no panel; Claude's panels have neither
+  if (mid.some((x, i) => RULE.test(x) && PROMPT.test(mid[i + 1] || ''))) return null;
+  if (rows.some((x, i) => ASK.test(x) || /Would you like to /.test(x) || /\?$/.test(x) && rows.slice(i + 1, i + 3).some(y => /^\s*(?:❯\s*)?1\.\s/.test(y)))) return null;
   const sel = mid.findLastIndex(x => /^\s*❯\s/.test(x)), num = mid.find(x => /^\s*(?:[↑↓]\s+)?\d+\.\s/.test(x));
   const col = sel >= 0 ? mid[sel].indexOf('❯') : num ? ind(num) - 2 : -1;
   // the rows' column: the text's after ❯, or past a mark column when one row at most has a mark in it (/theme: `✔ Auto` the current one, the
