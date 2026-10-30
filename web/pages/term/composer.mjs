@@ -26,9 +26,11 @@ const LINGER = 1500, SETTLE = 400, ASKED = 3000;
 const WORK = /^\s*[^\s\w]\s+\p{Lu}[\p{L}-]*…/u, STOP = /⎿\s+Interrupted\b/;
 
 /** @param {{ url: string, name: string, path: string }[]} uploads images sent from this page, in order (attach.mjs)
- *  @param {() => void} pick opens the file picker (attach.mjs) */
-export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = [], pick = () => {}) {
-  if (!coarse() || off('comp')) return null;
+ *  @param {() => void} pick opens the file picker (attach.mjs)
+ *  @param {(e: KeyboardEvent) => boolean} chord a /grid chord typed in the field goes up to the grid, as from the terminal (gridkeys.mjs) */
+export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = [], pick = () => {}, chord = (_e) => false) {
+  // a desktop too since 2026-10-30 (design A of the session-footer proposals): the same field, chips and dialogs; ?comp=off gives the bare terminal
+  if (off('comp')) return null;
   const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
   const mode = el('button', { type: 'button', id: 'ccmode', hidden: true, 'aria-label': 'permission mode, tap to cycle' });
@@ -60,10 +62,35 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // ultrathink in the message: Claude's own note under it (`Deeper reasoning requested for this turn`, over its box) is under the dock, so the
   // field says it, in the keyword's colours
   const uth = el('div', { className: 'uth', 'aria-live': 'polite' }, 'Deeper reasoning requested for this turn');
-  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, uth, ta, el('div', { className: 'cbar' }, add, mode, model, draft, send));
+  // Claude's figures from the status line under its box (claudebox.mjs usage), which goes under the dock with the box: background agents, the
+  // 5 h / week quota, the session's cost (today's in its title) and the context used, as a ring
+  // the agents chip is Claude's `← 1 agent`: its agents view (the account's background sessions), opened with ← from an empty box; esc returns
+  const agents = el('button', { type: 'button', id: 'ccagents', hidden: true, title: "Claude's agents view (esc returns)" });
+  const quota = el('span', { className: 'q' }), cost = el('span', { className: 'c' }), ctxN = el('span');
+  const ring = icon('<circle class="bg" cx="12" cy="12" r="9"/><circle class="rg" cx="12" cy="12" r="9" stroke-dasharray="0 57"/>');
+  const ctx = el('span', { className: 'x' }, ring, ctxN);
+  const use = el('span', { id: 'ccuse', hidden: true }, quota, cost, ctx);
+  const txt = (/** @type {HTMLElement} */ n, /** @type {string} */ t) => { n.hidden = !t; if (n.textContent !== t) n.textContent = t; };
+  const figures = (/** @type {any} */ u) => {
+    agents.hidden = !u?.agents;
+    if (u?.agents) txt(agents, u.agents + (u.agents === 1 ? ' agent' : ' agents'));
+    use.hidden = !u || !(u.cost || u.h5 !== null || u.ctx);
+    if (use.hidden) return;
+    txt(quota, u.h5 !== null ? `5h ${u.h5}% · wk ${u.wk}%` : '');
+    txt(cost, u.cost); cost.title = u.today ? 'today ' + u.today : '';
+    ctx.hidden = !u.ctx;
+    if (ctxN.textContent !== u.ctx) ctxN.textContent = u.ctx;
+    ring.querySelector('.rg')?.setAttribute('stroke-dasharray', `${(56.5 * (u.pct ?? 0) / 100).toFixed(1)} 57`);
+    ctx.classList.toggle('hi', (u.pct ?? 0) >= 80);
+    ctx.title = u.pct !== null ? `context ${u.ctx}, ${u.pct}% used` : 'context ' + u.ctx;
+  };
+  const form = el('form', { id: 'cccomp', autocomplete: 'off', hidden: !last }, cmds, uth, ta, el('div', { className: 'cbar' }, add, mode, model, agents, draft, use, send));
   let booting = true, got = false, cap = 0;
   document.body.classList.add('ccboot');
-  const ready = () => { if (booting) { booting = false; back = 0; clearTimeout(cap); document.body.classList.remove('ccboot'); } };
+  // a desktop page on its own: the keys go to the field once it is up, as they went to the terminal (a phone raises no keyboard unasked; a
+  // /grid pane is focused by the grid, term.mjs)
+  const home = () => { if (!coarse() && window.parent === window && !form.hidden && document.activeElement === document.body) ta.focus(); };
+  const ready = () => { if (booting) { booting = false; back = 0; clearTimeout(cap); document.body.classList.remove('ccboot'); home(); } };
   // a restart (the ⋯ sheet): the entry again, until Claude is back. back 1: Claude still on screen, 2: gone (the pane respawned). A resumed long
   // conversation takes seconds to print: the phone, 2026-10-27, showed a black terminal and the key bar meanwhile, read as the old UI
   let back = 0;
@@ -151,13 +178,36 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (document.activeElement === ta) { ta.blur(); ta.focus(); }
   };
   ta.addEventListener('input', () => { shellMode(); grow(); showCmds(); });
-  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } });
+  // a keyboard (a desktop, or one on a tablet): the keys Claude's own box takes go to Claude, as from the terminal: shift+tab (its mode), esc
+  // (stop it), ctrl+c (the field cleared if it holds text, else Claude's ctrl+c; with text selected in the terminal, a copy of it), and ↑ ↓ with
+  // nothing typed (its history) or on a dialog Claude drew. A /grid chord goes up to the grid
+  const ARROW = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B' };
+  ta.addEventListener('keydown', e => {
+    if (e.isComposing || chord(e)) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
+    const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+    let k = '';
+    if (e.key === 'Tab' && e.shiftKey && plain) k = '\x1b[Z';
+    else if (e.key === 'Escape' && plain) { if (!cmds.hidden) { cmds.hidden = true; e.preventDefault(); return; } k = '\x1b'; }
+    else if (e.key === 'c' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      if (term.hasSelection()) { navigator.clipboard?.writeText(term.getSelection()).catch(() => {}); e.preventDefault(); return; }
+      if (ta.selectionStart !== ta.selectionEnd) return; // the field's own copy
+      if (ta.value) { e.preventDefault(); ta.value = ''; grow(); shellMode(); showCmds(); return; }
+      k = '\x03';
+    } else if (ARROW[e.key] && plain && !e.shiftKey && (choice || !ta.value) && cmds.hidden) k = ARROW[e.key];
+    if (k) { e.preventDefault(); term.input(k); }
+  });
   // a latched ctrl/alt turns the next typed character into a key for the terminal, not text for the field
   ta.addEventListener('beforeinput', (/** @type {any} */ e) => {
     if ((mods.Ctrl === 'off' && mods.Alt === 'off') || e.inputType !== 'insertText' || !e.data || [...e.data].length !== 1) return;
     e.preventDefault(); term.input(e.data);
   });
   mode.addEventListener('click', () => term.input('\x1b[Z'));
+  agents.addEventListener('click', () => {
+    scan();
+    if (held) { say('Send or remove what is attached first'); return; } // ← would move the cursor in Claude's box, not open the view
+    if (top >= 0 && !choice) term.input('\x1b[D');
+  });
   model.addEventListener('click', () => {
     scan();
     if (held) { say('Send or remove what is attached first'); return; } // typed after it, /model would be text, not the command
@@ -274,8 +324,9 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
         model.hidden = !s.model;
         if (s.model && modelName.textContent !== s.model.name) modelName.textContent = s.model.name;
         if (s.model && modelEffort.textContent !== s.model.effort) modelEffort.textContent = s.model.effort;
+        figures(s.use);
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; if (!trusted) hide(0); } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; figures(null); if (!trusted) hide(0); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
@@ -289,6 +340,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (booting && back !== 1 && (s.box && t >= 0 && now - resized > SETTLE && extra === Math.min(16, term.rows - t) || choice || !back && !show && s.edge < 0)) ready();
     if (form.hidden === show) {
       form.hidden = !show;
+      if (show) home();
       if (!show && document.activeElement === ta) term.focus(); // the keyboard carries on in the terminal, the one input left
     }
     // while the field is the input, xterm's own input is disabled: nothing can type into Claude's box behind it, not a tap, not the iOS
@@ -321,7 +373,8 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   });
   term.textarea?.addEventListener('focus', () => { if (!form.hidden) ta.focus(); });
   // a tap the touch handler did not see (a mouse, an accessibility tap): the click is a gesture too
-  tc.parentElement?.addEventListener('click', () => { if (!form.hidden && document.activeElement !== ta) ta.focus(); });
+  // not a mouse that just selected text in the terminal: that click is the end of the selection, kept for ctrl+c
+  tc.parentElement?.addEventListener('click', () => { if (!form.hidden && document.activeElement !== ta && !term.hasSelection()) ta.focus(); });
   // a refit or a new wrap height (keyboard, second key row, a growing field) moves the rows: place the shift again
   // xterm can leave its viewport off the bottom after a resize that pushed rows into its scrollback, showing an older view until the next
   // output; under tmux that scrollback is never read (the finger scrolls tmux), so the view goes back to the bottom at once
@@ -373,5 +426,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   };
   /** @param {() => void} fn asks the dashboard for its word now (flows.mjs tick) */
   const ask = fn => { need = fn; };
-  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask, reboot };
+  /** the page took the focus (a /grid pane chosen): the field while it is the input, else the terminal */
+  const focus = () => { if (!form.hidden) ta.focus(); else term.focus(); };
+  return { el: form, typing: () => document.activeElement === ta, insert, claude, ask, reboot, focus };
 }

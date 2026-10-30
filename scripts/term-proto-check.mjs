@@ -253,5 +253,31 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   check("claudeScreen: Claude's shell mode is its box, with a shell mode chip", sh.box?.top === 1 && sh.mode?.cls === 'sh' && sh.mode.label === '! shell mode', sh);
 }
 
+// the status line's figures for the composer bar (claudebox.mjs usage): the screen of 2026-10-30, our status line under the box
+{
+  const rows = ['● done', '─'.repeat(40), '❯ ', '─'.repeat(40),
+    '  🤖 Opus 5.5 (high) | 💰 $107.72 session / $0.00 today | ⏳ 5h 0% · wk 21% | 🧠 114k (11%)',
+    '  ⏵⏵ bypass permissions on (shift+tab to cycle) · 1 agent', '[cc-work-a0:bash*'];
+  const s = claudeScreen(rows), u = s.use;
+  check('claudeScreen: status-line figures (cost, quota, context, agents)', u?.cost === '$107.72' && u.today === '$0.00' && u.h5 === 0 && u.wk === 21 && u.ctx === '114k' && u.pct === 11 && u.agents === 1 && s.model?.name === 'Opus 5.5', u);
+  check('claudeScreen: no status line, no figures', claudeScreen(rows.slice(0, 4)).use === null, claudeScreen(rows.slice(0, 4)).use);
+}
+
+// Claude's effort hint drawn into the picker's ▔ line (live, 2026-10-30): still the /model picker
+{
+  const rows = ['❯ /model', '  ⎿  Kept model as Opus 5.5', '▔'.repeat(60) + ' ● high · /effort ▔', '   Select model', '   Switch between Claude models.', '',
+    '     1.  Default (recommended)  Opus 5.5 · Best for everyday', '   ❯ 2.  Opus 5.5 ✔             For complex work', '     3.  Fable 5.1              For your toughest challenges', '',
+    '   ● High effort ←/→ to adjust', '', '   Enter to set as default · s to use this session only · Esc to cancel', '[cc-work-u0:claude*'];
+  const p = claudeScreen(rows).picker;
+  check('claudeScreen: /model picker with a hint drawn into its top line', p?.title === 'Select model' && p.opts.length === 3 && p.opts[1].cur, p);
+}
+
+// a named session: Claude draws the name into the box's top rule (live, 2026-10-30)
+{
+  const rows = ['● PELICAN', '─'.repeat(50) + ' Multiplying 17 by 23 ─', '❯ ', '─'.repeat(70), '  🤖 Opus 5.5 (high) | 💰 $0.39 session', '  ⏸ manual mode on · ← 1 agent'];
+  const s = claudeScreen(rows);
+  check('claudeScreen: a session name in the top rule is still the box', s.box?.top === 1 && s.box.empty && s.use?.agents === 1, s);
+}
+
 console.log(bad ? `term-proto-check: ${bad} FAILED` : 'term-proto-check: ALL PASS');
 process.exit(bad ? 1 : 0);

@@ -30,6 +30,13 @@ export function picker(term) {
   let shut = 0;
   dragToClose(wrap, pan, () => { wrap.classList.remove('open'); shown = ''; free = null; shut = Date.now(); term.input('\x1b'); });
   document.body.append(wrap);
+  // a keyboard (a desktop, 2026-10-30): while the sheet is up the keys are Claude's, as in the terminal: the arrows, Enter, Esc, a digit or a
+  // picker's letter (`s`). The free option's field keeps its own
+  addEventListener('keydown', e => {
+    if (!wrap.classList.contains('open') || e.ctrlKey || e.altKey || e.metaKey || /** @type {any} */ (e.target)?.closest?.('#ccpick .free, #cccomp')) return; // the composer's field sends them itself
+    const k = { ArrowUp: UP, ArrowDown: DN, ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C', Enter: '\r', Escape: '\x1b' }[e.key] ?? (/^[a-z0-9]$/i.test(e.key) ? e.key : '');
+    if (k) { e.preventDefault(); term.input(k); }
+  });
   const btn = (cls, label, fn, kids = []) => { const b = el('button', { type: 'button', className: cls }, label, ...kids); b.addEventListener('click', fn); return b; };
 
   /** what Claude shows now; null closes the sheet */

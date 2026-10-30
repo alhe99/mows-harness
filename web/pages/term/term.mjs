@@ -40,7 +40,7 @@ term.loadAddon(new WebLinksAddon((_e, uri) => openLink(uri)));
 term.open(/** @type {HTMLElement} */ (document.getElementById('terminal-container')));
 // a pane of /grid: the shell focuses the iframe element (a row click, a tab click, a chord); that alone leaves this document's focus on
 // its body and typing goes nowhere, so the window's focus event hands it to xterm. Standalone, a click on the terminal does it, as before.
-if (window.parent !== window) { addEventListener('focus', () => term.focus()); if (document.hasFocus()) term.focus(); }
+if (window.parent !== window) { addEventListener('focus', () => (comp ? comp.focus() : term.focus())); if (document.hasFocus()) term.focus(); } // the composer's field while it is the input
 
 // every fit goes through here: bursts (keyboard, safe areas settling) are coalesced 150 ms so the pty sees one resize; fit(true) is immediate
 /** @type {any} */ let ft = 0;
@@ -104,18 +104,23 @@ const put = t => { if (!comp?.insert(t)) term.paste(t); };
 const clip = clipboard(term, put);
 const att = attach(term);
 const tc = /** @type {HTMLElement} */ (document.getElementById('terminal-container'));
-const comp = composer(term, tc, () => fit(true), att.recent, att.pick);
+const chord = gridKeys(term);
+const comp = composer(term, tc, () => fit(true), att.recent, att.pick, chord);
+// a desktop gets the composer as a bar under the terminal (term.css body.dk); its key bar stays hidden
+if (comp && !coarse()) document.body.classList.add('dk');
 // the session of the URL names the menu's header (?arg=attach&arg=<session>)
 const args = new URLSearchParams(location.search).getAll('arg');
 const session = args[0] === 'attach' && args[1] ? { name: args[1], label: args[1].replace(/^cc-[^-]+-/, '').replace(/^web-/, '') } : null;
-const wf = coarse() ? flows((j, t0) => comp?.claude(!!j.claude, t0)) : null; // the session's Workflow runs and agents: a badge on ⋯, a block on top of the sheet
-const sheet = coarse() ? menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session, top: wf?.box, shut: wf?.home }) : null;
+// the session's Workflow runs and agents: a badge on ⋯, a block on top of the sheet. A desktop too (2026-10-30): its answer keeps a picker of
+// Claude's trusted while it stays up (composer.mjs claude)
+const wf = flows((j, t0) => comp?.claude(!!j.claude, t0));
+const sheet = menu({ clip, att, fonts, theme, detach: () => detach(term), restart, title: () => session, top: wf.box, shut: wf.home });
 const bar = el('div', { id: 'cckb' }, ...baseKeys(term, { typing: () => !!comp?.typing(), type: t => comp?.insert(t), menu: () => sheet?.open() }));
 document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
 fit(true); // now, not from the observer a frame later: the socket may open first, and the size it sends is the pty's (one redraw, not two)
 if (coarse()) wrap.append(modChip());
-if (wf) bar.querySelector('[data-k=Menu]')?.append(wf.badge);
-if (wf) comp?.ask(wf.tick);
+bar.querySelector('[data-k=Menu]')?.append(wf.badge);
+comp?.ask(wf.tick);
 touchScroll();
 if (!off('links')) tapLinks(term);
 viewportFit(fit);
@@ -142,7 +147,6 @@ setTimeout(() => requestAnimationFrame(() => {
 }), 900);
 
 client.start();
-gridKeys(term);
 
 // WebGL, Chromium only and lazy: iOS and WebKit keep the DOM renderer. A lost context drops back to it.
 if (/\b(Chrome|Edg)\//.test(navigator.userAgent) && !/CriOS|FxiOS/.test(navigator.userAgent)) {

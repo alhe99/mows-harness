@@ -3,7 +3,8 @@
 // (`⏵⏵ auto mode on (shift+tab to cycle)`), a status line, then the box: a rule, `❯ ` + what is typed, a rule (older builds: ╭─╮ │ > │ ╰─╯).
 // ponytail: a screen heuristic over Claude's TUI. A Claude Code release that redraws the box makes `box` null: the composer then hides nothing and
 // the terminal shows as it is (two inputs, never a lost one). Upgrade path: the rules below, re-captured from a live pane.
-const RULE = /^\s*(?:─{8,}|╭─{6,}╮|╰─{6,}╯)\s*$/;
+// a session with a name (its agents view names it) has the name in the top rule, on the right: `──────── Multiplying 17 by 23 ─` (2026-10-30)
+const RULE = /^\s*(?:─{8,}(?: \S.*? ─+)?|╭─{6,}╮|╰─{6,}╯)\s*$/;
 // `!` is the prompt of Claude's shell mode (a `!` typed first: what follows runs in bash; its mode line reads `! for shell mode`, 2026-10-27)
 const PROMPT = /^\s*(?:│\s?)?[❯>!]/;
 const MODE = /(⏵⏵|⏸)\s*([a-z][a-z ]*?)\s+on\b/, SHELL = /^\s*! for shell mode/;
@@ -48,9 +49,10 @@ export function claudeScreen(rows, typed = rows) {
   // redraws, and the cut takes the box's bottom first; the composer uses it only while Claude was just on screen (composer.mjs LINGER)
   let edge = -1;
   for (let r = n - 2; r >= Math.max(1, n - 16) && edge < 0; r--) if (RULE.test(rows[r]) && PROMPT.test(rows[r + 1])) edge = r;
-  let mode = null, model = null;
+  let mode = null, model = null, use = null;
   if (box) {
     for (const r of rows.slice(box.bottom + 1)) { const m = MODEL.exec(r); if (m) { model = { name: m[2] ? `${m[1]} ${m[2]}` : m[1], effort: m[3] || '' }; break; } }
+    use = usage(rows.slice(box.bottom + 1).join(' '));
     for (const r of rows.slice(box.bottom + 1)) {
       if (SHELL.test(r)) { mode = { label: '! shell mode', cls: 'sh' }; break; }
       const m = MODE.exec(r);
@@ -58,7 +60,19 @@ export function claudeScreen(rows, typed = rows) {
     }
     mode ??= { label: 'default mode', cls: 'df' };
   }
-  return { box, mode, model, choice: 0, picker: null, edge };
+  return { box, mode, model, use, choice: 0, picker: null, edge };
+}
+
+// the figures of our status line (claude/scripts/statusline.py: `$3.00 session / $1.50 today`, `5h 19% · wk 71%`, `🧠 50k (25%)`) and Claude's
+// own count of background agents on its mode line (`· 1 agent`); a row that wraps in a narrow pane is read joined. null when none is there
+const CTX = /(\d+)k \((\d+)%\)/, AGENTS = /\b(\d+) (?:background )?(?:agents?|tasks?|shells?)\b/;
+/** @param {string} s the rows under the box, joined */
+export function usage(s) {
+  const cost = /\$(\d+(?:\.\d+)?) session/.exec(s), today = /\$(\d+(?:\.\d+)?) today/.exec(s), q = /\b5h (\d+)% · wk (\d+)%/.exec(s);
+  const c = CTX.exec(s), a = AGENTS.exec(s);
+  if (!cost && !q && !c && !a) return null;
+  return { cost: cost ? '$' + cost[1] : '', today: today ? '$' + today[1] : '', h5: q ? +q[1] : null, wk: q ? +q[2] : null,
+    ctx: c ? c[1] + 'k' : '', pct: c ? +c[2] : null, agents: a ? +a[1] : 0 };
 }
 
 // Claude's pickers (/model and the like), as drawn at 46 columns on 2026-10-24: a line (▔), a title, its prose, the numbered options (❯ the
@@ -72,7 +86,8 @@ export function claudeScreen(rows, typed = rows) {
 // each row of a single one), the options with their descriptions on the rows under them, `[ ]` / `[✔]` before each of a multi-select one
 // and a `Submit` row under them; the last option takes free text (free: `Type something.`, or what was typed into it) and a ─ line parts it
 // from `Chat about this`. Its keys line wraps (`· Esc to` / `cancel`); the review page that ends several questions has none.
-const TOP = /^\s*(?:─{8,}|▔{8,})\s*$/; // the picker's own top line is ▔ (2026-10-24); ─ as a fallback
+// the picker's own top line is ▔ (2026-10-24); ─ as a fallback. Claude can draw a hint into the ▔ line (`▔▔▔ ● high · /effort ▔`, 2026-10-30)
+const TOP = /^\s*(?:─{8,}|▔{8,}(?: .* ▔+)?)\s*$/;
 const OPT = /^\s*([❯↑↓])?\s*(\d{1,2})\.\s+(\S.*?)(?:\s{2,}(\S.*))?$/, MORE = /^\s*…\s*\+(\d+)\s+(\S.*)$/, ADJ = /^\s*\S?\s*(.+?)\s*←\/→ to adjust/;
 const HEAD = /^\s*(?:←\s+)?[☐☒✔]\s+\S/, BOX = /^\[([ ✔])\]\s+(.*)$/, SUBMIT = /^\s*(❯)?\s*Submit$/;
 /** @param {string[]} rows */

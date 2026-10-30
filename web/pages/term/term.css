@@ -56,6 +56,20 @@ body{position:fixed;top:0;left:0;right:0;min-height:0;display:flex;flex-directio
    under the dock (--cc-hid); both set by composer.mjs */
 #terminal-container{height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
 #terminal-container .terminal{flex:none;height:auto}
+
+/* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
+#ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
+border-top:1px solid var(--c-line);background:var(--c-bg)}
+#cckb{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px}
+/* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
+body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
+
+
+#ccmods{display:block;position:absolute;right:10px;bottom:10px;z-index:5;font:500 11.5px var(--c-mono);color:var(--c-ok);background:#0b1f18;border:1px solid var(--c-ok-bd);
+padding:5px 10px;border-radius:999px;opacity:0;pointer-events:none}
+#ccmods.on{opacity:1}
+}
+
 /* the entry: the terminal out of sight until Claude's rows are under the dock (composer.mjs ready()) */
 body.ccboot #terminal-container{opacity:0}
 /* the loader in its place: the session over its stage and an emerald block cursor, on the gutter where the newest line lands */
@@ -65,13 +79,7 @@ body.ccboot #ccload{display:grid;gap:4px;position:absolute;left:10px;right:10px;
 #ccload span{color:var(--c-dim);display:flex;align-items:center;gap:6px}
 #ccload i{display:inline-block;flex:none;width:8px;height:15px;background:var(--c-ok);border-radius:1px}
 
-/* minmax(0,1fr): a grid item is as wide as its content by default, and a long draft chip pushed the dock past the screen (2026-10-23) */
-#ccdock{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:7px calc(6px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(6px + env(safe-area-inset-left,0px));
-border-top:1px solid var(--c-line);background:var(--c-bg)}
-#cckb{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:5px}
-/* the keyboard is up (the home indicator sits under it) or iOS 26 reserved its bottom zone: env() padding would double-reserve */
-body.kbup #ccdock,body.nozone #ccdock{padding-bottom:7px}
-
+/* the composer (composer.mjs): a phone's dock, and on a desktop the bar under the terminal (body.dk, below). 2026-10-30 */
 #cccomp[hidden]{display:none}
 #cccomp{min-width:0;display:flex;flex-direction:column;gap:2px;padding:4px 5px 5px 16px;border:1px solid var(--c-line2);border-radius:22px;background:var(--c-surface)}
 #cccomp:focus-within{border-color:var(--c-ok-bd);box-shadow:0 0 0 3px var(--c-ok-bg)}
@@ -133,11 +141,40 @@ font:500 12px/28px var(--c-mono);white-space:nowrap;overflow:hidden;text-overflo
 #ccsend{margin-left:auto;flex:none;width:36px;height:36px;border-radius:50%;border:0;padding:0;background:var(--c-raised);color:var(--c-dim);display:grid;place-items:center}
 #cccomp.has #ccsend{background:var(--c-ok);color:#04130d}
 #ccsend svg{width:17px;height:17px}
+#ccmode:hover,#ccmodel:hover,#ccadd:hover,#ccagents:hover{background:var(--c-raised)}
+/* Claude's figures, from our status line (claudebox.mjs usage): background agents as a chip, then quota, cost and the context ring at the end of
+   the bar, before send. Only where the bar has the room for them */
+#ccagents{flex:none;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:999px;border:1px solid var(--c-line2);
+background:var(--c-bg);color:var(--c-fg2);font:500 12px var(--c-mono);white-space:nowrap}
+#ccagents::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--c-warn)}
+#ccuse{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px;font:12px var(--c-mono);color:var(--c-dim);white-space:nowrap}
+#ccagents[hidden],#ccuse[hidden],#ccuse>span[hidden]{display:none}
+#ccuse>:not([hidden])~:not([hidden]){padding-left:10px;border-left:1px solid var(--c-raised)}
+#ccuse .c,#ccuse .x{color:var(--c-mut)}
+#ccuse .x{display:inline-flex;align-items:center;gap:6px}
+#ccuse svg{width:16px;height:16px;transform:rotate(-90deg)}
+#ccuse svg circle{fill:none;stroke-width:3.5}
+#ccuse svg .bg{stroke:var(--c-raised)} #ccuse svg .rg{stroke:var(--c-fg2)} #ccuse .x.hi svg .rg{stroke:var(--c-warn)}
+#ccuse:not([hidden])~#ccsend{margin-left:0}
+@media(max-width:600px){#ccuse{display:none!important} #ccuse~#ccsend{margin-left:auto!important}}
+@media(max-width:480px){#ccagents{display:none!important}} /* a phone: the model chip keeps the room; agents are in the ⋯ sheet */
 
-#ccmods{display:block;position:absolute;right:10px;bottom:10px;z-index:5;font:500 11.5px var(--c-mono);color:var(--c-ok);background:#0b1f18;border:1px solid var(--c-ok-bd);
-padding:5px 10px;border-radius:999px;opacity:0;pointer-events:none}
-#ccmods.on{opacity:1}
-}
+/* a desktop (body.dk, term.mjs): the page is a column as on a phone, the terminal over the composer bar (design A, 2026-10-30); no key bar.
+   The rows Claude draws from its box down go under the bar (--cc-hid), as on a phone */
+body.dk{display:flex;flex-direction:column}
+body.dk #terminal-wrap{flex:1;min-height:0;height:auto}
+body.dk #terminal-container{display:flex;flex-direction:column;justify-content:flex-end;height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
+body.dk #terminal-container .terminal{flex:none;height:auto}
+body.dk #ccdock{display:block;flex:none;padding:2px 12px 12px;background:var(--c-bg)}
+body.dk #cccomp{border-radius:16px;padding:8px 8px 8px 14px;gap:4px}
+body.dk #ccmsg{font-size:14px;height:30px;min-height:30px;padding:5px 0}
+body.dk #cccomp .cbar{margin-left:-6px;gap:6px}
+body.dk :is(#ccmode,#ccmodel,#ccagents){height:28px;border-radius:8px}
+body.dk #ccmode.bad{border-color:rgba(255,100,103,.3);background:rgba(255,100,103,.1)}
+body.dk #ccadd{width:28px;height:28px;border-radius:8px}
+body.dk #ccsend{width:32px;height:32px}
+body.dk #cccomp .dchip{height:28px}
+body.dk :is(#ccpick,#ccsheet) .pan{max-width:640px;margin:0 auto} /* Claude's pickers: a panel over the bar, not a full-width sheet */
 
 /* status overlay and toast */
 #ccovl,#cctoast{position:fixed;z-index:80;left:50%;transform:translateX(-50%);padding:6px 12px;border-radius:999px;background:var(--c-raised);border:1px solid var(--c-line2);
