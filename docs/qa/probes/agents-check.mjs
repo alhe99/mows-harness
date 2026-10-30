@@ -126,7 +126,7 @@ async function detail() {
   check('11 five aside cards, in order, with the exact titles', cards.join('|') === 'Agent Telemetry|Capabilities|Recent Runs|Memory|Events', cards);
   check('12 header: name, running dot, "<model> · $x spent"', (await text(page, '.agh h1')) === NAME && await page.locator('.agh .agdot').count() === 1 && (await text(page, '.agsub')) === 'sonnet · $1.50 spent');
   const rows = await page.$$eval('.tgrid .trow', rs => rs.map(r => r.innerText.replace(/\s+/g, ' ').trim()));
-  check('13 telemetry rows: Profile Soul Target Trigger Budget Daily Cap', rows.join('|') === 'Profile default|Soul pr-reviewer|Target ~/proj|Trigger cron, webhook|Budget $1.50 / 40 turns|Daily Cap $6.00 per day', rows);
+  check('13 telemetry rows: Model Profile Soul Target Trigger Budget Daily Cap', rows.join('|') === 'Model Small Medium High|Profile default|Soul pr-reviewer|Target ~/proj|Trigger cron, webhook|Budget $1.50 / 40 turns|Daily Cap $6.00 per day', rows);
   check('14 capabilities: chips of the effective tools, then the strongest authority', (await page.$$eval('.cchips .cchip', e => e.map(x => x.textContent))).join() === 'Read,Grep,Bash' && (await text(page, '.capsum-warn')) === 'Shell execution granted.');
   check('15 the full report sits behind the disclosure, shut', await page.evaluate(() => !document.querySelector('details.capmore').open) && /What this agent can do/.test(await page.locator('details.capmore .cap h2').textContent()));
   const runs = await page.$$eval('.rruns li', ls => ls.map(l => [l.querySelector('a').textContent, l.querySelector('a').title, l.querySelector('a').getAttribute('href'), l.querySelector('.rcost').textContent]));
@@ -136,6 +136,13 @@ async function detail() {
   check('18 the hint line names the effective tools', (await text(page, 'p.chint')) === `${NAME} has access to Read, Grep, Bash. Use /help for commands.`);
   const form = await page.$eval('form.agctl', f => ({ action: f.getAttribute('action'), method: f.method, back: f.querySelector('[name=back]').value, name: f.querySelector('[name=name]').value, label: f.querySelector('button').getAttribute('aria-label') }));
   check('19 Run now is a plain POST form to /a/agent-run that comes back to the shell page', form.action === '/a/agent-run' && form.method === 'post' && form.back === `/agents/${NAME}` && form.name === NAME && form.label === 'Run now', form);
+  const lvl = await page.$eval('form.lvl', f => ({ action: f.getAttribute('action'), method: f.method, back: f.querySelector('[name=back]').value, name: f.querySelector('[name=name]').value,
+    opts: [...f.querySelectorAll('button[name=level]')].map(b => `${b.value}:${b.textContent}:${b.getAttribute('aria-pressed')}`) }));
+  check('19b model level is a plain POST form to /a/agent-model: Small/Medium/High = haiku/sonnet/opus, the file\'s model pressed',
+    lvl.action === '/a/agent-model' && lvl.method === 'post' && lvl.back === `/agents/${NAME}` && lvl.name === NAME
+    && lvl.opts.join() === 'haiku:Small:false,sonnet:Medium:true,opus:High:false', lvl);
+  const lh = await page.$$eval('form.lvl button', bs => bs.map(b => Math.round(b.getBoundingClientRect().height)));
+  check('19c the level buttons are one height and fit the row', lh.length === 3 && new Set(lh).size === 1 && lh[0] >= 20 && lh[0] <= 30, lh);
   check('20 the transcript renders its markdown, the chat footer is the composer', await page.evaluate(() => !!document.querySelector('.chatbox .m.claude .mb strong') && document.querySelectorAll('.chatbox .m.me').length === 1 && !!document.querySelector('.chat .chatf textarea[required]')));
   check('21 html.agent-view is set while the view is mounted, and the page is the --kb/uiapp card', await page.evaluate(() => document.documentElement.classList.contains('agent-view') && document.body.classList.contains('uiapp')));
   await page.focus('.chat .chatf textarea');
