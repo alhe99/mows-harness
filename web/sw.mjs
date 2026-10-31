@@ -40,10 +40,19 @@ sw.addEventListener('activate', e => e.waitUntil((async () => {
   await sw.clients.claim();
 })()));
 
+// an asset from the cache, or nothing after 2 s or on an error: WebKit's Cache Storage can stop answering after the Mac sleeps, and a /term/
+// pane then loaded its page but never its css and module, white until the app restarted (2026-10-31). The network serves it instead, and
+// /z records the stall in the access log
+const cached = p => {
+  let t = 0;
+  const stall = new Promise(ok => { t = setTimeout(() => { fetch('/z?t=sw-cache-stall&p=' + encodeURIComponent(p)).catch(() => {}); ok(null); }, 2000); });
+  return Promise.race([caches.open(ASSETS).then(c => c.match(p)), stall]).catch(() => null).finally(() => clearTimeout(t));
+};
+
 sw.addEventListener('fetch', e => {
   const r = e.request, u = new URL(r.url);
   if (r.method !== 'GET' || u.origin !== sw.location.origin) return;
-  if (u.pathname.startsWith('/assets/')) return e.respondWith(caches.open(ASSETS).then(c => c.match(u.pathname)).then(m => m || fetch(r)));
+  if (u.pathname.startsWith('/assets/')) return e.respondWith(cached(u.pathname).then(m => m || fetch(r)));
   if (r.mode !== 'navigate' || !SHELL.test(u.pathname)) return;
   e.respondWith((async () => {
     const pages = await caches.open(PAGES);
