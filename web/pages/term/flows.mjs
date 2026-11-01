@@ -16,6 +16,16 @@ const dur = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 
 /** how long an agent ran (or runs) */
 const took = a => { const t0 = Date.parse(a.t0), t1 = a.state === 'running' ? Date.now() : Date.parse(a.t1); return t0 && t1 > t0 ? dur(t1 - t0) : ''; };
 
+/** HH:MM of a stamp */
+const clock = t => { const d = new Date(t); return isNaN(+d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); };
+// what it did, newest first, as Claude's own transcript reads: what it said as text, each tool as its name and what for, a repeat folded
+// (×3), the time only where it changes
+const rows = xs => xs.reduce((rs, x) => {
+  const p = rs[rs.length - 1];
+  if (x.k === 'tool' && p?.k === 'tool' && p.n === x.n && p.s === x.s) { p.c++; p.t = x.t; } else rs.push({ ...x, c: 1 });
+  return rs;
+}, []).reverse();
+
 /** @param {(j: any, t0: number) => void} [on] each answer, whole, and when it was asked (term.mjs hands its `claude` to the composer) */
 export function flows(on) {
   const args = new URLSearchParams(location.search).getAll('arg');
@@ -23,16 +33,9 @@ export function flows(on) {
   const badge = el('span', { id: 'ccwf', hidden: true });
   const box = el('div', { className: 'wf', hidden: true });
   /** @type {{ run: string, id: string } | null} */ let sel = null; // null: the list; a run with no id: that run; an id: that agent
+  /** @type {any} */ let fan; // a desktop's view (wfdesk.mjs), told each answer
   let last = { runs: [], agents: [] }, log = null; // the feed's last answer; the open agent's
 
-  const clock = t => { const d = new Date(t); return isNaN(+d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); };
-  // what it did, newest first, as Claude's own transcript reads: what it said as text, each tool as its name and what for, a repeat folded
-  // (×3), the time only where it changes
-  const rows = xs => xs.reduce((rs, x) => {
-    const p = rs[rs.length - 1];
-    if (x.k === 'tool' && p?.k === 'tool' && p.n === x.n && p.s === x.s) { p.c++; p.t = x.t; } else rs.push({ ...x, c: 1 });
-    return rs;
-  }, []).reverse();
   const detail = () => {
     const r = last.runs.find(x => x.id === sel.run), a = (r ? r.agents : last.agents).find(x => x.id === sel.id);
     const st = a ? a.state : '', end = st === 'running' ? Date.now() : Date.parse(log?.steps.at(-1)?.t || '');
@@ -96,12 +99,13 @@ export function flows(on) {
       el('div', { className: 'rh' }, el('b', {}, 'Agents'), el('small', {}, `${busy.length} running`)),
       el('ul', {}, ...busy.map(a => el('li', { className: a.state, title: a.desc, 'data-id': a.id }, el('i', {}, MARK[a.state] || '·'),
         el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null)))))
-    : null);
+    : ''); // not null: replaceChildren prints it, a "null" under the run (the desktop, 2026-11-01)
     if (sel) show();
     const going = live.length + busy.length;
     badge.hidden = !going;
     badge.className = going ? 'running' : '';
     badge.textContent = going ? String(going) : '';
+    fan?.(last);
     const say = going ? `${going} running` : '';
     badge.parentElement?.setAttribute('aria-label', 'terminal actions' + (say ? ', ' + say : ''));
   };
@@ -114,5 +118,5 @@ export function flows(on) {
   tick();
   setInterval(tick, POLL);
   document.addEventListener('visibilitychange', tick);
-  return { badge, box, tick, home };
+  return { badge, box, tick, home, url, on: f => { fan = f; } };
 }

@@ -43,6 +43,7 @@ const ASKP = { q: 'Is this plan right?', opts: ['Looks right', 'Something is off
 const ASKM = { q: 'Which checks should run?', opts: [['Lint', 'Run the linter over the changed code'], ['Tests', 'Run the unit and integration test suites']] };
 const words = (t, w) => { const out = []; let l = ''; for (const x of t.split(' ')) { if (l && (l + ' ' + x).length > w) { out.push(l); l = x; } else l = l ? l + ' ' + x : x; } if (l) out.push(l); return out; };
 const agReq = []; // the agent-detail requests the sheet made
+let BUSY = true; // a subagent running in the workflows fixture
 let FRONT = false; // workflows.json's word: Claude is in front in the pane
 
 class FakeClaude {
@@ -205,8 +206,8 @@ class FakeClaude {
 }
 
 const cmdReq = [];
-async function phone(w, h) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
+async function phone(w, h, touch = true) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: touch && engine !== 'firefox', hasTouch: touch, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
   await ctx.addInitScript(() => {
     // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
     const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
@@ -280,7 +281,7 @@ async function phone(w, h) {
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
       desc: 'Build the email engine, then review it', start: Date.now() - 6_000_000,
       agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done', model: 'Sonnet 5.5', tok: 156537, t0: '2026-10-26T21:08:37Z', t1: '2026-10-26T21:12:57Z' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
-      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
+      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }].filter(a => BUSY || a.state !== 'running') }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -780,6 +781,54 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     const sz = P.fake().sizes || [];
     check(`${tag} 15 reopened ${n}: the new UI from the first frame, at most ${maxSizes} resize after the attach (${sz.length}; in sight ${re.shownAt} ms after the first output)`, !re.ent.length && !re.boot && re.shown && sz.length <= maxSizes, [re.ent.slice(0, 3), re, sz]);
   }
+  await P.ctx.close();
+}
+// a desktop (2026-11-01, designs B + D): no key bar, so no ⋯ badge. A running workflow is a chip in the composer's bar (its phase of its
+// phases), a click opens a popover over it, "Open run" a full view: phases, a timeline of the agents, the chosen agent's log. Esc closes
+// each without reaching Claude (its Esc interrupts). PHONES=desk runs only this
+if (!process.env.PHONES || process.env.PHONES.split(',').includes('desk')) {
+  const P = await phone(1280, 800, false), F = P.fake();
+  await P.page.waitForFunction(() => { const b = document.getElementById('ccflows'); return b && !b.hidden && b.offsetWidth; }, null, { timeout: 8000 }).catch(() => {});
+  const c = await P.page.evaluate(() => { const b = document.getElementById('ccflows'); return { t: b?.textContent, label: b?.getAttribute('aria-label'), shown: !!b && !b.hidden && !!b.offsetWidth, inBar: !!b?.closest('#cccomp .cbar'), lazy: [...document.scripts].length && performance.getEntriesByType('resource').some(e => /\/wfdesk\.[A-Z0-9]+\.mjs$/.test(e.name)) }; });
+  check('desk W1 a running workflow: a chip in the composer bar with its phase of its phases, from the desktop-only chunk', c.shown && c.inBar && c.t === '2/2' && /phase 2 of 2/.test(c.label || '') && c.lazy, c);
+  const esc0 = (F.inputs || []).filter(x => x === '\x1b').length;
+  await P.page.click('#ccflows'); await sleep(300);
+  const o = await P.page.evaluate(() => {
+    const p = document.getElementById('wfpop'), r = p.getBoundingClientRect(), ch = document.getElementById('ccflows').getBoundingClientRect();
+    return { open: !p.hidden, txt: p.textContent, segs: p.querySelectorAll('.wfseg i').length, ags: [...p.querySelectorAll('button[data-id]')].map(b => b.textContent.slice(0, 14)),
+      above: r.bottom <= ch.top + 1 && r.top >= 0 && r.left >= 0 && r.right <= innerWidth, exp: document.getElementById('ccflows').getAttribute('aria-expanded') };
+  });
+  await shot(P, 'desk-W3-popover');
+  check('desk W3 the popover over the chip: the run, its phases as a bar, phase 2/2, its agents running first, the subagents, Open run', o.open && o.exp === 'true' && o.above && o.txt.includes('email-engine-build') && o.segs === 2 && o.txt.includes('phase 2/2')
+    && /^●review:branch/.test(o.ags[0] || '') && o.txt.includes('dev-ladder') && o.txt.includes('Open run'), o);
+  await P.page.keyboard.press('Escape'); await sleep(200);
+  const e1 = await P.page.evaluate(() => ({ open: !document.getElementById('wfpop').hidden, focus: document.activeElement?.id }));
+  check('desk W4 Esc closes the popover, back on the chip, and Claude gets no Esc', !e1.open && e1.focus === 'ccflows' && (F.inputs || []).filter(x => x === '\x1b').length === esc0, e1);
+  await P.page.click('#ccflows'); await sleep(200);
+  const before = agReq.length;
+  await P.page.click('#wfpop .open'); await sleep(600);
+  const v = await P.page.evaluate(() => {
+    const w = document.getElementById('wfrun');
+    return { open: !w.hidden, pop: !document.getElementById('wfpop').hidden, title: w.querySelector('.tt b')?.textContent, phases: [...w.querySelectorAll('nav button')].map(b => b.textContent),
+      rows: [...w.querySelectorAll('.tr')].map(t => t.querySelector('.lb').textContent), sel: w.querySelector('.tr.sel .lb')?.textContent, log: w.querySelector('aside')?.textContent || '',
+      bar: (() => { const b = w.querySelector('.tr.running .bar'); return b ? [parseFloat(b.style.left), parseFloat(b.style.width)] : null; })(), focus: document.activeElement?.className };
+  });
+  await shot(P, 'desk-W5-run');
+  check('desk W5 Open run: the full view, phases, a timeline row per agent, the running one chosen and its log, newest first', v.open && !v.pop && v.title === 'email-engine-build' && v.phases.length === 2
+    && v.rows.length === 3 && v.sel === 'review:branch' && agReq.length > before && /Run the suite ×2[\s\S]*Reviewing the branch/.test(v.log) && v.focus === 'x', [v, agReq.slice(before)]);
+  await P.page.click('#wfrun .tr[data-id="w1"]'); await P.page.click('#wfrun nav button[data-ph="Build"]'); await sleep(400);
+  const f = await P.page.evaluate(() => ({ rows: [...document.querySelectorAll('#wfrun .tr .lb')].map(t => t.textContent), sel: document.querySelector('#wfrun .tr.sel .lb')?.textContent, q: '' }));
+  check('desk W6 a row picks its agent (its log asked for, of this run); a phase shows only its agents', f.sel === 'build:lego0' && f.rows.join() === 'build:lego0,build:web' && /agent=w1&run=wf_0123abcd-ef0/.test(agReq.at(-1) || ''), [f, agReq.at(-1)]);
+  await P.page.keyboard.press('Escape'); await sleep(200);
+  const e2 = await P.page.evaluate(() => ({ open: !document.getElementById('wfrun').hidden, focus: document.activeElement?.id }));
+  check('desk W7 Esc closes the full view, back on the chip, and Claude gets no Esc', !e2.open && e2.focus === 'ccflows' && (F.inputs || []).filter(x => x === '\x1b').length === esc0, e2);
+  // the phone's sheet with no subagent running: the block under the run was a "null" (replaceChildren prints it; 2026-11-01). The ⋯ key is
+  // hidden on a desktop but still opens the sheet
+  BUSY = false;
+  await key(P, 'Menu'); await sleep(300);
+  await P.page.waitForFunction(() => !document.querySelector('#ccsheet .wf .ags'), null, { timeout: 8000 }).catch(() => {});
+  const z = await P.page.evaluate(() => { const w = document.querySelector('#ccsheet .wf'); return { ags: !!w?.querySelector('.ags'), txt: w?.textContent || '', stray: [...(w?.childNodes || [])].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent) }; });
+  check('desk W2 no subagent running: no Agents block, and no stray "null" under the run', !z.ags && !z.stray.length && z.txt.includes('email-engine-build'), z);
   await P.ctx.close();
 }
 await browser.close();
