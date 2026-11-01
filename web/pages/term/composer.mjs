@@ -19,7 +19,6 @@
 import { claudeScreen } from './claudebox.mjs';
 import { coarse, el, icon, off, say } from './dom.mjs';
 import { mods } from './bar.mjs';
-import { picker } from './pick.mjs';
 
 const SEND = '<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';
 const LINGER = 1500, SETTLE = 400, ASKED = 3000;
@@ -53,7 +52,13 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   // the "/" menu: Claude's commands, the session's skills and custom commands (/app/commands.json), filtered as the field is typed; it opens
   // above the field, over the terminal (no layout change: nothing resizes); a tap puts the command in the field
   const cmds = el('div', { id: 'cccmds', role: 'listbox', 'aria-label': 'commands', hidden: true });
-  const sheet = picker(term); // Claude's /model and the like, as a sheet
+  // Claude's /model and the like, as a sheet. Its own chunk (2026-11-01: the term route's 132 kB): fetched once the page is idle, so it is
+  // in hand by the first picker; a picker up before that waits for it, and the latest one asked for is the one shown
+  /** @type {{ show: (p: any) => void } | null} */ let sh = null, want = null;
+  const load = () => import('./pick.mjs').then(m => { sh = m.picker(term); sh.show(want); }, () => {});
+  let loading = null;
+  const sheet = { show: (/** @type {any} */ p) => { want = p; if (sh) sh.show(p); else if (p) loading ||= load(); } };
+  setTimeout(() => { loading ||= load(); }, 1500);
   // the entry (the phone, 2026-10-24: opening a session showed Claude's own box and tmux's line, cut mid-resize, before the field took over).
   // The page starts as it will look: the field up, and Claude's rows already under the dock (as many as this session had last time, so the
   // pty's first size is its final one: no resize, no second redraw); the terminal stays out of sight until Claude has redrawn with its box

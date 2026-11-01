@@ -127,9 +127,10 @@ chk "cap: budget reaches the response"  'curl -s http://127.0.0.1:3005/api/agent
 # assertions above would all still pass if `authorities` were dropped from the response entirely.
 chk "cap: authorities name the kind and the tools that confer it" \
   'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.authorities == [{\"kind\":\"shell\",\"beyondList\":true,\"tools\":[\"Bash\"]}]"'
-# permissionMode is read but never verified, and the panel says so; it must at least reach the page.
+# permissionMode is read but never verified, and the panel says so; it must at least reach the page. The fixture's
+# mode is dontAsk since db97fc2 ("default" is no longer a CLI mode; the lint rejects it).
 chk "cap: permissionMode crosses the wire" \
-  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.permissionMode == \"default\""'
+  'curl -s http://127.0.0.1:3005/api/agents/harness-reviewer | jq -e ".capability.policy.permissionMode == \"dontAsk\""'
 # The residue fields: a tool this page cannot classify, and an MCP tool whose reach is unknowable.
 # Both are empty for this fixture, and both must be PRESENT and empty rather than absent — absent
 # and empty are the same to jq, which is the trap the ghost assertion below also had to dodge.
