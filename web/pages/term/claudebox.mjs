@@ -64,8 +64,9 @@ export function claudeScreen(rows, typed = rows) {
 }
 
 // the figures of our status line (claude/scripts/statusline.py: `$3.00 session`, `5h 19% · wk 71%`, `🧠 50k (25%)`) and Claude's
-// own count of background agents on its mode line (`· 1 agent`); a row that wraps in a narrow pane is read joined. null when none is there
-const CTX = /(\d+)k \((\d+)%\)/, AGENTS = /\b(\d+) (?:background )?(?:agents?|tasks?|shells?)\b/;
+// own count of background agents on its mode line (`· ← 1 agent`); a row that wraps in a narrow pane is read joined. null when none is there.
+// Not `· 1 shell`: a background shell is no agent, and ← (the chip) opens the agents view, where it is not (the phone, 2026-11-01)
+const CTX = /(\d+)k \((\d+)%\)/, AGENTS = /\b(\d+) (?:background )?(?:agents?|tasks?)\b/;
 /** @param {string} s the rows under the box, joined */
 export function usage(s) {
   const cost = /\$(\d+(?:\.\d+)?) session/.exec(s), q = /\b5h (\d+)% · wk (\d+)%/.exec(s);
@@ -153,7 +154,7 @@ export function claudePanel(rows) {
 // the picker's own top line is ▔ (2026-10-24); ─ as a fallback. Claude can draw a hint into the ▔ line (`▔▔▔ ● high · /effort ▔`, 2026-10-30)
 const TOP = /^\s*(?:─{8,}|▔{8,}(?: .* ▔+)?)\s*$/;
 const OPT = /^\s*([❯↑↓])?\s*(\d{1,2})\.\s+(\S.*?)(?:\s{2,}(\S.*))?$/, MORE = /^\s*…\s*\+(\d+)\s+(\S.*)$/, ADJ = /^\s*\S?\s*(.+?)\s*←\/→ to adjust/;
-const HEAD = /^\s*(?:←\s+)?[☐☒✔]\s+\S/, BOX = /^\[([ ✔])\]\s+(.*)$/, SUBMIT = /^\s*(❯)?\s*Submit$/;
+const HEAD = /^\s*(?:←\s+)?[☐☒✔]\s+\S/, BOX = /^\[([ ✔])\]\s+(.*)$/, SUBMIT = /^\s*(❯)?\s*(Submit|Next)$/; // `Next` on a question that is not the last of its form (Claude's submitButtonText, 2.1.316)
 /** @param {string[]} rows */
 export function claudePicker(rows) {
   rows = rows.map(r => r.trimEnd()); // the lengths measure the column: a row as xterm reads it keeps the spaces tmux cleared it with
@@ -161,7 +162,7 @@ export function claudePicker(rows) {
   const end = f < 0 ? rows.findLastIndex((x, i) => i < rows.length - 1 && x.trim() && !RULE.test(x)) : -1; // a page with no keys: its last row, if a question's
   if (f < 0) f = end;
   if (f < rows.length - 16 || f < 0) return null;
-  const r = rows.findLastIndex((x, i) => i < f && TOP.test(x) && !OPT.test(rows[i + 1] || '')); // not the line over `Chat about this`
+  const r = rows.findLastIndex((x, i) => i < f && TOP.test(x) && !OPT.test(rows[i + 1] || '') && !/^\s*❯?\s*Chat about this$/.test(rows[i + 1] || '')); // not the line over `Chat about this`
   if (r < 0 || !rows[r + 1]?.trim() || below(rows, f) || rows.slice(r, f).some(x => SEARCH.test(x))) return null;
   const ask = HEAD.test(rows[r + 1]);
   if (end >= 0 && !ask) return null;
@@ -169,12 +170,25 @@ export function claudePicker(rows) {
   // review 2026-10-26), so its words are looked for on every row from the line down, a question's own words included (one asking "Do you
   // want to …" gets Claude's drawing)
   for (let i = Math.max(0, r); i < rows.length - 1; i++) if (RULE.test(rows[i]) && PROMPT.test(rows[i + 1]) && !OPT.test(rows[i + 1]) || ASK.test(rows[i])) return null;
-  const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]), ask, submit: /** @type {{ on: boolean } | null} */ (null) };
+  // a question whose options carry previews (live captures at 50 and 120 columns, 2026-10-31): the highlighted option's preview is a box right
+  // of the options (from the first option's row), `Notes: press n to add notes` under it, no free option, and `Chat about this` unnumbered.
+  // The box is the sheet's body, the rows left of it are the question's
+  let pv = null;
+  const bt = ask ? rows.findIndex((x, i) => i > r && i < f && OPT.test(x) && /\s{2}┌─+┐$/.test(x)) : -1;
+  if (bt >= 0) {
+    const c = rows[bt].indexOf('┌'), bb = rows.findIndex((x, i) => i > bt && x.slice(c).startsWith('└')), e = rows.findIndex((x, i) => i > bb && TOP.test(x));
+    if (bb < 0 || e < 0 || e > f) return null;
+    pv = rows.slice(bt + 1, bb).map(x => x.slice(c).replace(/^│ ?/, '').replace(/\s*│$/, ''));
+    rows = rows.map((x, i) => (i >= bt && i < e ? x.slice(0, c).trimEnd() : x));
+  }
+  const p = { title: '', text: '', opts: /** @type {any[]} */ ([]), more: '', adjust: '', keys: /** @type {{ key: string, label: string }[]} */ ([]), ask, submit: /** @type {{ on: boolean, label: string } | null} */ (null),
+    body: pv, arrows: !!pv };
   let edge = 0, foot = '', brk = false;
   for (const row of rows.slice(r + 1, f + 1)) {
-    const m = OPT.exec(row), a = ADJ.exec(row), t = row.trim().replace(/^│\s?/, ''), o = p.opts.at(-1), sub = ask && SUBMIT.exec(row);
-    if (TOP.test(row)) { if (ask && o) o.free = true; continue; } // the line over `Chat about this`: the option above it takes free text
-    if (sub) { p.submit = { on: !!sub[1] }; continue; }
+    const m = OPT.exec(row), a = ADJ.exec(row), t = row.trim().replace(/^│\s?/, ''), o = p.opts.at(-1), sub = ask && SUBMIT.exec(row), chat = pv && /^\s*(❯)?\s*Chat about this$/.exec(row);
+    if (TOP.test(row)) { if (ask && o && !pv) o.free = true; continue; }
+    if (chat) { p.opts.push({ n: (o?.n ?? 0) + 1, label: 'Chat about this', desc: '', on: !!chat[1], cur: false, up: false, down: false, box: false, col: 0, rows: [] }); continue; } // the line over `Chat about this`: the option above it takes free text
+    if (sub) { p.submit = { on: !!sub[1], label: sub[2] }; continue; }
     if (m) {
       const b = ask ? BOX.exec(m[3]) : null, label = b ? b[2] : m[3];
       const n = { n: +m[2], label: label.replace(/\s*✔$/, ''), desc: '', on: m[1] === '❯', cur: b ? b[1] === '✔' : /✔$/.test(m[3]), up: m[1] === '↑', down: m[1] === '↓', box: !!b, col: 0, rows: /** @type {string[]} */ ([]) };
@@ -196,10 +210,10 @@ export function claudePicker(rows) {
     for (const row of o.rows) { const t = row.slice(o.col).trim(), cut = full && (/\S+$/.exec(o.desc)?.[0] ?? '').length + (/^\S+/.exec(t)?.[0] ?? '').length > edge - o.col; o.desc += (o.desc && !cut ? ' ' : '') + t; full = row.length === edge; }
     delete o.rows; delete o.col;
   }
-  for (const s of foot.split(' · ')) { const m = /^\s*(\S+) to (.+?)\s*$/.exec(s); if (m && !m[1].includes('/')) p.keys.push({ key: m[1], label: m[2] }); }
+  for (const s of foot.split(' · ')) { const m = /^\s*(\S+) to (.+?)\s*$/.exec(s); if (m && !m[1].includes('/') && m[2] !== 'add notes') p.keys.push({ key: m[1], label: m[2] }); }
   // a question has its own furniture: `Chat about this` last, under its ─ line (free: the option above that line), or it is the review page
   // (Submit answers / Cancel, no keys line)
-  if (ask && !(p.opts.at(-1)?.label === 'Chat about this' && p.opts.at(-2)?.free || end >= 0 && p.opts.map(o => o.label).join() === 'Submit answers,Cancel')) return null;
+  if (ask && !(p.opts.at(-1)?.label === 'Chat about this' && (p.opts.at(-2)?.free || pv) || end >= 0 && p.opts.map(o => o.label).join() === 'Submit answers,Cancel')) return null;
   return p.opts.length && p.title && (p.keys.length || ask) ? p : null;
 }
 
