@@ -522,6 +522,20 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     check(`${tag} 8 a tap puts "/effort " in the field, closes the menu, keeps the keyboard`, after.v === '/effort ' && !after.open && after.focus === 'ccmsg', after);
     await P.page.keyboard.type('status'); await P.page.locator('#ccsend').click(); await sleep(700);
     check(`${tag} 8 send runs it in Claude: "/effort status"`, F.last === '/effort status', F.last);
+    // mid-message (2026-11-01: `explain me that using /archify` opened nothing, and the spell-check offered "archery"): the skills, no
+    // built-ins, no spell-check on the word; a pick puts it in where the word was, Enter too (desk S1), and the message is not sent
+    await P.page.locator('#ccmsg').focus(); await P.page.keyboard.type('explain that using /fron'); await sleep(200);
+    const m2 = await P.page.evaluate(() => { const t = document.getElementById('ccmsg'); return { open: !document.getElementById('cccmds').hidden, ns: [...document.querySelectorAll('#cccmds .cmd')].map(b => b.dataset.n), sc: t.getAttribute('spellcheck'), ac: t.getAttribute('autocorrect') }; });
+    check(`${tag} 8 "/" mid-message opens the menu with the skills only, and no spell-check on the word`, m2.open && m2.ns.join() === 'frontend-design' && m2.sc === 'false' && m2.ac === 'off', m2);
+    const n1 = (F.inputs || []).length;
+    await P.page.locator('#cccmds .cmd').first().click();
+    await sleep(150);
+    const m3 = await P.page.evaluate(() => { const t = document.getElementById('ccmsg'); return { v: t.value, open: !document.getElementById('cccmds').hidden, sc: t.getAttribute('spellcheck'), caret: t.selectionStart }; });
+    check(`${tag} 8 a pick puts "/frontend-design " where the word was, keeps the message unsent, spell-check back`, m3.v === 'explain that using /frontend-design ' && !m3.open && m3.sc === 'true' && m3.caret === m3.v.length && (F.inputs || []).length === n1, m3);
+    await P.page.keyboard.type('and see /etc/hosts'); await sleep(150);
+    const m4 = await P.page.evaluate(() => !document.getElementById('cccmds').hidden);
+    check(`${tag} 8 a path mid-message opens no menu`, !m4, m4);
+    await P.page.evaluate(() => { const t = document.getElementById('ccmsg'); t.value = ''; t.dispatchEvent(new Event('input')); });
   }
   // ---- writing (the phone, 2026-10-24: a message typed after using the ⋯ menu landed in Claude's box, and the box showed) ----
   const sent = () => (F.inputs || []).length;
@@ -795,6 +809,15 @@ if (!process.env.PHONES || process.env.PHONES.split(',').includes('desk')) {
   const c = await P.page.evaluate(() => { const b = document.getElementById('ccflows'); return { t: b?.textContent, label: b?.getAttribute('aria-label'), shown: !!b && !b.hidden && !!b.offsetWidth, inBar: !!b?.closest('#cccomp .cbar'), lazy: [...document.scripts].length && performance.getEntriesByType('resource').some(e => /\/wfdesk\.[A-Z0-9]+\.mjs$/.test(e.name)) }; });
   check('desk W1 a running workflow: a chip in the composer bar with its phase of its phases, from the desktop-only chunk', c.shown && c.inBar && c.t === '2/2' && /phase 2 of 2/.test(c.label || '') && c.lazy, c);
   const esc0 = (F.inputs || []).filter(x => x === '\x1b').length;
+  { // a keyboard mid-message: ↓ Enter puts the skill in, the message stays unsent (Enter at the start runs a command, as before)
+    const n1 = (F.inputs || []).length;
+    await P.page.locator('#ccmsg').focus(); await P.page.keyboard.type('explain that using /'); await sleep(400);
+    const ns = await P.page.evaluate(() => [...document.querySelectorAll('#cccmds .cmd')].map(b => b.dataset.n));
+    await P.page.keyboard.press('ArrowDown'); await P.page.keyboard.press('Enter'); await sleep(150);
+    const d = await P.page.evaluate(() => ({ v: document.getElementById('ccmsg').value, open: !document.getElementById('cccmds').hidden }));
+    check('desk S1 "/" mid-message, ↓ Enter: the second skill goes in where the word was, nothing sent', ns.join() === 'frontend-design,superpowers:brainstorming' && d.v === 'explain that using /superpowers:brainstorming ' && !d.open && (F.inputs || []).length === n1, [ns, d]);
+    await P.page.evaluate(() => { const t = document.getElementById('ccmsg'); t.value = ''; t.dispatchEvent(new Event('input')); t.blur(); });
+  }
   await P.page.click('#ccflows'); await sleep(300);
   const o = await P.page.evaluate(() => {
     const p = document.getElementById('wfpop'), r = p.getBoundingClientRect(), ch = document.getElementById('ccflows').getBoundingClientRect();
