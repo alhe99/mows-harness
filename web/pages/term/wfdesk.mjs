@@ -89,6 +89,8 @@ border:1px solid var(--c-line2);font:11px/20px var(--c-mono);color:var(--c-fg2);
 #wfrun aside li{display:flex;gap:8px} #wfrun aside li small{width:40px;flex:none}
 #wfrun aside li p{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap;color:var(--c-fg2)} #wfrun aside li.say p{font-family:var(--c-sans);color:var(--c-mut)}
 #wfrun aside pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--c-mono);color:var(--c-fg2)} #wfrun aside pre.failed{color:var(--c-bad)}
+#wfrun aside pre.o{flex:1;min-height:120px;max-height:none;overflow:auto;padding:10px 12px;border:1px solid var(--c-raised);border-radius:8px;background:var(--c-surface)}
+#wfpop .sl{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px var(--c-mono);color:var(--c-mut)}
 #wfrun aside>p{margin:0;font-size:12px;color:var(--c-mut)}
 @media (max-width:900px){#wfrun nav{display:none} #wfrun aside{width:280px}}
 `;
@@ -119,8 +121,8 @@ export function deskFlows(wf) {
   const view = el('div', { id: 'wfrun', hidden: true });
   document.getElementById('ccagents')?.after(chip);
   document.body.append(pop, view);
-  let d = { runs: [], agents: [] };
-  /** @type {{ run: string, id: string, ph: string } | null} */ let at = null; // the full view: its run ('' a subagent), its agent, a phase filter
+  let d = { runs: [], agents: [], shells: [] };
+  /** @type {{ run: string, id: string, ph: string, sh?: string } | null} */ let at = null; // the full view: its run ('' a subagent), its agent, a phase filter; sh: a shell
   /** @type {any} */ let log = null; let logId = '', aside = el('aside');
 
   const live = () => d.runs.filter(r => r.status === 'running'), busy = () => d.agents.filter(a => a.state === 'running');
@@ -128,14 +130,15 @@ export function deskFlows(wf) {
   const fig = r => { const ps = phasesOf(r), i = ps.indexOf(r.phase), done = r.agents.filter(a => a.state !== 'running').length; return ps.length > 1 && i >= 0 ? { n: ps.length, i, txt: `${i + 1}/${ps.length}`, f: (i + 1) / ps.length } : { n: 0, i, txt: `${done}/${r.agents.length}`, f: r.agents.length ? done / r.agents.length : 0 }; };
 
   const paintChip = () => {
-    const L = live(), B = busy();
-    chip.hidden = !L.length && !B.length;
+    const L = live(), B = busy(), S = d.shells;
+    chip.hidden = !L.length && !B.length && !S.length;
     if (chip.hidden) return closePop();
-    const one = L.length === 1 ? fig(L[0]) : null;
-    label.textContent = one ? one.txt : L.length ? `${L.length} runs` : `${B.length} subagent${B.length > 1 ? 's' : ''}`;
+    const one = L.length === 1 ? fig(L[0]) : null, n = (k, w) => `${k} ${w}${k > 1 ? 's' : ''}`;
+    label.textContent = one ? one.txt : L.length ? n(L.length, 'run') : B.length ? n(B.length, 'subagent') : n(S.length, 'shell');
     ring.querySelector('.rg')?.setAttribute('stroke-dasharray', `${(57 * (one ? one.f : 0.25)).toFixed(1)} 57`);
     chip.classList.toggle('on', !pop.hidden);
-    chip.setAttribute('aria-label', one ? `Workflow ${L[0].name}: ${one.n ? `phase ${one.i + 1} of ${one.n}` : `${one.txt} agents done`}` : label.textContent + ' running');
+    chip.setAttribute('aria-label', [one ? `Workflow ${L[0].name}: ${one.n ? `phase ${one.i + 1} of ${one.n}` : `${one.txt} agents done`}` : label.textContent + ' running',
+      one && S.length ? n(S.length, 'shell') + ' running' : ''].filter(Boolean).join(', '));
   };
 
   // B: the popover over the chip
@@ -153,7 +156,11 @@ export function deskFlows(wf) {
         ...order(r.agents).slice(0, 6).map(a => agentBtn(a, r.id)),
         el('button', { type: 'button', className: 'open', 'data-run': r.id }, el('span', {}, 'Open run'), '→'));
     }), B.length ? el('section', {}, el('div', { className: 'lb' }, 'Subagents'),
-      ...B.map(a => el('button', { type: 'button', className: a.state, 'data-run': '', 'data-id': a.id, title: a.desc }, mark(a.state), el('span', {}, a.label + (a.doing ? ' · ' + a.doing : ''))))) : '');
+      ...B.map(a => el('button', { type: 'button', className: a.state, 'data-run': '', 'data-id': a.id, title: a.desc }, mark(a.state), el('span', {}, a.label + (a.doing ? ' · ' + a.doing : ''))))) : '',
+    // background shells (2026-11-01: "2 shells still running" and nowhere to see them): what each runs and its last line of output
+    d.shells.length ? el('section', {}, el('div', { className: 'lb' }, 'Shells'),
+      ...d.shells.map(x => el('button', { type: 'button', className: 'running', 'data-sh': x.id, title: x.cmd }, mark('running'),
+        el('span', {}, x.desc || x.cmd, x.line ? el('small', { className: 'sl' }, x.line) : null), el('small', {}, x.t0 ? dur(Date.now() - Date.parse(x.t0)) : '')))) : '');
     const c = chip.getBoundingClientRect();
     pop.style.left = Math.max(8, Math.min(c.left, innerWidth - pop.offsetWidth - 8)) + 'px';
     pop.style.bottom = innerHeight - c.top + 8 + 'px';
@@ -162,14 +169,29 @@ export function deskFlows(wf) {
   function closePop() { if (pop.hidden) return; pop.hidden = true; chip.setAttribute('aria-expanded', 'false'); chip.classList.remove('on'); }
   chip.addEventListener('click', () => (pop.hidden ? openPop() : closePop()));
   pop.addEventListener('click', e => {
-    const b = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (e.target).closest('button[data-run]'));
-    if (b) openRun(b.dataset.run || '', b.dataset.id || '');
+    const b = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (e.target).closest('button[data-run],button[data-sh]'));
+    if (b?.dataset.sh) openShell(b.dataset.sh); else if (b) openRun(b.dataset.run || '', b.dataset.id || '');
   });
   document.addEventListener('pointerdown', e => { const t = /** @type {Node} */ (e.target); if (!pop.hidden && !pop.contains(t) && !chip.contains(t)) closePop(); });
 
   // D: the full view of a run (or of one subagent)
-  const more = () => { const id = at?.id, run = at?.run || ''; if (!id) return; fetch(`${wf.url}&agent=${encodeURIComponent(id)}${run ? '&run=' + encodeURIComponent(run) : ''}`)
+  const more = () => {
+    const sh = at?.sh; if (sh) { fetch(`${wf.url}&shell=${encodeURIComponent(sh)}`).then(r => (r.ok ? r.json() : null)).then(j => { if (j && at?.sh === sh) { log = j.shell || { text: '' }; logId = sh; paintShell(); } }, () => {}); return; }
+    const id = at?.id, run = at?.run || ''; if (!id) return; fetch(`${wf.url}&agent=${encodeURIComponent(id)}${run ? '&run=' + encodeURIComponent(run) : ''}`)
     .then(r => (r.ok ? r.json() : null)).then(j => { if (j && at?.id === id) { log = j.agent || { steps: [], result: '' }; logId = id; paintAside(); } }, () => {}); };
+  // a shell: its command, since when, and its output, kept at the bottom while it is read at the bottom (a reader scrolled up stays there)
+  function paintShell() {
+    const x = d.shells.find(y => y.id === at?.sh) || (logId === at?.sh ? log : null), L = logId === at?.sh ? log : null;
+    const pre = aside.querySelector('pre.o'), stick = !pre || pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24, keep = pre?.scrollTop || 0;
+    const gone = !d.shells.some(y => y.id === at?.sh);
+    aside.replaceChildren(
+      el('div', { className: 'ah' }, mark(gone ? 'done' : 'running'), el('b', {}, x?.desc || 'Shell'), el('small', {}, x?.moved ? 'moved to the background by its timeout' : '')),
+      el('small', {}, [x?.t0 ? 'started ' + clock(x.t0) : '', x?.t0 ? dur(Date.now() - Date.parse(x.t0)) : '', gone ? 'no longer running' : ''].filter(Boolean).join(' · ')),
+      el('h3', {}, 'Command'), el('pre', {}, x?.cmd || ''),
+      el('h3', {}, 'Output, latest at the bottom'),
+      el('pre', { className: 'o' }, !L ? 'Loading…' : L.text?.trim() || (L.out === '' ? 'Its output is not where Claude keeps it.' : 'No output yet.')));
+    const o = aside.querySelector('pre.o'); if (o) o.scrollTop = stick ? o.scrollHeight : keep;
+  }
   const agentOf = () => (at?.run ? runOf(at.run)?.agents : d.agents)?.find(a => a.id === at?.id);
   function paintAside() {
     const a = agentOf(), L = logId === at?.id ? log : null, keep = aside.scrollTop;
@@ -191,6 +213,8 @@ export function deskFlows(wf) {
     if (!at) return;
     const r = at.run ? runOf(at.run) : null, a = agentOf();
     if (at.run && !r) { view.replaceChildren(panel('Run ended', '', '', '', el('div', { className: 'bd' }, el('div', { className: 'tl' }, el('p', {}, 'This run is no longer in the feed.'))))); return; }
+    if (at.sh) { paintShell(); const x = d.shells.find(y => y.id === at?.sh) || log;
+      view.replaceChildren(panel(x?.desc || x?.cmd || 'Shell', d.shells.some(y => y.id === at?.sh) ? 'running' : 'done', '', 'background shell', el('div', { className: 'bd solo' }, aside))); return; }
     if (!r) { paintAside(); view.replaceChildren(panel(a?.label || 'Subagent', a?.state || '', a?.desc || '', '', el('div', { className: 'bd solo' }, aside))); return; }
     const ps = phasesOf(r), f = fig(r), now = Date.now();
     const end = r.status === 'running' ? now : Math.max(r.last, ...r.agents.map(x => Date.parse(x.t1) || 0)), span = Math.max(1, end - r.start);
@@ -228,6 +252,12 @@ export function deskFlows(wf) {
     view.hidden = false; aside = el('aside', { 'aria-label': 'Agent' }); paintView(); more();
     /** @type {HTMLElement | null} */ (view.querySelector('.x'))?.focus();
   }
+  function openShell(sh) {
+    closePop();
+    at = { run: '', id: '', ph: '', sh }; log = null; logId = '';
+    view.hidden = false; aside = el('aside', { 'aria-label': 'Shell' }); paintView(); more();
+    /** @type {HTMLElement | null} */ (view.querySelector('.x'))?.focus();
+  }
   const closeView = () => { if (view.hidden) return; view.hidden = true; at = null; view.replaceChildren(); if (!chip.hidden) chip.focus(); };
   view.addEventListener('click', e => {
     const t = /** @type {HTMLElement} */ (e.target);
@@ -245,7 +275,7 @@ export function deskFlows(wf) {
 
   wf.on(x => {
     d = x; paintChip(); paintPop();
-    if (!view.hidden) { paintView(); if (agentOf()?.state === 'running' || !log) more(); }
+    if (!view.hidden) { paintView(); if (at?.sh || agentOf()?.state === 'running' || !log) more(); }
   });
   return { chip, pop, view };
 }
