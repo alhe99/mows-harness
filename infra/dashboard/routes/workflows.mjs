@@ -63,10 +63,21 @@ export async function readRun(sdir, id) {
     else if ((e.type === 'result' || e.type === 'failed') && agents.has(e.agentId)) agents.get(e.agentId).state = e.type === 'result' ? 'done' : 'failed';
   }
   let fin = null; try { fin = ftxt ? JSON.parse(ftxt) : null; } catch {}
-  const script = scripts.find(f => f.endsWith('-' + id + '.js'));
+  let sdir2 = path.join(sdir, 'workflows', 'scripts'), script = scripts.find(f => f.endsWith('-' + id + '.js'));
+  // Claude keeps the script under the project of the folder it was LAUNCHED in, and a session that moved (EnterWorktree, /cd) writes its
+  // transcript under the new one (2026-11-01: launched in ~, the transcript under the worktree, the run read as its bare id, no phases).
+  // The same session id under a sibling project. ponytail: one readdir of the projects plus one per project, only for a run whose script
+  // is not beside its transcript; a cache when that is every poll of many runs
+  if (!script && !fin) {
+    const projects = path.dirname(path.dirname(sdir)), sid = path.basename(sdir);
+    for (const d of await fsp.readdir(projects).catch(() => [])) {
+      const dir = path.join(projects, d, sid, 'workflows', 'scripts'), f = (await fsp.readdir(dir).catch(() => [])).find(x => x.endsWith('-' + id + '.js'));
+      if (f) { sdir2 = dir; script = f; break; }
+    }
+  }
   let phases = Array.isArray(fin?.phases) ? fin.phases.map(p => String(p.title || '')) : [], desc = '';
   if (script) { // ponytail: a regex over meta, not an eval; a script whose phases are not plain quoted titles shows none
-    const src = await readCapped(path.join(sdir, 'workflows', 'scripts', script), TAIL, true);
+    const src = await readCapped(path.join(sdir2, script), TAIL, true);
     desc = (/description\s*:\s*(['"`])(.*?)\1/.exec(src) || [])[2] || '';
     const m = /phases\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}/.exec(src);
     if (!phases.length && m) phases = [...m[1].matchAll(/title\s*:\s*(['"`])(.*?)\1/g)].map(x => x[2]);
@@ -241,5 +252,14 @@ if (main && process.argv[2] === '--check') {
   assert.equal((await agentLog(sdir + '.jsonl', id, 'a2')).failed, true);
   assert.equal(await agentLog(sdir + '.jsonl', '', '../a1'), null); assert.equal(await agentLog(sdir + '.jsonl', '../x', 'a1'), null);
   await fsp.rm(sdir, { recursive: true });
+  // a session that moved: its transcript under one project, the script under the project it was launched in (same session id)
+  const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'wfp-')), id2 = 'wf_4567cdef-012', moved = path.join(base, 'worktree', 'sid1');
+  await fsp.mkdir(path.join(moved, 'subagents', 'workflows', id2), { recursive: true });
+  await fsp.writeFile(path.join(moved, 'subagents', 'workflows', id2, 'journal.jsonl'), JSON.stringify({ type: 'started', agentId: 'b1', label: 'x', phase: 'One' }) + '\n');
+  await fsp.mkdir(path.join(base, 'home', 'sid1', 'workflows', 'scripts'), { recursive: true });
+  await fsp.writeFile(path.join(base, 'home', 'sid1', 'workflows', 'scripts', `web-build-${id2}.js`), "export const meta = { name: 'web-build', description: 'Moved', phases: [{ title: 'One' }, { title: 'Two' }] }\n");
+  [r] = await runsOf(moved + '.jsonl');
+  assert.deepEqual([r.name, r.desc, r.phases], ['web-build', 'Moved', ['One', 'Two']]);
+  await fsp.rm(base, { recursive: true });
   console.log('workflows.mjs: ok');
 }

@@ -42,11 +42,28 @@ export function picker(term) {
   let shut = 0;
   dragToClose(wrap, pan, () => { wrap.classList.remove('open'); shown = ''; free = null; shut = Date.now(); term.input('\x1b'); });
   document.body.append(wrap);
+  // a keyboard's arrows (a desktop, 2026-10-31: a click on an option took the focus from the field, whose keydown sends them): with no text
+  // field focused, they go to Claude while the sheet is up
+  const ARROW = { ArrowUp: UP, ArrowDown: DN, ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C' };
+  document.addEventListener('keydown', e => {
+    const k = ARROW[e.key], t = /** @type {any} */ (e.target);
+    if (!k || !wrap.classList.contains('open') || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || t?.closest?.('input, textarea')) return;
+    e.preventDefault(); term.input(k);
+  });
+  const typing = () => !!document.activeElement?.matches?.('#ccpick .free textarea');
+  /** @type {any} */ let held; // what Claude showed while the field was typed in; undefined: nothing
+  // the field let go: what was held, unless Claude's dialog read as gone (keyboard up, it was cut off). ponytail: the keyboard going resizes,
+  // so Claude redraws and the next scan says what is there
+  wrap.addEventListener('focusout', () => setTimeout(() => { if (held && !typing()) show(held); }));
   const btn = (cls, label, fn, kids = []) => { const b = el('button', { type: 'button', className: cls }, label, ...kids); b.addEventListener('click', fn); return b; };
 
   /** what Claude shows now; null closes the sheet */
   function show(/** @type {any} */ next) {
     if (next && Date.now() - shut < SHUT) return;
+    // typing in the free option's field: the sheet holds. Its keyboard shrinks the terminal and Claude redraws, cut off or rewrapped; a rebuilt
+    // field had no keyboard, the terminal grew back, round again (the phone, 2026-10-31). Claude's dialog waits on the answer: it is still there
+    if (free !== null && typing()) { held = next; return; }
+    held = undefined;
     const k = next ? JSON.stringify(next) : '';
     if (k === shown) return;
     shown = k; p = next;
@@ -100,7 +117,7 @@ export function picker(term) {
       });
       srch = el('div', { className: 'free' }, q);
     }
-    if (p.submit) acts0.push(btn('pri', 'Submit', () => { go(fr ? fr.n + 1 : rank(last.n) + 1); term.input('\r'); }));
+    if (p.submit) acts0.push(btn('pri', p.submit.label, () => { go(fr ? fr.n + 1 : rank(last.n) + 1); term.input('\r'); }));
     const acts = own ? p.keys.filter(x => x.key !== 'Esc' && keyOf(x.key)).sort((a, b) => +(a.key === 'Enter') - +(b.key === 'Enter'))
       .map(x => btn(x.key === 'Enter' ? 'pri' : '', cap(x.label), () => press(x.key))) : acts0;
     pan.setAttribute('aria-label', p.title);

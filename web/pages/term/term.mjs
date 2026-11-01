@@ -120,6 +120,9 @@ document.body.append(el('div', { id: 'ccdock' }, comp?.el, bar));
 fit(true); // now, not from the observer a frame later: the socket may open first, and the size it sends is the pty's (one redraw, not two)
 if (coarse()) wrap.append(modChip());
 bar.querySelector('[data-k=Menu]')?.append(wf.badge);
+// a desktop has no key bar to carry the ⋯ badge: its own view of the runs, a chip in the composer's bar with a popover and a full view (loaded
+// only here, so a phone never fetches it)
+if (comp && !coarse()) import('./wfdesk.mjs').then(m => m.deskFlows(wf));
 comp?.ask(wf.tick);
 touchScroll();
 if (!off('links')) tapLinks(term);

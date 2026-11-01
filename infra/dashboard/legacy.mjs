@@ -1311,7 +1311,7 @@ const MD_CSS = `.mdhead{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:bas
 // (real flowcharts/sequences run 1000-2800px) start fitted to the column as an overview;
 // a tap toggles natural size, scrolled sideways inside the .mdmmd box.
 // ponytail: CDN-loaded (major-pinned) — vendor the file if the box must render offline.
-const MD_MERMAID = `<script type="module">
+export const MD_MERMAID = `<script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@12/dist/mermaid.esm.min.mjs';
 mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
 let n = 0;

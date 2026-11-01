@@ -37,9 +37,13 @@ const EFF = ['low', 'medium', 'high', 'xhigh'], WIN = 4;
 const ASK1 = { head: 'Prod Doppler', q: 'Every missing Doppler value is in prod. Writing them makes new prod secrets and can restart running prod pods. How far should I go?',
   opts: [['Prepare, you run it (Recommended)', 'I write a ready, tested script: generate the credential pair and CA, upload by pipe, hash-check, shred. You run it for prod when ready.'],
     ['Credentials only, now', 'I generate the proxy username/password and write it to the three prod consumer configs. No CA.'], ['Everything, now', 'Credentials plus a prod CA generated on this VM, key uploaded straight to Doppler and shredded.']] };
+// one whose options carry previews (live captures at 50 and 120 columns, 2026-10-31): the highlighted option's preview a box right of the
+// options, a notes line under it, no free option, `Chat about this` unnumbered
+const ASKP = { q: 'Is this plan right?', opts: ['Looks right', 'Something is off'], pv: ['[Load]', '[Decode]'] };
 const ASKM = { q: 'Which checks should run?', opts: [['Lint', 'Run the linter over the changed code'], ['Tests', 'Run the unit and integration test suites']] };
 const words = (t, w) => { const out = []; let l = ''; for (const x of t.split(' ')) { if (l && (l + ' ' + x).length > w) { out.push(l); l = x; } else l = l ? l + ' ' + x : x; } if (l) out.push(l); return out; };
 const agReq = []; // the agent-detail requests the sheet made
+let BUSY = true; // a subagent running in the workflows fixture
 let FRONT = false; // workflows.json's word: Claude is in front in the pane
 
 class FakeClaude {
@@ -96,9 +100,11 @@ class FakeClaude {
         if (this.ahl === 3 && c === '\x7f') { this.atext = this.atext.slice(0, -1); continue; }
         if (/[1-3]/.test(c)) { this.ticks[+c - 1] = !this.ticks[+c - 1]; continue; }
         if (c === '4') { this.answer('chat'); continue; }
+        if (c === '\r' && this.ahl === 4 && this.next) { this.answer('next: ' + this.ticks.join()); continue; }
         if (c === '\r') { if (this.ahl === 4) this.answer('submitted: ' + ['Lint', 'Tests', this.atext || 'Type something'].filter((_, i) => this.ticks[i]).join(',')); else if (this.ahl === 5) this.answer('chat'); else this.ticks[this.ahl - 1] = !this.ticks[this.ahl - 1]; }
         continue;
       }
+      if (this.scene === 'askp') { if (c === '\r') this.answer(this.ahl === 3 ? 'chat' : String(this.ahl)); continue; }
       if (this.scene === 'dialog') { if (c === '\r') c = '1'; /* Enter answers the highlighted option, the first */ if (/[1-3]/.test(c)) { this.log.push(`\x1b[2m  ⎿  answered ${c}\x1b[0m`, ''); this.scene = 'idle'; } continue; }
       if (c === '\r') { if (this.draft.trim()) this.submit(); continue; }
       if (c === '\x7f') { this.draft = this.draft.slice(0, -1); continue; }
@@ -153,13 +159,19 @@ class FakeClaude {
         tail = [R2, ` ${hd('☐ ' + ASK1.head)}`, '', ...words(ASK1.q, w - 2).map(r => '│ ' + r), '',
           ...ASK1.opts.flatMap(([l, d], i) => [`${g(i + 1)} ${i + 1}. ${l}\x1b[0m`, ...words(d, w - 5).map(r => '     ' + r)]),
           `${g(4)} 4. ${this.atext || 'Type something.'}\x1b[0m`, R2, `${g(5)} 5. Chat about this\x1b[0m`, ''];
+      } else if (this.scene === 'askp') {
+        const c = 24, iw = Math.max(10, w - c - 4), vis = x => x.replace(/\x1b\[[\d;]*m/g, '').length, pad = (x, n) => x + ' '.repeat(Math.max(0, n - vis(x)));
+        const L = ASKP.opts.map((l, i) => `${g(i + 1)} ${i + 1}. ${l}\x1b[0m`);
+        const box = ['┌' + '─'.repeat(iw + 2) + '┐', ...ASKP.pv.map(x => '│ ' + x.padEnd(iw).slice(0, iw) + ' │'), '└' + '─'.repeat(iw + 2) + '┘'];
+        tail = [R2, `←  ${hd('☐ Playback')}  ☐ Language  ✔ Submit  →`, '', ASKP.q, '', ...box.map((b, i) => pad(L[i] || '', c) + b), '',
+          ...words('Notes: press n to add notes', w - c).map(x => ' '.repeat(c) + x), '', R2, `${g(3)} Chat about this\x1b[0m`, ''];
       } else {
         const t = this.ticks.map(x => (x ? '✔' : ' '));
         tail = [R2, `←  ${hd('☐ Checks')} ✔ Submit  →`, '', ASKM.q, '',
           ...ASKM.opts.flatMap(([l, d], i) => [`${g(i + 1)} ${i + 1}. [${t[i]}] ${l}\x1b[0m`, ...words(d, w - 9).map(r => '         ' + r)]),
-          `${g(3)} 3. [${t[2]}] ${this.atext || 'Type something'}\x1b[0m`, `${g(4)}    Submit\x1b[0m`, R2, `${g(5)} 4. Chat about this\x1b[0m`, ''];
+          `${g(3)} 3. [${t[2]}] ${this.atext || 'Type something'}\x1b[0m`, `${g(4)}    ${this.next ? 'Next' : 'Submit'}\x1b[0m`, R2, `${g(5)} 4. Chat about this\x1b[0m`, ''];
       }
-      tail.push(...words('Enter to select · ↑/↓ to navigate · Esc to cancel', w), TMUX);
+      tail.push(...words(this.scene === 'askp' ? 'Enter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions · Esc to cancel' : 'Enter to select · ↑/↓ to navigate · Esc to cancel', w), TMUX);
       this.tall = tail.length > this.rows; // its top cut off, as on a small phone
     }
     else if (this.scene === 'dialog') tail = ['\x1b[32m●\x1b[0m Bash(git push origin feat/term-cockpit)', '', ' Do you want to proceed?', ' \x1b[38;5;153m❯ 1. Yes\x1b[0m', '   2. Yes, and don\'t ask again for git push', '   3. No, and tell Claude what to do', '', ' Esc to cancel', TMUX];
@@ -194,8 +206,8 @@ class FakeClaude {
 }
 
 const cmdReq = [];
-async function phone(w, h) {
-  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: engine !== 'firefox', hasTouch: true, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
+async function phone(w, h, touch = true) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 3, isMobile: touch && engine !== 'firefox', hasTouch: touch, reducedMotion: 'no-preference', serviceWorkers: 'block' }); // motion on: the phone's default
   await ctx.addInitScript(() => {
     // a stand-in visualViewport (no engine raises an on-screen keyboard), and the sampler
     const vv = Object.assign(new EventTarget(), { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1, pageTop: 0, pageLeft: 0 });
@@ -269,7 +281,7 @@ async function phone(w, h) {
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
       desc: 'Build the email engine, then review it', start: Date.now() - 6_000_000,
       agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done', model: 'Sonnet 5.5', tok: 156537, t0: '2026-10-26T21:08:37Z', t1: '2026-10-26T21:12:57Z' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
-      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }] }) });
+      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }].filter(a => BUSY || a.state !== 'running') }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -413,7 +425,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   s = await st(P);
   check(`${tag} 2 the keyboard up: focus in the field, never two inputs, no flash, still no blank band or strip`, s.focus === 'ccmsg' && s.shown && s.two === 0 && s.flips === 0 && s.band < s.cell + 8 && s.under >= 5 && s.topGap <= 0 && s.taH >= 36, [s, await twos(P)]);
   await shot(P, `${tag}-2-keyboard`);
-  await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.type('#ccmsg', 'check the strip on the phone'); await P.page.locator('#ccsend').click(); await sleep(900);
   s = await st(P);
   check(`${tag} 3 send: Claude gets it, works, comes back; the field stays`, F.log.some(l => l.includes('check the strip on the phone')) && s.shown && s.two === 0 && s.flips === 0, [s, await twos(P)]);
   // the keyboard down and up again as iOS animates it, every painted frame recorded (the phone, 2026-10-23: "a glitch where in a second I saw
@@ -467,7 +479,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.locator('#ccprev .pv-x').click(); await sleep(100);
   check(`${tag} 4 a tap on the chip previews the attached image`, pv.on && pv.img.startsWith('blob:') && pv.cap.startsWith('[Image #1]') && !(await P.page.evaluate(() => document.getElementById('ccprev').classList.contains('on'))), pv);
   await P.page.type('#ccmsg', 'what is wrong here?'); await shot(P, `${tag}-4-attach`);
-  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.locator('#ccsend').click(); await sleep(900);
   s = await st(P);
   check(`${tag} 5 send with the image: one prompt "[Image #1] what is wrong here?", the chip clears`, F.last === '[Image #1] what is wrong here?' && !s.draft && s.two === 0, [s, F.last]);
   // attach, then take it back with the chip's ×: one ctrl+c, Claude's input is empty, the chip goes, Claude is not asked to exit
@@ -505,7 +517,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     await P.page.locator('#cccmds .cmd', { hasText: '/effort' }).first().click(); await sleep(100);
     const after = await P.page.evaluate(() => ({ v: document.getElementById('ccmsg').value, open: !document.getElementById('cccmds').hidden, focus: document.activeElement?.id }));
     check(`${tag} 8 a tap puts "/effort " in the field, closes the menu, keeps the keyboard`, after.v === '/effort ' && !after.open && after.focus === 'ccmsg', after);
-    await P.page.keyboard.type('status'); await P.page.press('#ccmsg', 'Enter'); await sleep(700);
+    await P.page.keyboard.type('status'); await P.page.locator('#ccsend').click(); await sleep(700);
     check(`${tag} 8 send runs it in Claude: "/effort status"`, F.last === '/effort status', F.last);
   }
   // ---- writing (the phone, 2026-10-24: a message typed after using the ⋯ menu landed in Claude's box, and the box showed) ----
@@ -522,7 +534,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await P.page.keyboard.type(long, { delay: 5 }); await sleep(200);
   s = await st(P);
   check(`${tag} W1 typing a long message: every key in the field, nothing to the terminal, the field grows, no box`, (await P.page.inputValue('#ccmsg')) === long && sent() === n0 && s.two === two0, [sent() - n0, s]);
-  await P.page.press('#ccmsg', 'Enter'); await sleep(900);
+  await P.page.locator('#ccsend').click(); await sleep(900);
   check(`${tag} W1 send: Claude has the whole message`, F.last === long, F.last);
   // W2 xterm's own input is disabled while the field is the input: a focus from anywhere (the iOS keyboard bar's ^/v walks the page's text
   // fields) cannot type into Claude's box
@@ -559,7 +571,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} W4 a draft over several rows: hidden, on the chip, never two inputs`, s.draft.startsWith('a recalled prompt') && s.two === two0 && s.shown && s.taH >= 36, [s, await twos(P)]);
   await key(P, 'Esc'); await sleep(400);
   // W5 typing the next message while Claude works on the last one
-  await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(60);
+  await tapTerm(); await P.page.keyboard.type('first message', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(60);
   await P.page.keyboard.type('second while it works', { delay: 5 }); await sleep(300);
   s = await st(P);
   check(`${tag} W5 typing while Claude works: the next message waits in the field, no box`, (await P.page.inputValue('#ccmsg')) === 'second while it works' && F.last === 'first message' && s.two === two0, [await P.page.inputValue('#ccmsg'), F.last, s]);
@@ -570,7 +582,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   F.work = 3000;
   for (const early of [false, true]) {
     F.early = early;
-    await tapTerm(); await P.page.keyboard.type('a message sent by mistake', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(500);
+    await tapTerm(); await P.page.keyboard.type('a message sent by mistake', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(500);
     const busy = F.scene, c0 = (F.inputs || []).length;
     await key(P, 'Esc'); await sleep(700);
     s = await st(P);
@@ -581,7 +593,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   }
   await P.page.evaluate(() => ((window.__qa.marks ||= {})['E2'] = Math.round(performance.now())));
   // a turn that ends by itself gives nothing back
-  await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.press('#ccmsg', 'Enter'); await sleep(3600);
+  await tapTerm(); await P.page.keyboard.type('a finished one', { delay: 5 }); await P.page.locator('#ccsend').click(); await sleep(3600);
   check(`${tag} E a turn that ends by itself: the field stays empty`, (await P.page.inputValue('#ccmsg')) === '' && F.last === 'a finished one', [await P.page.inputValue('#ccmsg'), F.last]);
   F.work = 0; F.early = false;
   await P.page.evaluate(() => ((window.__qa.marks ||= {})['M'] = Math.round(performance.now())));
@@ -668,11 +680,11 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   const pr = await P.page.evaluate(() => ({ sh: document.getElementById('cccomp').classList.contains('sh'), ac: document.getElementById('ccmsg').getAttribute('autocorrect') }));
   check(`${tag} S2 the \`!\` gone: prose again`, !pr.sh && pr.ac === 'on', pr);
   i0 = (F.inputs || []).length;
-  await P.page.fill('#ccmsg', '!ls -la'); await P.page.press('#ccmsg', 'Enter'); await sleep(600); s = await st(P);
+  await P.page.fill('#ccmsg', '!ls -la'); await P.page.locator('#ccsend').click(); await sleep(600); s = await st(P);
   check(`${tag} S3 sent as typed, Claude ran it in its shell mode, the field still the input`, F.ran === 'ls -la' && (F.inputs || []).slice(i0).join('').includes('!ls -la') && s.shown && s.two === 0, [F.ran, (F.inputs || []).slice(i0), s]);
   await P.page.fill('#ccmsg', '!'); await P.page.evaluate(() => document.getElementById('ccmsg').dispatchEvent(new Event('input'))); F.sh = true; F.redraw(); await sleep(500); s = await st(P);
   check(`${tag} S4 Claude's shell-mode box (its \`!\` prompt) is its box: the field stays, the chip says shell`, s.shown && s.chip === '! shell' && s.two === 0, s);
-  await P.page.fill('#ccmsg', '!pwd'); await P.page.press('#ccmsg', 'Enter'); await sleep(600);
+  await P.page.fill('#ccmsg', '!pwd'); await P.page.locator('#ccsend').click(); await sleep(600);
   check(`${tag} S5 already in shell mode, the field's \`!\` is not typed twice`, F.ran === 'pwd', F.ran);
   // R the ⋯ sheet's restart: the pane goes blank while Claude starts again (seconds, for a long conversation): the loader, not a black terminal
   // and the key bar, until Claude's box is back
@@ -707,6 +719,13 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   await sleep(500); F.ask('ask'); await opened(); await tapIn('.opt.ph'); a = await ask();
   check(`${tag} A3 "Type something…" opens a field in the sheet, focused`, a.field && a.focused, a);
   await P.page.fill('#ccpick .free textarea', 'use staging first'); await shot(P, `${tag}-A3-free`);
+  // the keyboard comes up for the field: the terminal shrinks and Claude redraws (the phone, 2026-10-31: the sheet rebuilt, its new field had
+  // no keyboard, the terminal grew back, round again: "the modal restarts and won't let me write")
+  await P.page.evaluate(() => { /** @type {any} */ (document.querySelector('#ccpick .free textarea')).dataset.mark = '1'; });
+  await kb(P, Math.round(h * 0.52)); await sleep(900); a = await ask();
+  const kept = await P.page.evaluate(() => { const f = /** @type {any} */ (document.querySelector('#ccpick .free textarea')); return { open: document.getElementById('ccpick').classList.contains('open'), same: f?.dataset.mark === '1', v: f?.value }; });
+  check(`${tag} A3b the keyboard up, Claude redrawn smaller: the sheet holds, the same field focused, what is typed kept`, kept.open && kept.same && a.focused && kept.v === 'use staging first', [kept, a]);
+  await kb(P, h); await sleep(900);
   i0 = (F.inputs || []).length; await tapIn('.free button'); k = await sheet();
   check(`${tag} A4 Send: the highlight moved there with arrows (a digit would be typed), the text, Enter: Claude has the answer`, F.log.some(l => l.includes('answered : use staging first')) && !k.open && (F.inputs || []).slice(i0).join('') === '\x1b[B\x1b[B\x1b[Buse staging first\r', [(F.inputs || []).slice(i0), F.log.slice(-3)]);
   await sleep(500); F.ask('askm'); await opened(); await tapIn('.opt:has-text("Lint")'); k = await sheet(); a = await ask();
@@ -716,6 +735,23 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   check(`${tag} A6 its free option: the text typed into it, no Enter (that would untick it): ticked, the sheet stays`, F.scene === 'askm' && F.atext === 'docs' && a.ticks.join() === 'true,false,true' && k.rows.includes('docs'), [F.scene, F.atext, a, k.rows]);
   await tapIn('.acts .pri'); k = await sheet();
   check(`${tag} A7 Submit: the highlight to Claude's Submit row, Enter: Claude has Lint and docs`, F.log.some(l => l.includes('answered submitted: Lint,docs')) && !k.open, F.log.slice(-3));
+  // a multi-select question that is not the last of its form: Claude's Submit row reads Next (2026-10-31: no button, and the only way on was
+  // Chat about this, which ends the form)
+  await sleep(400); F.next = true; F.ask('askm'); await opened(); k = await sheet();
+  check(`${tag} A7b a multi-select question before the last: its Next row is the button`, k.open && k.acts.join() === 'Next*', k);
+  await tapIn('.acts .pri'); F.next = false;
+  check(`${tag} A7c Next: the highlight to Claude's Next row, Enter`, F.log.at(-2)?.includes('answered next:') && !(await sheet()).open, F.log.slice(-2));
+  // a question with previews (2026-10-31: the old terminal UI): the preview as the sheet's body, a tap moves the highlight, Select answers
+  await sleep(400); F.ask('askp'); await opened(); k = await sheet(); if (F.tall) console.log(`${tag} A11 note: the preview question is taller than this screen`);
+  const pvt = await P.page.evaluate(() => document.querySelector('#ccpick .pv')?.textContent || '');
+  check(`${tag} A11 a question with previews comes up as a sheet: the options, Chat about this, the preview, Select`, k.open && k.rows.join('|') === 'Looks right|Something is off|Chat about this' && pvt.includes('[Decode]') && !pvt.includes('│') && k.acts.join() === 'Switch questions,Select*', [k, pvt]);
+  await shot(P, `${tag}-A11-preview`);
+  i0 = (F.inputs || []).length; await tapIn('.opt:has-text("Something is off")');
+  check(`${tag} A12 a tap moves Claude's highlight (↓), nothing answered yet`, F.scene === 'askp' && F.ahl === 2 && (F.inputs || []).slice(i0).join('') === '\x1b[B', [F.scene, F.ahl, (F.inputs || []).slice(i0)]);
+  await P.page.evaluate(() => /** @type {any} */ (document.activeElement)?.blur?.()); await P.page.keyboard.press('ArrowUp'); await sleep(300);
+  check(`${tag} A13 a keyboard's ↑ with no field focused goes to Claude`, F.ahl === 1, F.ahl);
+  await P.page.keyboard.press('ArrowDown'); await sleep(300); await tapIn('.acts .pri');
+  check(`${tag} A14 Select is Claude's Enter: it has Something is off`, F.log.at(-2)?.includes('answered 2') && !(await sheet()).open, F.log.slice(-2));
   // a page opened on a question already up (asked while the phone was away): no Claude box seen; the dashboard's word decides
   await sleep(400); F.scene = 'shell'; F.redraw(); await sleep(1800); i0 = (F.inputs || []).length; F.ask('ask'); await sleep(700);
   check(`${tag} A8 a question up with no Claude box seen and no word that Claude is in front: Claude's drawing, no sheet, nothing sent`, !(await sheet()).open && (F.inputs || []).length === i0, await sheet());
@@ -745,6 +781,54 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     const sz = P.fake().sizes || [];
     check(`${tag} 15 reopened ${n}: the new UI from the first frame, at most ${maxSizes} resize after the attach (${sz.length}; in sight ${re.shownAt} ms after the first output)`, !re.ent.length && !re.boot && re.shown && sz.length <= maxSizes, [re.ent.slice(0, 3), re, sz]);
   }
+  await P.ctx.close();
+}
+// a desktop (2026-11-01, designs B + D): no key bar, so no ⋯ badge. A running workflow is a chip in the composer's bar (its phase of its
+// phases), a click opens a popover over it, "Open run" a full view: phases, a timeline of the agents, the chosen agent's log. Esc closes
+// each without reaching Claude (its Esc interrupts). PHONES=desk runs only this
+if (!process.env.PHONES || process.env.PHONES.split(',').includes('desk')) {
+  const P = await phone(1280, 800, false), F = P.fake();
+  await P.page.waitForFunction(() => { const b = document.getElementById('ccflows'); return b && !b.hidden && b.offsetWidth; }, null, { timeout: 8000 }).catch(() => {});
+  const c = await P.page.evaluate(() => { const b = document.getElementById('ccflows'); return { t: b?.textContent, label: b?.getAttribute('aria-label'), shown: !!b && !b.hidden && !!b.offsetWidth, inBar: !!b?.closest('#cccomp .cbar'), lazy: [...document.scripts].length && performance.getEntriesByType('resource').some(e => /\/wfdesk\.[A-Z0-9]+\.mjs$/.test(e.name)) }; });
+  check('desk W1 a running workflow: a chip in the composer bar with its phase of its phases, from the desktop-only chunk', c.shown && c.inBar && c.t === '2/2' && /phase 2 of 2/.test(c.label || '') && c.lazy, c);
+  const esc0 = (F.inputs || []).filter(x => x === '\x1b').length;
+  await P.page.click('#ccflows'); await sleep(300);
+  const o = await P.page.evaluate(() => {
+    const p = document.getElementById('wfpop'), r = p.getBoundingClientRect(), ch = document.getElementById('ccflows').getBoundingClientRect();
+    return { open: !p.hidden, txt: p.textContent, segs: p.querySelectorAll('.wfseg i').length, ags: [...p.querySelectorAll('button[data-id]')].map(b => b.textContent.slice(0, 14)),
+      above: r.bottom <= ch.top + 1 && r.top >= 0 && r.left >= 0 && r.right <= innerWidth, exp: document.getElementById('ccflows').getAttribute('aria-expanded') };
+  });
+  await shot(P, 'desk-W3-popover');
+  check('desk W3 the popover over the chip: the run, its phases as a bar, phase 2/2, its agents running first, the subagents, Open run', o.open && o.exp === 'true' && o.above && o.txt.includes('email-engine-build') && o.segs === 2 && o.txt.includes('phase 2/2')
+    && /^●review:branch/.test(o.ags[0] || '') && o.txt.includes('dev-ladder') && o.txt.includes('Open run'), o);
+  await P.page.keyboard.press('Escape'); await sleep(200);
+  const e1 = await P.page.evaluate(() => ({ open: !document.getElementById('wfpop').hidden, focus: document.activeElement?.id }));
+  check('desk W4 Esc closes the popover, back on the chip, and Claude gets no Esc', !e1.open && e1.focus === 'ccflows' && (F.inputs || []).filter(x => x === '\x1b').length === esc0, e1);
+  await P.page.click('#ccflows'); await sleep(200);
+  const before = agReq.length;
+  await P.page.click('#wfpop .open'); await sleep(600);
+  const v = await P.page.evaluate(() => {
+    const w = document.getElementById('wfrun');
+    return { open: !w.hidden, pop: !document.getElementById('wfpop').hidden, title: w.querySelector('.tt b')?.textContent, phases: [...w.querySelectorAll('nav button')].map(b => b.textContent),
+      rows: [...w.querySelectorAll('.tr')].map(t => t.querySelector('.lb').textContent), sel: w.querySelector('.tr.sel .lb')?.textContent, log: w.querySelector('aside')?.textContent || '',
+      bar: (() => { const b = w.querySelector('.tr.running .bar'); return b ? [parseFloat(b.style.left), parseFloat(b.style.width)] : null; })(), focus: document.activeElement?.className };
+  });
+  await shot(P, 'desk-W5-run');
+  check('desk W5 Open run: the full view, phases, a timeline row per agent, the running one chosen and its log, newest first', v.open && !v.pop && v.title === 'email-engine-build' && v.phases.length === 2
+    && v.rows.length === 3 && v.sel === 'review:branch' && agReq.length > before && /Run the suite ×2[\s\S]*Reviewing the branch/.test(v.log) && v.focus === 'x', [v, agReq.slice(before)]);
+  await P.page.click('#wfrun .tr[data-id="w1"]'); await P.page.click('#wfrun nav button[data-ph="Build"]'); await sleep(400);
+  const f = await P.page.evaluate(() => ({ rows: [...document.querySelectorAll('#wfrun .tr .lb')].map(t => t.textContent), sel: document.querySelector('#wfrun .tr.sel .lb')?.textContent, q: '' }));
+  check('desk W6 a row picks its agent (its log asked for, of this run); a phase shows only its agents', f.sel === 'build:lego0' && f.rows.join() === 'build:lego0,build:web' && /agent=w1&run=wf_0123abcd-ef0/.test(agReq.at(-1) || ''), [f, agReq.at(-1)]);
+  await P.page.keyboard.press('Escape'); await sleep(200);
+  const e2 = await P.page.evaluate(() => ({ open: !document.getElementById('wfrun').hidden, focus: document.activeElement?.id }));
+  check('desk W7 Esc closes the full view, back on the chip, and Claude gets no Esc', !e2.open && e2.focus === 'ccflows' && (F.inputs || []).filter(x => x === '\x1b').length === esc0, e2);
+  // the phone's sheet with no subagent running: the block under the run was a "null" (replaceChildren prints it; 2026-11-01). The ⋯ key is
+  // hidden on a desktop but still opens the sheet
+  BUSY = false;
+  await key(P, 'Menu'); await sleep(300);
+  await P.page.waitForFunction(() => !document.querySelector('#ccsheet .wf .ags'), null, { timeout: 8000 }).catch(() => {});
+  const z = await P.page.evaluate(() => { const w = document.querySelector('#ccsheet .wf'); return { ags: !!w?.querySelector('.ags'), txt: w?.textContent || '', stray: [...(w?.childNodes || [])].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent) }; });
+  check('desk W2 no subagent running: no Agents block, and no stray "null" under the run', !z.ags && !z.stray.length && z.txt.includes('email-engine-build'), z);
   await P.ctx.close();
 }
 await browser.close();

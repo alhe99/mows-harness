@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { constants as FS, promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { BASE_CSP, TMUX_HOME, send, sh, userCmd } from '../core.mjs';
-import { DOC_META, footerHtml, mdDocument, mdNotice, mdParts, mdShareDocument, pageChrome } from '../legacy.mjs';
+import { DOC_META, MD_MERMAID, footerHtml, mdDocument, mdNotice, mdParts, mdShareDocument, pageChrome } from '../legacy.mjs';
 import { assetUrl } from '../static.mjs';
 
 // Mermaid is never in dist/ (388 IPv4-shaped tokens trip the preflight; ledger A-03, O-3). The page loads this one pinned file from the CDN, with
@@ -99,8 +99,15 @@ async function shareRead(f, cap) {
   try { const st = await fh.stat(); return st.isFile() && st.nlink === 1 && st.size <= cap ? { st, buf: await fh.readFile() } : null; }
   finally { await fh.close(); }
 }
+// the markdown page is sandboxed like an .html share: its mermaid module comes from a CDN, and on this origin a bad release would reach the
+// dashboard with the owner's cookies the moment the owner opened the link. Opaque origin, no network but that one package and the inline loader.
+export const SHARE_MD_CSP = "sandbox allow-scripts allow-downloads allow-popups; default-src 'none'; " +
+  `script-src https://cdn.jsdelivr.net/npm/mermaid@12/ 'sha256-${createHash('sha256').update(MD_MERMAID.replace(/^<script[^>]*>|<\/script>$/g, '')).digest('base64')}'; ` +
+  "style-src 'unsafe-inline'; img-src data: https:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// every miss looks the same: a bad token, a revoked one, a truncated paste. A page, not a text/plain body a phone offers to download.
+const SHARE_GONE = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>no data</title><body style="background:#09090b;color:#9f9fa9;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;padding:0 16px"><div><div style="color:#00d492;font-size:26px;padding-bottom:10px">&gt;_</div>no data<br>this link is wrong, incomplete, or was revoked.</div>';
 export async function shareView(req, res, token, url) {
-  const priv = { 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-cache' };
+  const priv = { 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer', 'cache-control': 'private, no-cache', 'x-content-type-options': 'nosniff' };
   if (/^[A-Za-z0-9_-]{22}$/.test(token)) for (const ext of ['html', 'md', 'txt']) {
     const got = await shareRead(`${SHARE_DIR}/${token}.${ext}`, 16 * 1024 * 1024);
     if (!got) continue;
@@ -113,9 +120,11 @@ export async function shareView(req, res, token, url) {
     }
     if (ext === 'html') return send(req, res, 200, buf, 'text/html; charset=utf-8',
       { ...priv, 'content-security-policy': HTML_CSP, 'cross-origin-opener-policy': 'same-origin' });
-    return send(req, res, 200, mdShareDocument(name, st, buf.toString('utf8'), `/p/${token}?dl=1`), 'text/html; charset=utf-8', priv);
+    return send(req, res, 200, mdShareDocument(name, st, buf.toString('utf8'), `/p/${token}?dl=1`), 'text/html; charset=utf-8',
+      { ...priv, 'content-security-policy': SHARE_MD_CSP, 'cross-origin-opener-policy': 'same-origin' });
   }
-  res.writeHead(404, { ...priv, 'content-type': 'text/plain' }); res.end('not found');
+  send(req, res, 404, SHARE_GONE, 'text/html; charset=utf-8',
+    { ...priv, 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
 }
 
 // ---------- /diagrams: every Archify page under the user's home, newest first, each opening in /md above ----------

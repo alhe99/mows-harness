@@ -80,9 +80,14 @@ if (UI !== 'legacy' && UI !== 'next') { console.error(`lite: --ui is legacy or n
 // the routes the shell owns when it answers at `/` (web/main.mjs routes, MAP 3.2)
 const SHELL_RE = /^\/(grid|history|system|device|agents(\/[^/]+){0,2}|s\/[^/]+\/[^/]+)?$/;
 
+const BAD_PATH = /\\|%5c|\/(\.|%2e){1,2}(\/|%2f|$)/i;
+
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
   try {
+    // a backslash or a dot segment is folded by new URL() AFTER Caddy matched the raw path: /p/..\api would pass the sign-in as a share link
+    // and land on /api. Caddy escapes `\` today; this holds without it.
+    if (BAD_PATH.test(req.url.split('?')[0])) { res.writeHead(404); return res.end(); } // 404 as any miss (scripts/e2e-infra.sh: an unparseable run id)
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
@@ -291,6 +296,12 @@ if (args.includes('--selftest')) {
       [d.includes("connect-src 'none'") && d.includes("default-src 'none'") && d.includes("form-action 'none'"), 'network or forms allowed']])
       if (!ok) { console.error(`FAIL: /md html CSP: ${why}: ${HTML_CSP}`); process.exit(1); }
     console.log('md html sandbox: OK');
+    const { SHARE_MD_CSP } = await import('./routes/md.mjs'), m = SHARE_MD_CSP.split(/;\s*/);
+    if (!/^sandbox /.test(m[0]) || /allow-same-origin|allow-top-navigation|allow-popups-to-escape-sandbox/.test(m[0]) || !m.includes("connect-src 'none'"))
+      { console.error(`FAIL: /p markdown CSP: ${SHARE_MD_CSP}`); process.exit(1); }
+    for (const [u, bad] of [['/p/..\\agents', 1], ['/p/%2e%2E/api', 1], ['/p/.%2e%2fapi', 1], ['/p/x/..', 1], ['/p/51qRUsNUYNb9Wnsoa_y0lw', 0], ['/a/x.y/..z', 0], ['/assets/a.b.css', 0]])
+      if (BAD_PATH.test(u) !== !!bad) { console.error(`FAIL: BAD_PATH on ${u}`); process.exit(1); }
+    console.log('share sandbox + path guard: OK');
     const { diagramRows } = await import('./routes/md.mjs'); // /diagrams: the glob's lines, newest first, a broken line dropped
     const dr = diagramRows('100\t2048\tOld &amp; slow Diagram\tDocuments/p/.archify/workflow-x-1/x.html\n200\t10\t\t.archify/erd-y-2/y.html\nnot\ta line\n300\t1\tt\tb/.archify/z/z.txt\n', '/srv/u');
     const want = [['/srv/u/.archify/erd-y-2/y.html', '~', 'erd', 'y'], ['/srv/u/Documents/p/.archify/workflow-x-1/x.html', 'Documents/p', 'workflow', 'Old & slow']];

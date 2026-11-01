@@ -4,7 +4,7 @@
 // Asserts: the navigation allowlist (the shell routes are answered, everything the installed app also scopes — /term*, /oauth2/*, /vnc/*, /droidview/*,
 // /api/*, /stream, /events, /a/*, /md — is not intercepted at all); that a 3xx, an opaque redirect and a followed redirect are never cached; network
 // first with the cached copy only on failure; that /term/ passes through even offline; the offline fallback body; precache by manifest hash;
-// activation housekeeping; and the push and notificationclick handlers.
+// a hung or failing asset cache falling through to the network; activation housekeeping; and the push and notificationclick handlers.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -27,7 +27,7 @@ function scope(files = {}) {
   const net = { handler: async () => { throw new TypeError('offline'); } };
   const g = {
     PRECACHE: { files },
-    location: { origin: ORIGIN }, crypto: globalThis.crypto, Response, URL, TypeError, Promise, Object, Date, JSON, Math, String, Number, Array,
+    location: { origin: ORIGIN }, crypto: globalThis.crypto, Response, URL, TypeError, Promise, Object, Date, JSON, Math, String, Number, Array, setTimeout, clearTimeout,
     fetch: async (r, o) => { log.fetched.push(typeof r === 'string' ? r : r.url); return net.handler(r, o); },
     caches: { open: async n => cache(stores.get(n) || stores.set(n, new Map()).get(n)), keys: async () => [...stores.keys()], delete: async n => stores.delete(n) },
     skipWaiting: async () => { log.skip++; },
@@ -118,7 +118,7 @@ const R = (body, init) => Object.defineProperty(new Response(body, init), 'type'
   const sha = { 'main.AAAA1111.mjs': createHash('sha256').update(body['main.AAAA1111.mjs']).digest('hex'), 'tokens.BBBB2222.css': createHash('sha256').update(body['tokens.BBBB2222.css']).digest('hex'),
     'bad.CCCC3333.mjs': createHash('sha256').update('what the manifest says').digest('hex') };
   const s = scope(sha);
-  s.net.handler = async u => { const p = String(u.url ?? u); return p.startsWith('/assets/') ? R(body[p.slice(8)]) : R('<html>home</html>'); };
+  s.net.handler = async u => { const p = new URL(String(u.url ?? u), ORIGIN).pathname; return p.startsWith('/assets/') ? R(body[p.slice(8)]) : R('<html>home</html>'); };
   const ins = await s.fire('install');
   const assets = s.stores.get('mows-assets');
   ok('12 install precaches dist files by name and the shell document, then skipWaiting', ins.waits === 1 && s.log.skip === 1 && assets.get(ORIGIN + '/assets/main.AAAA1111.mjs')?.body === body['main.AAAA1111.mjs']
@@ -129,6 +129,16 @@ const R = (body, init) => Object.defineProperty(new Response(body, init), 'type'
   ok('14 a precached asset is answered from the cache without the network', hit.called && await text(hit.res) === body['main.AAAA1111.mjs'] && s.log.fetched.length === 0);
   const miss = await s.fire('fetch', { request: { url: ORIGIN + '/assets/other.mjs', method: 'GET', mode: 'cors' } });
   ok('15 an asset that was not precached goes to the network', miss.called && s.log.fetched.length === 1);
+  // WebKit's Cache Storage can stop answering after the Mac sleeps (2026-10-31): the /term/ page loaded, its css and module never did
+  s.log.fetched.length = 0;
+  s.g.caches.open = () => new Promise(() => {});
+  const t0 = Date.now();
+  const hung = await Promise.race([s.fire('fetch', { request: { url: ORIGIN + '/assets/main.AAAA1111.mjs', method: 'GET', mode: 'cors' } }), new Promise(r => setTimeout(r, 5000, null))]);
+  ok('15b a cache that never answers: the network serves the asset within seconds', !!hung?.res && await text(hung.res) === body['main.AAAA1111.mjs'] && Date.now() - t0 < 4000,
+    { fetched: s.log.fetched, ms: Date.now() - t0 });
+  s.g.caches.open = async () => { throw new Error('broken'); };
+  const rej = await s.fire('fetch', { request: { url: ORIGIN + '/assets/main.AAAA1111.mjs', method: 'GET', mode: 'cors' } });
+  ok('15c a cache that fails: the network serves the asset', await text(rej.res) === body['main.AAAA1111.mjs']);
 }
 {
   const s = scope({ 'main.AAAA1111.mjs': 'x' });

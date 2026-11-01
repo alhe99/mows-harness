@@ -1,5 +1,6 @@
 // composer.mjs — the message field over the keys (2026-10-23). Return sends what is typed: a bracketed paste and, 60 ms later, a \r (the
-// paste and the Enter must not land in one read). Shift+return breaks the line. Phone text, so autocorrect, dictation and the caret work as
+// paste and the Enter must not land in one read). Shift+return breaks the line. On a phone (coarse pointer) return only breaks the line
+// and the send button is the one way to send (2026-10-30: a message went out half-written). Phone text, so autocorrect, dictation and the caret work as
 // in any other field.
 // In a Claude session the field stands in for Claude Code's own input box (claudebox.mjs): the terminal is made taller than the space it shows
 // by exactly the rows of Claude's chrome (the box, its status and mode lines, a task list, tmux's status line), so the pty has those rows and
@@ -31,7 +32,7 @@ const WORK = /^\s*[^\s\w]\s+\p{Lu}[\p{L}-]*…/u, STOP = /⎿\s+Interrupted\b/;
 export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /** @type {HTMLElement} */ tc, fit = () => {}, uploads = [], pick = () => {}, chord = (_e) => false) {
   // a desktop too since 2026-10-30 (design A of the session-footer proposals): the same field, chips and dialogs; ?comp=off gives the bare terminal
   if (off('comp')) return null;
-  const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: 'send', 'aria-label': 'message to this session' }));
+  const ta = /** @type {HTMLTextAreaElement} */ (el('textarea', { id: 'ccmsg', rows: 1, placeholder: 'Message Claude…', enterKeyHint: coarse() ? 'enter' : 'send', 'aria-label': 'message to this session' }));
   for (const [k, v] of [['autocomplete', 'on'], ['autocorrect', 'on'], ['autocapitalize', 'sentences'], ['spellcheck', 'true']]) ta.setAttribute(k, v);
   const mode = el('button', { type: 'button', id: 'ccmode', hidden: true, 'aria-label': 'permission mode, tap to cycle' });
   // the model, when a status line names it: tap opens Claude's own /model picker (its list, always current), answered from the field
@@ -44,6 +45,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const clear = el('button', { type: 'button', id: 'ccclear', 'aria-label': 'remove it from the message', textContent: '×' });
   const draft = el('span', { className: 'dchip', hidden: true }, draftText, clear);
   const send = el('button', { type: 'submit', id: 'ccsend', 'aria-label': 'send' }, icon(SEND));
+  send.addEventListener('pointerdown', e => e.preventDefault()); // the field keeps the focus: on a phone send is the only way, and the keyboard stays up
   // + attaches: iOS anchors its Photo Library / Camera / Files menu to the tap, so it opens from here, the bottom bar, not from the middle of the
   // screen where the ⋯ sheet's tile was (the phone, 2026-10-24). A plain click: the picker needs a full user activation
   const add = el('button', { type: 'button', id: 'ccadd', 'aria-label': 'attach a photo or file' }, icon('<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'));
@@ -221,6 +223,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const ARROW = { ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowLeft: '\x1b[D', ArrowRight: '\x1b[C' };
   ta.addEventListener('keydown', e => {
     if (e.isComposing || chord(e)) return;
+    if (e.key === 'Enter' && coarse()) return; // a phone: return is a line break, the field's own; send is the button
     const bs = /** @type {NodeListOf<HTMLElement>} */ (cmds.querySelectorAll('.cmd'));
     if (!cmds.hidden && bs.length && !e.shiftKey && /^(ArrowUp|ArrowDown|Tab|Enter)$/.test(e.key)) {
       e.preventDefault();
