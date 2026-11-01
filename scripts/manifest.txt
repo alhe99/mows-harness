@@ -383,6 +383,7 @@ web/pages/term/term.mjs
 web/pages/term/theme.mjs
 web/pages/term/themes.d.ts
 web/pages/term/ttyd.mjs
+web/pages/term/wfdesk.mjs
 web/push.mjs
 web/pwa.mjs
 web/shared.mjs

@@ -87,7 +87,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // a backslash or a dot segment is folded by new URL() AFTER Caddy matched the raw path: /p/..\api would pass the sign-in as a share link
     // and land on /api. Caddy escapes `\` today; this holds without it.
-    if (BAD_PATH.test(req.url.split('?')[0])) { res.writeHead(400); return res.end(); }
+    if (BAD_PATH.test(req.url.split('?')[0])) { res.writeHead(404); return res.end(); } // 404 as any miss (scripts/e2e-infra.sh: an unparseable run id)
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     if (p === '/healthz') return send(req, res, 200,
