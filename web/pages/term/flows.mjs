@@ -32,9 +32,9 @@ export function flows(on) {
   const url = '/app/workflows.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : '');
   const badge = el('span', { id: 'ccwf', hidden: true });
   const box = el('div', { className: 'wf', hidden: true });
-  /** @type {{ run: string, id: string } | null} */ let sel = null; // null: the list; a run with no id: that run; an id: that agent
+  /** @type {{ run: string, id: string, sh?: string } | null} */ let sel = null; // null: the list; a run with no id: that run; an id: that agent; sh: a shell
   /** @type {any} */ let fan; // a desktop's view (wfdesk.mjs), told each answer
-  let last = { runs: [], agents: [] }, log = null; // the feed's last answer; the open agent's
+  let last = { runs: [], agents: [], shells: [] }, log = null; // the feed's last answer; the open agent's (or shell's)
 
   const detail = () => {
     const r = last.runs.find(x => x.id === sel.run), a = (r ? r.agents : last.agents).find(x => x.id === sel.id);
@@ -70,28 +70,39 @@ export function flows(on) {
             el('span', {}, a.label, el('small', {}, [a.model, a.tok ? tk(a.tok) + ' tok' : ''].filter(Boolean).join(' · '))), el('small', {}, took(a)), el('em', {}, '›')))) : null);
       })));
   };
-  const show = () => (sel?.id ? detail() : sel ? runView() : render(last.runs, last.agents));
-  const go = to => { sel = to; log = null; box.classList.toggle('detail', !!to); show(); if (to?.id) more(); box.closest('.pan')?.scrollTo(0, 0); };
-  const more = () => fetch(`${url}&agent=${encodeURIComponent(sel.id)}${sel.run ? '&run=' + encodeURIComponent(sel.run) : ''}`).then(r => (r.ok ? r.json() : null))
-    .then(j => { if (sel?.id && j) { log = j.agent || { steps: [], result: '' }; detail(); } }, () => {});
+  // a background shell (2026-11-01: "2 shells still running" and nowhere to see them): what it runs, since when, and the last of its output
+  const shView = () => {
+    const x = last.shells.find(y => y.id === sel?.sh) || log;
+    box.replaceChildren(el('div', { className: 'dt' },
+      el('div', { className: 'dh' }, el('button', { type: 'button', className: 'back', 'aria-label': 'back' }, '‹'),
+        el('div', {}, el('b', {}, x?.desc || x?.cmd || 'Shell'), el('small', { className: 'running' }, x?.t0 ? `since ${clock(x.t0)} · ${dur(Date.now() - Date.parse(x.t0))}` : ''))),
+      el('pre', { className: 'res' }, '$ ' + (x?.cmd || '')),
+      el('pre', { className: 'res' }, !log ? 'Loading…' : log.text?.trim() || 'No output yet.')));
+  };
+  const show = () => (sel?.sh ? shView() : sel?.id ? detail() : sel ? runView() : render(last.runs, last.agents, last.shells));
+  const go = to => { sel = to; log = null; box.classList.toggle('detail', !!to); show(); if (to?.id || to?.sh) more(); box.closest('.pan')?.scrollTo(0, 0); };
+  const more = () => fetch(`${url}&${sel?.sh ? 'shell=' + encodeURIComponent(sel.sh) : `agent=${encodeURIComponent(sel?.id || '')}${sel?.run ? '&run=' + encodeURIComponent(sel.run) : ''}`}`).then(r => (r.ok ? r.json() : null))
+    .then(j => { if (j && sel?.sh) { log = j.shell || { text: '' }; shView(); } else if (sel?.id && j) { log = j.agent || { steps: [], result: '' }; detail(); } }, () => {});
   box.addEventListener('click', e => {
     const t = /** @type {HTMLElement} */ (e.target);
     if (t.closest('.back')) return go(sel?.id && sel.run ? { run: sel.run, id: '' } : null);
     const li = /** @type {HTMLElement | null} */ (t.closest('li[data-id]:not([data-id=""])')), card = /** @type {HTMLElement | null} */ (t.closest('.run[data-run]'));
     if (li && (sel || !li.dataset.run)) return go({ run: li.dataset.run || '', id: li.dataset.id || '' });
+    const sh = /** @type {HTMLElement | null} */ (t.closest('li[data-sh]'));
+    if (sh && !sel) return go({ run: '', id: '', sh: sh.dataset.sh });
     if (card && !sel) go({ run: card.dataset.run || '', id: '' });
   });
   const home = () => go(null);
 
-  /** @param {any[]} runs @param {any[]} agents */
-  const render = (runs, agents) => {
-    last = { runs, agents };
+  /** @param {any[]} runs @param {any[]} agents @param {any[]} shells */
+  const render = (runs, agents, shells) => {
+    last = { runs, agents, shells };
     const line = r => {
       const done = r.agents.filter(a => a.state !== 'running').length, pi = r.phases.indexOf(r.phase);
       return `${r.phase || 'starting'}${pi >= 0 ? ` (${pi + 1}/${r.phases.length})` : ''} · ${done}/${r.agents.length} agents`;
     };
     const live = runs.filter(r => r.status === 'running'), busy = agents.filter(a => a.state === 'running');
-    box.hidden = !sel && !live.length && !busy.length;
+    box.hidden = !sel && !live.length && !busy.length && !shells.length;
     if (!sel) box.replaceChildren(...live.map(r => el('div', { className: 'run ' + r.status, 'data-run': r.id, role: 'button' },
       el('div', { className: 'rh' }, el('b', {}, r.name, el('em', {}, '›')), el('small', {}, line(r))),
       el('ul', {}, ...r.agents.map(a => el('li', { className: a.state }, el('i', {}, MARK[a.state] || '·'), el('span', {}, a.label), el('small', {}, a.phase)))))),
@@ -99,9 +110,12 @@ export function flows(on) {
       el('div', { className: 'rh' }, el('b', {}, 'Agents'), el('small', {}, `${busy.length} running`)),
       el('ul', {}, ...busy.map(a => el('li', { className: a.state, title: a.desc, 'data-id': a.id }, el('i', {}, MARK[a.state] || '·'),
         el('span', {}, a.label, a.doing ? el('small', {}, a.doing) : null)))))
+    : '', shells.length ? el('div', { className: 'run ags' },
+      el('div', { className: 'rh' }, el('b', {}, 'Shells'), el('small', {}, `${shells.length} running`)),
+      el('ul', {}, ...shells.map(x => el('li', { className: 'running', title: x.cmd, 'data-sh': x.id }, el('i', {}, '●'), el('span', {}, x.desc || x.cmd, x.line ? el('small', {}, x.line) : null)))))
     : ''); // not null: replaceChildren prints it, a "null" under the run (the desktop, 2026-11-01)
     if (sel) show();
-    const going = live.length + busy.length;
+    const going = live.length + busy.length + shells.length;
     badge.hidden = !going;
     badge.className = going ? 'running' : '';
     badge.textContent = going ? String(going) : '';
@@ -112,8 +126,8 @@ export function flows(on) {
   const tick = () => {
     if (document.hidden) return;
     const t0 = Date.now(); // when it was asked: what it says is about the pane from then on
-    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j, t0); if (j && Array.isArray(j.runs)) render(j.runs, Array.isArray(j.agents) ? j.agents : []); }, () => { /* offline: keep the last state */ }); // runs null: the dashboard could not read them this time, same
-    if (sel?.id) more();
+    fetch(url).then(r => (r.ok ? r.json() : null)).then(j => { if (j) on?.(j, t0); if (j && Array.isArray(j.runs)) render(j.runs, Array.isArray(j.agents) ? j.agents : [], Array.isArray(j.shells) ? j.shells : []); }, () => { /* offline: keep the last state */ }); // runs null: the dashboard could not read them this time, same
+    if (sel?.id || sel?.sh) more();
   };
   tick();
   setInterval(tick, POLL);

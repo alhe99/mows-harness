@@ -276,12 +276,13 @@ async function phone(w, h, touch = true) {
     if (p === '/term/token') return r.fulfill({ contentType: 'application/json', body: '{"token":""}' });
     if (p.startsWith('/app/live.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'cc-default-vgs-slayer', label: 'vgs slayer', current: false, state: 'idle' }, { name: 'ccw-dev', label: 'main harness', current: true, state: 'needs-you' }]) });
     if (p.startsWith('/app/commands.json')) { cmdReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', cmds: [['compact', '[instructions]', 'Free up context by summarizing the conversation so far', 'built-in'], ['effort', '[level|auto|status]', 'Set the effort level', 'built-in'], ['model', '[model]', 'Switch the AI model', 'built-in'], ['frontend-design', '', 'Guidance for distinctive, intentional visual design', 'skill'], ['superpowers:brainstorming', '', 'Use this before any creative work', 'plugin']] }) }); }
+    if (p.startsWith('/app/workflows.json') && new URL(r.request().url()).searchParams.has('shell')) { agReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ shell: { id: 's1', cmd: 'npm run dev -- --port 5173', desc: 'Dev server', t0: new Date(Date.now() - 300_000).toISOString(), moved: false, out: '/tmp/claude-1/p/s/tasks/s1.output', text: 'vite v6\nready on :5173\n' } }) }); }
     if (p.startsWith('/app/workflows.json') && new URL(r.request().url()).searchParams.has('agent')) { agReq.push(r.request().url()); return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ agent: { result: '', failed: false,
       steps: [{ t: '2026-10-26T21:00:00Z', k: 'say', s: 'Reviewing the branch.' }, { t: '2026-10-26T21:01:00Z', k: 'tool', n: 'Bash', s: 'Run the suite' }, { t: '2026-10-26T21:01:30Z', k: 'tool', n: 'Bash', s: 'Run the suite' }] } }) }); }
     if (p.startsWith('/app/workflows.json')) return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ session: 'ccw-dev', claude: FRONT, runs: [{ id: 'wf_0123abcd-ef0', name: 'email-engine-build', status: 'running', phase: 'Review', phases: ['Build', 'Review'], last: Date.now(), ms: 0, tokens: 0,
       desc: 'Build the email engine, then review it', start: Date.now() - 6_000_000,
       agents: [{ id: 'w1', label: 'build:lego0', phase: 'Build', state: 'done', model: 'Sonnet 5.5', tok: 156537, t0: '2026-10-26T21:08:37Z', t1: '2026-10-26T21:12:57Z' }, { id: 'w2', label: 'build:web', phase: 'Build', state: 'failed' }, { id: 'w3', label: 'review:branch', phase: 'Review', state: 'running' }] }],
-      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }].filter(a => BUSY || a.state !== 'running') }) });
+      agents: [{ id: 'a1', label: 'dev-ladder', desc: 'Dev ladder', state: 'running', last: Date.now(), doing: 'Bash: Roll the priority worker' }, { id: 'a2', label: 'Old one', desc: '', state: 'done', last: Date.now() - 600_000, doing: '' }].filter(a => BUSY || a.state !== 'running'), shells: [{ id: 's1', cmd: 'npm run dev -- --port 5173', desc: 'Dev server', t0: new Date(Date.now() - 300_000).toISOString(), moved: false, line: 'ready on :5173' }] }) });
     if (p === '/shot') return r.fulfill({ contentType: 'application/json', body: '{"ok":true,"path":"/tmp/shots/IMG_8152.png"}' });
     if (p.startsWith('/assets/')) { const f = join(ROOT, 'dist', p.slice(8)); if (existsSync(f)) return r.fulfill({ body: readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : f.endsWith('.mjs') ? 'text/javascript' : 'font/woff2' }); }
     if (p === '/settings/term-theme.json') return r.fulfill({ contentType: 'application/json', body: '{"name":""}' });
@@ -371,7 +372,7 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
     d?.scrollIntoView({ block: 'nearest' }); const r = d?.getBoundingClientRect();
     return { order: ls.slice(-2).map(x => x.firstChild.textContent).join('|'), top: r ? Math.round(r.top) : -1, bottom: r ? Math.round(r.bottom) : 1e9, ih: innerHeight }; });
   check(`${tag} 1 diagrams: the sheet's row before "All sessions", reachable on screen`, dg.order === 'Diagrams|All sessions' && dg.top >= 0 && dg.bottom <= dg.ih, dg);
-  const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, ags: [...document.querySelectorAll('#ccsheet .wf .ags li')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
+  const wfs = await P.page.evaluate(() => ({ first: document.querySelector('#ccsheet .hd')?.nextElementSibling?.className, shs: [...document.querySelectorAll('#ccsheet .wf .ags li[data-sh]')].map(l => l.textContent), ags: [...document.querySelectorAll('#ccsheet .wf .ags li[data-id]')].map(l => l.className + ':' + l.querySelector('span').textContent + ':' + l.lastChild.textContent), rows: [...document.querySelectorAll('#ccsheet .wf .run:not(.ags) li')].map(l => l.className + ':' + l.querySelector('span').textContent), head: document.querySelector('#ccsheet .wf small')?.textContent }));
   // a tap on a run: Claude's /workflows view for a phone (2026-10-26) — its description, each phase with its mark and count over its agents
   // (model, tokens, time), a phase still to come with its number; the rest of the sheet steps aside
   await P.page.locator('#ccsheet .wf .run[data-run]').click(); await P.page.waitForSelector('#ccsheet .rv'); await sleep(100);
@@ -412,8 +413,10 @@ for (const [w, h, tag] of [[375, 667, 'se'], [393, 852, '15'], [430, 932, 'proma
   const dShort = await drag(40), dLong = await drag(400);
   check(`${tag} 1 drag: the sheet follows the finger; a short drag springs back, a long one closes it`, dShort.mid === 'translateY(40px)' && dShort.open && dShort.after === ''
     && dLong.mid === 'translateY(400px)' && !dLong.open && dLong.after === '', [dShort, dLong]);
-  check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '2' && wf.onMenu && wf.label === 'terminal actions, 2 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
-  check(`${tag} 1 agents: the background agents under the run, the running one with what it is doing`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:,done:Old one:10m', wfs);
+  check(`${tag} 1 workflow: ⋯ counts what runs (the run + 1 agent + 1 shell), off the terminal; ⋯ opens the sheet with the agents on top`, wf.text === '3' && wf.onMenu && wf.label === 'terminal actions, 3 running' && wf.offTerm && wf.inView && wfs.first === 'wf' && wfs.rows.join() === 'done:build:lego0,failed:build:web,running:review:branch' && wfs.head === 'Review (2/2) · 2/3 agents', [wf, wfs]);
+  // only what is running: a day of finished ones buried the live run (flows.mjs, 2026-10-28); the shells under them (2026-11-01)
+  check(`${tag} 1 agents: the running background agents under the run with what each is doing, then the shells with their last line`, wfs.ags.join() === 'running:dev-ladderBash: Roll the priority worker:dev-ladderBash: Roll the priority worker'
+    && wfs.shs.join() === '●Dev serverready on :5173', wfs);
   // a tap on the terminal (a touch, as on the phone) brings the keyboard up in the field, never in xterm
   await P.page.evaluate(() => document.activeElement?.blur?.());
   const box = await P.page.locator('#terminal-wrap').boundingBox();
@@ -822,13 +825,26 @@ if (!process.env.PHONES || process.env.PHONES.split(',').includes('desk')) {
   await P.page.keyboard.press('Escape'); await sleep(200);
   const e2 = await P.page.evaluate(() => ({ open: !document.getElementById('wfrun').hidden, focus: document.activeElement?.id }));
   check('desk W7 Esc closes the full view, back on the chip, and Claude gets no Esc', !e2.open && e2.focus === 'ccflows' && (F.inputs || []).filter(x => x === '\x1b').length === esc0, e2);
+  // a background shell (2026-11-01: "2 shells still running" and nowhere to see them): in the popover with its last line, and its own view
+  await P.page.click('#ccflows'); await sleep(250);
+  const sp = await P.page.evaluate(() => ({ txt: document.getElementById('wfpop').textContent, label: document.getElementById('ccflows').getAttribute('aria-label') }));
+  const shBefore = agReq.length;
+  await P.page.click('#wfpop button[data-sh="s1"]'); await sleep(500);
+  const sv = await P.page.evaluate(() => { const w = document.getElementById('wfrun'); return { open: !w.hidden, title: w.querySelector('.tt b')?.textContent, txt: w.querySelector('aside')?.textContent || '' }; });
+  await shot(P, 'desk-W8-shell');
+  check('desk W8 a background shell: counted on the chip, listed in the popover with its last line, its own view with the command and its output', /1 shell running/.test(sp.label || '') && /Shells[\s\S]*Dev server[\s\S]*ready on :5173/.test(sp.txt)
+    && sv.open && sv.title === 'Dev server' && sv.txt.includes('npm run dev -- --port 5173') && sv.txt.includes('vite v6') && /shell=s1/.test(agReq.slice(shBefore).join()), [sp, sv]);
+  await P.page.keyboard.press('Escape'); await sleep(200);
   // the phone's sheet with no subagent running: the block under the run was a "null" (replaceChildren prints it; 2026-11-01). The ⋯ key is
   // hidden on a desktop but still opens the sheet
   BUSY = false;
   await key(P, 'Menu'); await sleep(300);
-  await P.page.waitForFunction(() => !document.querySelector('#ccsheet .wf .ags'), null, { timeout: 8000 }).catch(() => {});
-  const z = await P.page.evaluate(() => { const w = document.querySelector('#ccsheet .wf'); return { ags: !!w?.querySelector('.ags'), txt: w?.textContent || '', stray: [...(w?.childNodes || [])].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent) }; });
+  await P.page.waitForFunction(() => ![...document.querySelectorAll('#ccsheet .wf .ags b')].some(b => b.textContent === 'Agents'), null, { timeout: 8000 }).catch(() => {});
+  const z = await P.page.evaluate(() => { const w = document.querySelector('#ccsheet .wf'); return { ags: [...(w?.querySelectorAll('.ags b') || [])].some(b => b.textContent === 'Agents'), txt: w?.textContent || '', stray: [...(w?.childNodes || [])].filter(n => n.nodeType === 3 && n.textContent.trim()).map(n => n.textContent) }; });
   check('desk W2 no subagent running: no Agents block, and no stray "null" under the run', !z.ags && !z.stray.length && z.txt.includes('email-engine-build'), z);
+  await P.page.locator('#ccsheet .wf li[data-sh="s1"]').dispatchEvent('click'); await sleep(500); // the sheet is not shown on a desktop: its own handler
+  const ps = await P.page.evaluate(() => [...document.querySelectorAll('#ccsheet .wf pre')].map(x => x.textContent));
+  check('desk W9 the sheet (the phone\'s) lists the shell, a tap shows its command and output', ps[0] === '$ npm run dev -- --port 5173' && /ready on :5173/.test(ps[1] || ''), ps);
   await P.ctx.close();
 }
 await browser.close();

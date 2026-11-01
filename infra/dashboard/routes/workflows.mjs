@@ -166,6 +166,54 @@ export async function agentsOf(transcript) {
   return all.filter(Boolean).sort((x, y) => (y.state === 'running') - (x.state === 'running') || y.last - x.last).slice(0, MAX);
 }
 
+/** what a terminal printed, as text: colours and cursor moves out, a line redrawn with \r kept as its last state */
+const plainOut = t => t.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b[()][\w]|\x1b[=>]/g, '').split('\n').map(l => l.split('\r').filter(Boolean).pop() || '').join('\n');
+/** the session's background shells (Bash run_in_background, or a command moved there by its timeout), newest first, from the transcript's
+ *  tail: the call (command, description, when) and the result naming its id and output file. One is over once Claude was told so (a
+ *  <task-notification> with that id, in any line, queued ones too) or a TaskStop named it. A shell killed with its session is never told:
+ *  the feed caps the list with Claude's own count from its mode line (workflowsJson). The output file is read only at the path Claude
+ *  prints for this session (/tmp/claude-<uid>/<project>/<sid>/tasks/<id>.output), as the tmux user, never through a link.
+ *  ponytail: a shell started before the tail's 4 MB is not seen */
+export async function shellsOf(transcript, all = false) {
+  const sid = path.basename(transcript, '.jsonl'), uses = new Map(), started = new Map(), ended = new Set(), ls = (await readCapped(transcript)).split('\n');
+  for (let i = 1; i < ls.length; i++) { // line 0 is cut at the tail's start
+    const l = ls[i];
+    for (const m of l.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+      const id = (/<task-id>([\w-]{1,40})<\/task-id>/.exec(m[1]) || [])[1], st = (/<status>(\w+)<\/status>/.exec(m[1]) || [])[1] || '';
+      if (id && st !== 'running') ended.add(id);
+    }
+    if (!/"Bash"|backgroundTaskId|"TaskStop"|"KillShell"/.test(l)) continue;
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    const c = e?.message?.content;
+    if (e.type === 'assistant' && Array.isArray(c)) for (const x of c) {
+      if (x?.type !== 'tool_use') continue;
+      if (x.name === 'Bash') uses.set(x.id, { cmd: String(x.input?.command || '').slice(0, 2000), desc: String(x.input?.description || '').slice(0, 200), t0: String(e.timestamp || '') });
+      else if (x.name === 'TaskStop' || x.name === 'KillShell') ended.add(String(x.input?.task_id || x.input?.shell_id || ''));
+    }
+    const id = e.type === 'user' ? String(e.toolUseResult?.backgroundTaskId || '') : '';
+    if (!/^[\w-]{1,40}$/.test(id) || !Array.isArray(c)) continue;
+    const r = c.find(x => x?.type === 'tool_result'), txt = typeof r?.content === 'string' ? r.content : JSON.stringify(r?.content || '');
+    const out = (/written to: (\S+?\.output)/.exec(txt) || [])[1] || '';
+    started.set(id, { id, ...(uses.get(r?.tool_use_id) || { cmd: '', desc: '', t0: String(e.timestamp || '') }), moved: !!e.toolUseResult.timedOutAfterMs,
+      out: new RegExp(`^/tmp/claude-\\d+/[\\w.-]+/${sid.replace(/[^\w-]/g, '')}/tasks/${id}\\.output$`).test(out) ? out : '' });
+  }
+  const list = [...started.values()].reverse().map(x => ({ ...x, done: ended.has(x.id) })).filter(x => all || !x.done).slice(0, all ? 200 : MAX * 2);
+  if (!all) await Promise.all(list.map(async x => {
+    const st = x.out ? await fsp.lstat(x.out).catch(() => null) : null;
+    x.last = st ? st.mtimeMs : 0;
+    x.line = st ? (plainOut(await readCapped(x.out, 4096)).split('\n').filter(y => y.trim()).pop() || '').slice(0, 160) : '';
+  }));
+  return list;
+}
+/** one shell: its command and the last of its output */
+export async function shellLog(transcript, id) {
+  if (!/^[\w-]{1,40}$/.test(id)) return null;
+  const x = (await shellsOf(transcript, true)).find(y => y.id === id);
+  if (!x) return null;
+  const st = x.out ? await fsp.lstat(x.out).catch(() => null) : null;
+  return { ...x, size: st?.size || 0, last: st?.mtimeMs || 0, text: x.out ? plainOut(await readCapped(x.out, 16 << 10)) : '' };
+}
+
 const SELF = fileURLToPath(import.meta.url);
 export async function workflowsJson(req, res, url) {
   const { fleetState, tmuxLive, sh, userCmd } = await import('../core.mjs'), { tabSession } = await import('./commands.mjs'); // not at load: --runs needs neither
@@ -174,7 +222,14 @@ export async function workflowsJson(req, res, url) {
   const live = await tmuxLive();
   if (!name && live.some(l => l.name === want)) name = want;
   const row = name ? (await fleetState()).find(f => f.name === name) : null;
-  const ag = url.searchParams.get('agent'), run = url.searchParams.get('run') || '';
+  const ag = url.searchParams.get('agent'), run = url.searchParams.get('run') || '', shid = url.searchParams.get('shell');
+  if (shid !== null) { // one background shell: its command and the last 16 KB of its output; { shell: null } for an unknown one
+    let shell = null;
+    if (row?.row?.path && /^[\w-]{1,40}$/.test(shid)) try { shell = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--shell', row.row.path, shid])) || 'null'); } catch {}
+    const b = Buffer.from(JSON.stringify({ shell }));
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': b.length });
+    return res.end(b);
+  }
   if (ag !== null) { // one agent's detail: { agent: null } for an unknown session or a bad id
     let agent = null;
     if (row?.row?.path && ID_RE.test(ag) && (!run || RUN_RE.test(run))) try { agent = JSON.parse(await sh(...userCmd([process.execPath, SELF, '--agent', row.row.path, run || '-', ag])) || 'null'); } catch {}
@@ -187,25 +242,33 @@ export async function workflowsJson(req, res, url) {
   // printing one is not Claude. Fails closed: no pane, no tty, ps failing all read false. (security review 2026-10-26: the first pane is
   // not the one on screen in a session of several)
   // Only a window showing that one pane: the page reads the whole window, so with a split one Claude's pane would vouch for its neighbour's
-  const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{window_panes} #{window_zoomed_flag} #{pane_tty}'])) : '';
-  const tty = (/^11 (?:1 \d|\d+ 1) (\S+)$/m.exec(panes) || [])[1] || '';
+  const panes = name ? await sh(...userCmd(['tmux', 'list-panes', '-s', '-t', '=' + name, '-F', '#{window_active}#{pane_active} #{window_panes} #{window_zoomed_flag} #{pane_tty} #{pane_id}'])) : '';
+  const [, tty = '', pane = ''] = /^11 (?:1 \d|\d+ 1) (\S+) (%\d+)$/m.exec(panes) || [];
   const claude = /^\/dev\/pts\/\d+$/.test(tty) && (await sh('ps', ['-o', 'stat=,comm=', '-t', tty.slice(5)])).split('\n').some(l => /^\S*\+\S*\s+claude$/.test(l.trim()));
   // runs/agents null: not known this time (the reader failed or the session has no transcript yet) — the page keeps what it showed. An empty
   // answer wiped the phone's list on every failed poll (2026-10-26); the reason goes to the journal.
-  let runs = null, agents = null;
+  // how many background shells Claude itself counts (`· 2 shells` on its mode line): the transcript cannot tell a shell killed with its
+  // session from one still running, so the list is cut to this. null: no mode line on screen (a dialog over it), the list as read
+  let count = null;
+  if (claude && pane) { const t = (await sh(...userCmd(['tmux', 'capture-pane', '-p', '-t', pane]))).split('\n').filter(x => x.trim()).slice(-6).join('\n');
+    const m = /·\s*(\d+) shells?\b/.exec(t); count = m ? +m[1] : /⏵⏵|⏸|for shortcuts|permissions on|edits on/.test(t) ? 0 : null; }
+  let runs = null, agents = null, shells = null;
   if (row?.row?.path) {
     const [cmd, args] = userCmd([process.execPath, SELF, '--runs', row.row.path]);
     const out = await new Promise(r => execFile(cmd, args, { timeout: 8000, maxBuffer: 4 << 20 }, (e, o, err) => { if (e) console.error(`workflows: --runs ${name}: ${e.code ?? ''} ${e.signal ?? ''} ${String(err).slice(0, 300)}`); r(e ? '' : o); }));
-    try { ({ runs, agents } = JSON.parse(out)); } catch { runs = agents = null; }
+    try { ({ runs, agents, shells } = JSON.parse(out)); } catch { runs = agents = shells = null; }
+    if (Array.isArray(shells)) shells = !claude ? [] : count === null ? shells : shells.slice(0, count); // Claude gone: its shells went with it
   }
-  const buf = Buffer.from(JSON.stringify({ session: name, runs, agents, claude }));
+  const buf = Buffer.from(JSON.stringify({ session: name, runs, agents, shells, claude }));
   res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-length': buf.length });
   res.end(buf);
 }
 
 const main = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 // node routes/workflows.mjs --runs <transcript>: { runs, agents } as JSON, for workflowsJson (as the tmux user)
-if (main && process.argv[2] === '--runs') { const t = String(process.argv[3] || ''); process.stdout.write(JSON.stringify({ runs: await runsOf(t), agents: await agentsOf(t) })); }
+if (main && process.argv[2] === '--runs') { const t = String(process.argv[3] || ''); process.stdout.write(JSON.stringify({ runs: await runsOf(t), agents: await agentsOf(t), shells: await shellsOf(t) })); }
+// node routes/workflows.mjs --shell <transcript> <id>: shellLog as JSON
+if (main && process.argv[2] === '--shell') { const [t, id] = process.argv.slice(3).map(String); process.stdout.write(JSON.stringify(await shellLog(t, id))); }
 // node routes/workflows.mjs --agent <transcript> <run|-> <id>: agentLog as JSON, the same way
 if (main && process.argv[2] === '--agent') { const [t, r, id] = process.argv.slice(3).map(String); process.stdout.write(JSON.stringify(await agentLog(t, r === '-' ? '' : r, id))); }
 // node routes/workflows.mjs --check: the parser against a fixture run (running, then finished), and a link is never followed
@@ -261,5 +324,24 @@ if (main && process.argv[2] === '--check') {
   [r] = await runsOf(moved + '.jsonl');
   assert.deepEqual([r.name, r.desc, r.phases], ['web-build', 'Moved', ['One', 'Two']]);
   await fsp.rm(base, { recursive: true });
+  // background shells: one running, one Claude was told is over, one stopped, one moved there by its timeout; an output path that is not
+  // Claude's for this session is never read
+  const sid3 = 'abcd1234-0000', tmp = `/tmp/claude-990${process.pid % 1000}`, tdir = path.join(tmp, 'proj', sid3, 'tasks'), tr = path.join(await fsp.mkdtemp(path.join(os.tmpdir(), 'wfs-')), sid3 + '.jsonl');
+  await fsp.mkdir(tdir, { recursive: true });
+  await fsp.writeFile(path.join(tdir, 'b1.output'), 'step 1\n\x1b[32mok\x1b[0m\rprogress 10%\rprogress 90%\n');
+  const call = (id, cmd, desc, bg = true) => ({ type: 'assistant', timestamp: 'T' + id, message: { content: [{ type: 'tool_use', id: 'tu' + id, name: 'Bash', input: { command: cmd, description: desc, ...(bg ? { run_in_background: true } : {}) } }] } });
+  const res = (id, out, extra = {}) => ({ type: 'user', toolUseResult: { backgroundTaskId: id, ...extra }, message: { content: [{ type: 'tool_result', tool_use_id: 'tu' + id, content: `Command running in background with ID: ${id}. Output is being written to: ${out}` }] } });
+  await fsp.writeFile(tr, 'cut\n' + [call('b1', 'npm run dev', 'Dev server'), res('b1', path.join(tdir, 'b1.output')),
+    call('b2', 'sleep 9', 'Wait'), res('b2', path.join(tdir, 'b2.output')),
+    { type: 'user', message: { content: '<task-notification>\n<task-id>b2</task-id>\n<status>completed</status>\n</task-notification>' } },
+    call('b3', 'tail -f x', 'Follow'), res('b3', path.join(tdir, 'b3.output')), { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'TaskStop', input: { task_id: 'b3' } }] } },
+    call('b4', 'make test', 'Tests', false), res('b4', '/etc/passwd', { timedOutAfterMs: 120000 })].map(e => JSON.stringify(e)).join('\n') + '\n');
+  const shs = await shellsOf(tr);
+  assert.deepEqual(shs.map(x => [x.id, x.desc, x.moved, !!x.out]), [['b4', 'Tests', true, false], ['b1', 'Dev server', false, true]]);
+  assert.equal(shs[1].line, 'progress 90%'); assert.equal(shs[0].line, '');
+  const lg = await shellLog(tr, 'b1');
+  assert.equal(lg.cmd, 'npm run dev'); assert.equal(lg.text, 'step 1\nprogress 90%\n'); assert.equal((await shellLog(tr, 'b2')).done, true);
+  assert.equal(await shellLog(tr, '../b1'), null); assert.equal((await shellLog(tr, 'b4')).text, '');
+  await fsp.rm(tmp, { recursive: true }); await fsp.rm(path.dirname(tr), { recursive: true });
   console.log('workflows.mjs: ok');
 }
