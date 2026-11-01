@@ -137,13 +137,25 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
   const loadCmds = () => (cmdLoad ||= fetch('/app/commands.json?tab=' + (/^[0-9a-f]{8}$/.test(args[2] || '') ? args[2] : '00000000') + (args[0] === 'attach' ? '&s=' + encodeURIComponent(args[1] || '') : ''))
     .then(r => (r.ok ? r.json() : { cmds: [] })).then(j => { cmdList = j.cmds || []; setTimeout(() => { cmdLoad = null; }, 300000); showCmds(); }, () => { cmdLoad = null; }));
   const KIND = { 'built-in': '', skill: 'skill', project: 'project', plugin: 'plugin', workflow: 'workflow' };
+  // the "/" word at the caret: the whole field (a command), or a word after a space mid-message (a skill, as Claude's own box offers them
+  // there, 2026-11-01: `explain me that using /archify` opened nothing, and the spell-check offered "archery")
+  const slash = () => {
+    const c = ta.selectionStart, m = /(^|\s)\/(\S*)$/.exec(ta.value.slice(0, c));
+    if (!m || ta.selectionEnd !== c || /^\S/.test(ta.value.slice(c))) return null;
+    const from = c - m[2].length - 1;
+    return { q: m[2], from, to: c, mid: !!(ta.value.slice(0, from) + ta.value.slice(c)).trim() };
+  };
+  /** @type {ReturnType<typeof slash>} */ let tok = null;
+  const put = (/** @type {string} */ n) => { if (tok) ta.setRangeText('/' + n + ' ', tok.from, tok.to, 'end'); grow(); showCmds(); ta.focus(); };
   function showCmds() {
-    const m = /^\/(\S*)$/.exec(ta.value);
-    if (!m || form.hidden || choice) { cmds.hidden = true; return; }
+    tok = form.hidden || choice ? null : slash();
+    // a "/" word is not prose: no spell-check or autocorrect while it is typed (the keyboard of a phone reads them at its next focus)
+    if (!shell) for (const [k, prose, cmd] of TRAITS) if (ta.getAttribute(k) !== (tok ? cmd : prose)) ta.setAttribute(k, tok ? cmd : prose);
+    if (!tok) { cmds.hidden = true; return; }
     if (!cmdList) { loadCmds(); cmds.hidden = true; return; }
-    const q = m[1].toLowerCase();
+    const q = tok.q.toLowerCase();
     const rank = c => (c[0].toLowerCase().startsWith(q) ? 0 : c[0].toLowerCase().includes(q) ? 1 : (c[2] || '').toLowerCase().includes(q) ? 2 : 9);
-    const hits = cmdList.map(c => [rank(c), c]).filter(([r]) => r < 9).sort((x, y) => x[0] - y[0] || x[1][0].localeCompare(y[1][0])).slice(0, 60).map(([, c]) => c);
+    const hits = cmdList.filter(c => !tok?.mid || c[3] !== 'built-in').map(c => [rank(c), c]).filter(([r]) => r < 9).sort((x, y) => x[0] - y[0] || x[1][0].localeCompare(y[1][0])).slice(0, 60).map(([, c]) => c);
     cmds.textContent = ''; at = 0;
     for (const [n, a, d, k] of hits) {
       const b = el('button', { type: 'button', className: 'cmd', role: 'option' },
@@ -151,10 +163,11 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
         d ? el('span', { className: 'cd' }, d) : null);
       b.dataset.n = n;
       b.addEventListener('pointerdown', e => e.preventDefault()); // keep the keyboard on the field
-      b.addEventListener('click', () => { ta.value = '/' + n + ' '; grow(); showCmds(); ta.focus(); });
+      b.addEventListener('click', () => put(n));
       cmds.append(b);
     }
-    if (!hits.length) cmds.append(el('div', { className: 'none' }, 'No command matches /' + m[1]));
+    if (!hits.length && tok.mid) { cmds.hidden = true; return; } // a path mid-message (`see /etc/hosts`) is not asking for the menu
+    if (!hits.length) cmds.append(el('div', { className: 'none' }, 'No command matches /' + tok.q));
     cmds.hidden = false; mark();
   }
   // a keyboard: ↑ ↓ move the highlight, Tab puts the command in the field, Enter runs it (Claude's own list does the same)
@@ -217,6 +230,8 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (document.activeElement === ta) { ta.blur(); ta.focus(); }
   };
   ta.addEventListener('input', () => { shellMode(); grow(); showCmds(); });
+  ta.addEventListener('click', () => showCmds());
+  ta.addEventListener('keyup', e => { if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) showCmds(); });
   // a keyboard (a desktop, or one on a tablet): the keys Claude's own box takes go to Claude, as from the terminal: shift+tab (its mode), esc
   // (stop it), ctrl+c (the field cleared if it holds text, else Claude's ctrl+c; with text selected in the terminal, a copy of it), ↑ ↓ with
   // nothing typed (its history), and on a dialog the arrows (its sheet's too: the field keeps the focus). A /grid chord goes up to the grid
@@ -228,7 +243,8 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (!cmds.hidden && bs.length && !e.shiftKey && /^(ArrowUp|ArrowDown|Tab|Enter)$/.test(e.key)) {
       e.preventDefault();
       if (e.key[0] === 'A') { at = (at + (e.key < 'ArrowE' ? 1 : -1) + bs.length) % bs.length; mark(); }
-      else { ta.value = '/' + bs[at].dataset.n; e.key === 'Tab' ? (ta.value += ' ', grow(), showCmds()) : submit(); }
+      else if (e.key === 'Tab' || tok?.mid) put(bs[at].dataset.n || ''); // mid-message, Enter puts the skill in; the message is sent by the next
+      else { ta.value = '/' + bs[at].dataset.n; submit(); }
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
