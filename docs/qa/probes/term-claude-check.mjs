@@ -868,6 +868,30 @@ if (!process.env.PHONES || process.env.PHONES.split(',').includes('desk')) {
   await P.page.locator('#ccsheet .wf li[data-sh="s1"]').dispatchEvent('click'); await sleep(500); // the sheet is not shown on a desktop: its own handler
   const ps = await P.page.evaluate(() => [...document.querySelectorAll('#ccsheet .wf pre')].map(x => x.textContent));
   check('desk W9 the sheet (the phone\'s) lists the shell, a tap shows its command and output', ps[0] === '$ npm run dev -- --port 5173' && /ready on :5173/.test(ps[1] || ''), ps);
+  { // a plain shell (the picker's [s]: `bash -l`, no tmux line), then nano full screen: a plain terminal from the top, the first row whole under
+    // the bar, not half over the top edge (2026-11-01); the field never shows
+    let screen = '\x1b[H\x1b[2Jdev@box:~$ ls\r\na  b\r\ndev@box:~$ ';
+    const plain = () => F.ws.send(Buffer.from('0' + screen));
+    F.paint = plain; F.redraw = plain; plain();
+    const look = () => P.page.evaluate(() => { const row = document.querySelector('.xterm-rows > div'), w = document.getElementById('terminal-wrap').getBoundingClientRect(); return { txt: row.textContent.trim(), gap: Math.round(row.getBoundingClientRect().top - w.top), field: !document.getElementById('cccomp').hidden, plain: document.body.classList.contains('ccplain') }; });
+    await sleep(2200);
+    const r = await look();
+    await shot(P, 'desk-P1-plain-shell');
+    check('desk P1 a plain shell: a plain terminal, the first line whole under the bar, no field', r.plain && r.txt === 'dev@box:~$ ls' && r.gap >= 0 && r.gap < 8 && !r.field, r);
+    const rows = await P.page.evaluate(() => window.term.rows), fields = [];
+    screen = '\x1b[H\x1b[2J\x1b[7m  GNU nano 7.2   a.txt' + ' '.repeat(40) + '\x1b[0m' + `\x1b[${rows - 1};1H^G Help   ^O Write Out\x1b[${rows};1H^X Exit   ^R Read File\x1b[3;1H`;
+    plain();
+    for (let k = 0; k < 20; k++) { fields.push((await look()).field); await sleep(50); }
+    const n = await look();
+    await shot(P, 'desk-P2-nano');
+    check('desk P2 nano full screen: its title row whole at the top, the field never shown', n.plain && /^GNU nano 7\.2/.test(n.txt) && n.gap >= 0 && n.gap < 8 && !fields.some(Boolean), [n, fields.filter(Boolean).length]);
+    // `clear`: the screen blank for a moment, then the prompt. Not Claude restarting: no loader, no field (the desktop, 2026-11-02)
+    screen = '\x1b[H\x1b[2J'; plain(); await sleep(100); screen = '\x1b[H\x1b[2Jdev@box:~$ '; plain();
+    const seen = [];
+    for (let k = 0; k < 40; k++) { seen.push(await P.page.evaluate(() => ({ field: !document.getElementById('cccomp').hidden, boot: document.body.classList.contains('ccboot') }))); await sleep(75); }
+    const c = await look();
+    check('desk P3 `clear` in a plain shell: no loader, no field, the prompt on the first row', !seen.some(x => x.field || x.boot) && c.plain && c.txt === 'dev@box:~$', [c, seen.filter(x => x.field || x.boot).length]);
+  }
   await P.ctx.close();
 }
 await browser.close();

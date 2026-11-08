@@ -175,6 +175,7 @@ run_session() { # profile cwd sid — in-pane runner, lives INSIDE the tmux wind
   # the dashboard joins this live session to its transcript by @sid, not by the session name
   tmux set-option @sid "$3" 2>/dev/null || true
   local mcp=(); [ -f "$cfg/mcp-interactive.json" ] && mcp=(--strict-mcp-config --mcp-config "$cfg/mcp-interactive.json")
+  [ ${#mcp[@]} -gt 0 ] && [ -f "$PWD/.mcp.json" ] && mcp+=("$PWD/.mcp.json")  # ponytail: project servers ride the same --mcp-config list
   while :; do
     # bypass offered in shift+tab's cycle, as cc does (fleet/bin/cc); the session resumes in its profile's mode
     env CLAUDE_CONFIG_DIR="$cfg" "$CLAUDE" --allow-dangerously-skip-permissions "${mcp[@]}" --resume "$3" && rc=0 || rc=$?

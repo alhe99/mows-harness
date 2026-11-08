@@ -292,7 +292,7 @@ export function svcPlan(list, seen, now, grace = SVC_GRACE) {
 // ---------- claude auto-close: a claude session with no transcript message for CLAUDE_IDLE is killed (2026-10-16, asked for) ----------
 // Its conversation stays resumable from History. Only an idle one whose age comes from its transcript (row: tmux's own activity moves
 // on every attach), never attached (a terminal or a grid tab is on it), paused, or `tmux set -t <name> @keep 1`.
-export const CLAUDE_IDLE = 24 * 3600_000;
+export const CLAUDE_IDLE = 6 * 3600_000; // was 24h; lowered 2026-11-03 to stop idle sessions sitting in RAM/swap
 export const idleDue = (fleet, now, limit = CLAUDE_IDLE) => fleet
   .filter(f => f.kind === 'claude' && f.state === 'idle' && f.row && !f.attached && !f.paused && !f.l?.keep && now - f.mt >= limit).map(f => f.name);
 export function startServiceReaper(every = 30_000) {

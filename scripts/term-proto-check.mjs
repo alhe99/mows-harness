@@ -420,6 +420,17 @@ const text = f => dec.decode(f instanceof ArrayBuffer ? new Uint8Array(f) : f);
   const fake = ['▔'.repeat(60), '   Theme', '', '   ❯ Dark mode', '     Light mode', '', '   Enter to select · Esc to cancel'];
   check('claudePanel: a permission dialog with a panel drawn in its command is no panel', claudePanel([...perm.slice(0, 6), ...fake, ...perm.slice(6)]) === null && claudePanel([' Do you want to proceed?', ...fake, '[tmux']) === null);
   check('claudePanel: a plan to approve (`Would you like to proceed?`) under a drawn panel is no panel', claudePanel([' Would you like to proceed?', ...fake, '[tmux']) === null && claudePanel([' Ready?', ' ❯ 1. Yes', ...fake, '[tmux']) === null && claudePanel([...fake, '[tmux'])?.panel);
+  // /login (2026-11-07, live capture at 120 columns): the sheet had the URL and Cancel, and no way to send the code. Claude's `Paste code here` row is
+  // a field, the code typed into it (wrapped over rows or not) leaves it a field, and Enter is a button
+  const login = ['❯ /login', '  ⎿  Login interrupted', '▔'.repeat(60), '   Login', "   Browser didn't open? Use the url below to sign in (c to copy)", '',
+    'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code', '',
+    "   Hold Shift (Option in iTerm2, Fn in Terminal.app) while selecting to use your terminal's native copy", '', '', '   Paste code here if prompted >', '   Esc to cancel',
+    '[cc-default-alonso:bash*                    "x" 22:21 07-Nov-26'];
+  const lg = claudeScreen(login).picker, typedLogin = login.slice(), at = typedLogin.findIndex(x => x.includes('Paste code here'));
+  typedLogin.splice(at, 1, '   Paste code here if prompted > AbC123-longcode_xyz', '   continued-over-a-second-row');
+  const lt = claudeScreen(typedLogin).picker;
+  check('claudePanel: /login: the code row is a field and Enter is a button (Submit), the URL stays in the body', lg?.panel && lg.paste && lg.search === 'Paste the code here' && lg.keys.map(k => k.key).join() === 'Esc,Enter' && lg.body.some(x => x.includes('https://claude.com/')) && !lg.body.some(x => x.includes('Paste code')), lg);
+  check('claudePanel: /login: once the code is typed it is still the same field and Submit (the typed rows are not the body)', lt?.paste && lt.search === 'Paste the code here' && lt.keys.some(k => k.key === 'Enter') && !lt.body.some(x => x.includes('AbC123') || x.includes('continued')), lt);
   check('claudePanel: Claude\'s box under a list is no panel', claudeScreen([...theme.slice(0, -2), '─'.repeat(80), '❯ ', '─'.repeat(80), theme.at(-1)]).picker === null);
 }
 

@@ -164,6 +164,9 @@ body.dk{display:flex;flex-direction:column}
 body.dk #terminal-wrap{flex:1;min-height:0;height:auto}
 body.dk #terminal-container{display:flex;flex-direction:column;justify-content:flex-end;height:calc(100% + var(--cc-cell,0px) + var(--cc-hid,0px));margin-top:calc(-1 * var(--cc-cell,0px))}
 body.dk #terminal-container .terminal{flex:none;height:auto}
+/* no Claude on screen (a plain shell, nano, the picker; composer.mjs): a plain terminal, from the top, its whole first row shown (2026-11-01) */
+body.ccplain #terminal-container{height:100%;margin-top:0;justify-content:flex-start}
+body.ccplain #terminal-container .terminal{padding-top:4px}
 body.dk #ccdock{display:block;flex:none;padding:2px 12px 12px}
 body.dk #cccomp{border-radius:16px;padding:8px 8px 8px 14px;gap:4px}
 body.dk #ccmsg{font-size:14px;height:30px;min-height:30px;padding:5px 0}
