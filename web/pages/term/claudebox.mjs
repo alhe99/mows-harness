@@ -86,6 +86,9 @@ const below = (/** @type {string[]} */ rows, /** @type {number} */ f) => rows.sl
 // indented deeper its description, `↑ 8 more` / `↓ 37 more` its window; and the keys line last (`Enter to view · Esc to close`, wrapped over
 // two rows on a narrow screen). Rows above the list are shown as Claude drew them, rows under it are left out (/theme's preview). The sheet
 // (pick.mjs) moves the highlight with arrows and answers with the keys of the line: a misread row moves it somewhere else, never picks
+// /login's `Paste code here if prompted >`: Claude's own field. The sheet shows it as a text field with a Submit (Enter): the sheet had no way to
+// send the code (the desktop, 2026-11-07). What follows it (the code once typed, wrapped over rows) is the field's, not the body's
+const PASTE = /^\s*Paste code here\b.*>/;
 const PTOP = /^\s*▔{8,}/, SEARCH = /^\s*│\s*⌕\s*(.*?)\s*│$/, FIELD = /^\s*│\s*(?:⌕\s*)?(.*?)\s*│$/, MORE_ROW = /^\s*([↑↓])\s+(\d+) more\b/;
 /** @param {string[]} rows */
 export function claudePanel(rows) {
@@ -113,11 +116,13 @@ export function claudePanel(rows) {
   const item = col + 2, alt = col >= 0 && mid.filter(x => /^[^\w\s] \S/.test(x.slice(item)) && ind(x) >= col && !MORE_ROW.test(x)).length <= 1 ? item + 2 : item;
   const p = { title: '', text: '', body: /** @type {string[]} */ ([]), opts: /** @type {any[]} */ ([]), more: '', adjust: '', search: /** @type {string | null} */ (null),
     keys: /** @type {{ key: string, label: string }[]} */ ([]), panel: true, ask: false, submit: null };
-  let up = false;
+  let up = false, paste = false;
   for (const [i, x] of mid.entries()) { // a field: a boxed row under `╭` (/resume's search `⌕ Search…`, /add-dir's `Directory path…`)
     const t = x.trim(), o = p.opts.at(-1), m = MORE_ROW.exec(x), q = /^\s*╭/.test(mid[i - 1] || '') && FIELD.exec(x);
     if (!p.title) { p.title = t.replace(/\s{2,}/g, ' · '); continue; }
     if (q) { p.search = q[1]; continue; }
+    if (!paste && PASTE.test(x)) { paste = true; p.search = 'Paste the code here'; continue; }
+    if (paste) continue;
     if (/^\s*[╭╰]/.test(x)) continue;
     if (col >= 0 && m && ind(x) >= col) { if (m[1] === '↑') up = true; else p.more = '+' + m[2]; continue; }
     if (col >= 0 && t && (/[❯↑↓]/.test(x[col]) && x[col + 1] === ' ' || ind(x) === item || ind(x) === alt)) {
@@ -136,6 +141,7 @@ export function claudePanel(rows) {
     if (m[1] === '←/→') p.adjust = m[2].charAt(0).toUpperCase() + m[2].slice(1);
     else p.keys.push({ key: m[1].replace(/\/.*$/, ''), label: m[2] }); // `Enter/↓ to select`: Enter
   }
+  if (paste) { p.paste = true; if (!p.keys.some(k => k.key === 'Enter')) p.keys.push({ key: 'Enter', label: 'Submit' }); } // the code is answered with Enter
   if (p.opts.length && !p.keys.some(k => k.key === 'Enter')) p.keys.push({ key: 'Enter', label: 'open' }); // /resume names no Enter: it opens the row
   return p.title ? p : null;
 }

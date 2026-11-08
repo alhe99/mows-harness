@@ -115,6 +115,10 @@ export function picker(term) {
         let c = 0; while (c < sought.length && sought[c] === q.value[c]) c++;
         term.input('\x7f'.repeat(sought.length - c) + q.value.slice(c)); sought = q.value;
       });
+      if (p.paste) { // the code field: the keyboard's Enter submits it, as Submit does
+        q.enterKeyHint = 'go'; q.autocomplete = 'off'; q.spellcheck = false;
+        q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); press('Enter'); } });
+      }
       srch = el('div', { className: 'free' }, q);
     }
     if (p.submit) acts0.push(btn('pri', p.submit.label, () => { go(fr ? fr.n + 1 : rank(last.n) + 1); term.input('\r'); }));

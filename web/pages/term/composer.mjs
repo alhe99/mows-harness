@@ -319,6 +319,12 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     // higher than the rows hidden under the dock, and the newest lines with it; moving up, at most by those rows, keeps them in view
     return `translateY(${Math.max(-extraPx, Math.ceil(wrap.clientHeight - y))}px)`;
   };
+  // no Claude on screen, and something else is (a plain shell, nano, the session picker): a plain terminal, top-aligned, no row over the top
+  // edge and nothing under the dock (body.ccplain, term.css). That row is for Claude's screen, which sits on the bottom; a shell or nano starts
+  // at the top and lost its first line under the bar (the desktop, 2026-11-01). Entered in Claude's layout as before (its first size is the
+  // final one); a blank pane (Claude restarting, loading) keeps it, and so does the entry (booting). The switch is one refit, after the linger (fit() coalesces it with hide()'s)
+  let plain = false;
+  const layout = (/** @type {boolean} */ p) => { if (p === plain) return; plain = p; document.body.classList.toggle('ccplain', p); fit(); };
   // rows hidden under the dock by height: the container grows by them, the pty gets them (one resize per change)
   let extra = 0, extraPx = 0, resized = 0, cellSet = 0;
   const hide = (/** @type {number} */ n) => {
@@ -356,7 +362,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     const ch = Math.ceil(cellH());
     if (ch && ch !== cellSet) { cellSet = ch; tc.style.setProperty('--cc-cell', ch + 'px'); fit(); }
     blank = !rows.slice(0, -1).some(x => x.trim()); // tmux's status line, the last row, does not count
-    if (blank && drawn && !booting) hold(2, 'loading');
+    if (blank && drawn && !booting && !plain) hold(2, 'loading'); // not a shell's `clear` (the desktop, 2026-11-02: the loader and the field over it)
     if (!blank) drawn = true;
     if (back === 2) { if (blank) dark = true; else if (dark) { dark = false; clearTimeout(cap); cap = setTimeout(ready, 3000); } }
     const s = claudeScreen(rows, typed), now = Date.now();
@@ -384,7 +390,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
     if (t >= 0) {
       // Claude's chrome, from the box's top rule down: those rows go under the dock (a cut box, mid-redraw, changes nothing; nor does a resize
       // still settling)
-      if (s.box && now - resized > SETTLE) hide(Math.min(16, term.rows - t));
+      if (s.box && now - resized > SETTLE) { layout(false); hide(Math.min(16, term.rows - t)); }
       else if (s.box) { clearTimeout(settle); settle = setTimeout(scan, SETTLE - (now - resized) + 10); } // look again once the resize has settled
       top = t; shift = place(t);
       if (s.box) { // the whole box: its draft and mode are current; a cut one keeps what was read last
@@ -398,7 +404,7 @@ export function composer(/** @type {import('@xterm/xterm').Terminal} */ term, /*
         if (s.model && modelEffort.textContent !== s.model.effort) modelEffort.textContent = s.model.effort;
         figures(s.use);
       }
-    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; figures(null); if (!trusted) hide(0); } // a dialog shows at once; the rest after LINGER without Claude
+    } else if (choice || !recent) { top = -1; held = ''; shift = ''; mode.hidden = true; model.hidden = true; figures(null); if (!trusted) hide(0); if (!choice && !blank && !booting) layout(true); } // a dialog shows at once; the rest after LINGER without Claude
     else linger = setTimeout(scan, LINGER - (now - seen) + 10); // a redraw in flight: keep the last shift and chips, look again when the window ends
     if (tc.style.transform !== shift) tc.style.transform = shift;
     document.body.classList.toggle('ccclaude', top >= 0);
