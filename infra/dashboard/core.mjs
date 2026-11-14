@@ -84,6 +84,11 @@ export const args = process.argv.slice(2);
 export const flag = (n, d) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : d; };
 
 export const PORT = +flag('--port', 3005), HOST = flag('--host', '127.0.0.1');
+// --socket PATH: listen on a unix socket instead of TCP. The deployed unit uses it: a 127.0.0.1 port is
+// reachable by EVERY local account (this box has lower-trust agent-* users) and the dashboard has no auth of
+// its own, so loopback is not a boundary. The socket and its dir are root:<tmux user's group> 0660/0750, so only
+// that user and whoever is in that group (Caddy, via usermod -aG) can connect. TCP stays the default for dev/e2e.
+export const SOCK = flag('--socket', '');
 
 // >_ resume affordance only for sessions active in the last N days (live tmux
 // sessions always keep attach). Old transcripts stay browsable — just not

@@ -70,6 +70,9 @@ export async function mdView(req, res, url, next = false) {
   let real, st;
   try { real = await fsp.realpath(f); st = await fsp.stat(real); } catch { return oops(404, `not found: ${f}`); }
   if (!real.startsWith(MD_ROOT + '/')) return oops(403, 'only files under /home are viewable.');
+  // The type check above ran on the name asked for; a `leak.txt` symlink must not turn this root
+  // read into any file under /home. Re-check on what will actually be read.
+  if (/\.html?$/i.test(real) !== html || (!html && !/\.(md|markdown|txt)$/i.test(real))) return oops(403, 'the link resolves to a file type that cannot be previewed.');
   const cap = html ? 16 : 2; // MB; an Archify page carries its viewer and fonts inline (~1 MB)
   if (!st.isFile() || st.size > cap * 1024 * 1024) return oops(403, `not a regular file under ${cap} MB.`);
   if (html && !(real.startsWith(TMUX_HOME + '/') && real.includes('/.archify/'))) return oops(403, 'only Archify pages (an .html under a .archify/ folder of the home) are viewable.');

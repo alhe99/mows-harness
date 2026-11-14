@@ -428,10 +428,10 @@ are harmless: every asset URL is content-hashed and only names listed in `dist/m
 third is the one that would otherwise go unnoticed for months.
 
 ```sh
-curl -s -o /dev/null -w '/ %{http_code}\n' http://127.0.0.1:3005/            # expect 200
+curl -s -o /dev/null -w '/ %{http_code}\n' --unix-socket /run/claude-dash/dash.sock http://x/            # expect 200
 # the module the shell actually asks for, taken from its src=
-M=$(curl -s http://127.0.0.1:3005/ | grep -o 'src="/assets/[^"]*"' | cut -d'"' -f2)
-curl -s -o /dev/null -w "$M %{http_code}\n" "http://127.0.0.1:3005$M"        # expect 200, not 404
+M=$(curl -s --unix-socket /run/claude-dash/dash.sock http://x/ | grep -o 'src="/assets/[^"]*"' | cut -d'"' -f2)
+curl -s -o /dev/null -w "$M %{http_code}\n" --unix-socket /run/claude-dash/dash.sock "http://x$M"        # expect 200, not 404
 grep -c -- --stream ~/.local/bin/mows-agent                                 # expect > 0
 ```
 

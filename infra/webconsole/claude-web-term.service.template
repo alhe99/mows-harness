@@ -64,7 +64,14 @@ After=network.target claude-tmux.service
 Type=simple
 User={{ADMIN_USER}}
 Environment=LANG=C.UTF-8
-ExecStart=/usr/bin/ttyd --port 7681 --interface 127.0.0.1 --base-path /term --writable --url-arg -t fontSize=14 -t rendererType=canvas -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
+# A unix socket, not 127.0.0.1:7681: ttyd has no credential here, so a TCP port handed a writable
+# ADMIN_USER shell to every local account (agent-* included). RuntimeDirectory is {{ADMIN_USER}}:<its
+# group> 0750 and UMask makes the socket 0770, so only that group can connect; add Caddy to it with
+# `sudo usermod -aG {{ADMIN_USER}} caddy && sudo systemctl restart caddy`.
+RuntimeDirectory=claude-web-term
+RuntimeDirectoryMode=0750
+UMask=0007
+ExecStart=/usr/bin/ttyd --interface /run/claude-web-term/ttyd.sock --base-path /term --writable --url-arg -t fontSize=14 -t rendererType=canvas -I /opt/claude-dashboard/clipboard-shim.html /opt/claude-dashboard/web-term.sh
 Restart=on-failure
 RestartSec=3
 

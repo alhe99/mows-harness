@@ -38,5 +38,8 @@ trap 'rm -f "$TMP"' EXIT
 
 # ---- pruning body, ported verbatim from live (lsof guard + 30-day mtime cutoff) ----
 lsof -Fn 2>/dev/null | sed -n 's/^n//p' | grep '\.jsonl$' | sort -u > "$TMP" || true
-find "${ROOTS[@]}" -name '*.jsonl' -mtime +30 -print 2>/dev/null | grep -vxF -f "$TMP" | xargs -r rm -- || true
+# NUL-delimited end to end: the names come from trees lower-trust accounts write, and a
+# newline/space-split list let "projects/A /etc/x .jsonl" become `rm /etc/x` as root.
+# -type f: never hand rm a FIFO, socket or directory named *.jsonl.
+find "${ROOTS[@]}" -type f -name '*.jsonl' -mtime +30 -print0 2>/dev/null | grep -zvxF -f "$TMP" | xargs -0r rm -- || true
 find "${ROOTS[@]}" -mindepth 1 -type d -empty -delete 2>/dev/null || true

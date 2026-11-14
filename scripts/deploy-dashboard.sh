@@ -58,13 +58,16 @@ if [ "$DRY" = 1 ] || grep -q '^ExecStart=.*lite\.mjs' "$UNITFILE" 2>/dev/null; t
   run $SUDO systemctl daemon-reload
 fi
 run $SUDO systemctl restart "$UNIT"
+# the unit listens on a unix socket (--socket, the shipped template) or on TCP :$PORT (older units)
+SOCK=$(sed -n 's/^ExecStart=.*--socket \([^ ]*\).*/\1/p' "$UNITFILE" 2>/dev/null | head -1)
+if [ -n "$SOCK" ]; then AT="unix:$SOCK"; HC=(curl -sf --unix-socket "$SOCK" http://x/healthz); else AT=":$PORT"; HC=(curl -sf "http://127.0.0.1:$PORT/healthz"); fi
 if [ "$DRY" = 1 ]; then
-  echo "+ smoke: curl -sf http://127.0.0.1:$PORT/healthz (retry 15 s)"
+  echo "+ smoke: ${HC[*]} (retry 15 s)"
   exit 0
 fi
 for _ in $(seq 1 15); do
-  if curl -sf "http://127.0.0.1:$PORT/healthz" >/dev/null; then echo "deploy: /healthz ok on :$PORT"; exit 0; fi
+  if "${HC[@]}" >/dev/null; then echo "deploy: /healthz ok on $AT"; exit 0; fi
   sleep 1
 done
-echo "deploy: /healthz did not answer on :$PORT after restarting $UNIT (journalctl -u $UNIT -n 50)" >&2
+echo "deploy: /healthz did not answer on $AT after restarting $UNIT (journalctl -u $UNIT -n 50)" >&2
 exit 1

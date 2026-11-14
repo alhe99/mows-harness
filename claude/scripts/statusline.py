@@ -2,12 +2,26 @@
 # statusline.py — Claude Code's status line without running ccusage. `ccusage statusline` re-read every transcript of the account
 # each second per session (a 300-500 MB process per refresh; with five sessions open the box was in swap, 2026-10-29). Here the
 # session's own figures come from Claude Code's stdin JSON, and today/block/quota from the dashboard, which already collects them
-# every 10 min (/api/system on 127.0.0.1:3005), kept 60 s in a file so a refresh is one small read. Dashboard down: the last numbers
+# every 10 min (/api/system on its unix socket, else 127.0.0.1:3005), kept 60 s in a file so a refresh is one small read. Dashboard down: the last numbers
 # it gave, else just the session's own.
 import getpass, json, os, sys, time, urllib.request
 
 CACHE = os.path.join(os.environ.get('XDG_RUNTIME_DIR') or '/tmp', f'cc-statusline-{getpass.getuser()}.json')
 API = os.environ.get('CC_STATUSLINE_API', 'http://127.0.0.1:3005/api/system')
+SOCK = os.environ.get('CC_STATUSLINE_SOCK', '/run/claude-dash/dash.sock')  # the deployed unit listens here, not on TCP
+
+
+def fetch():
+    if os.path.exists(SOCK):
+        import http.client, socket
+        c = http.client.HTTPConnection('localhost', timeout=0.8)
+        c.sock = socket.socket(socket.AF_UNIX)
+        c.sock.settimeout(0.8)
+        c.sock.connect(SOCK)
+        c.request('GET', '/api/system')
+        return json.load(c.getresponse())
+    with urllib.request.urlopen(API, timeout=0.8) as r:
+        return json.load(r)
 
 
 def usage():
@@ -18,8 +32,7 @@ def usage():
     except (OSError, ValueError):
         pass
     try:
-        with urllib.request.urlopen(API, timeout=0.8) as r:
-            u = json.load(r).get('usage') or {}
+        u = fetch().get('usage') or {}
         tmp = f'{CACHE}.{os.getpid()}'
         with open(tmp, 'w') as f:
             json.dump(u, f)

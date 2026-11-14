@@ -468,8 +468,8 @@ flowchart TB
     subgraph Layer3["Layer 3: infra (public VPS surface)"]
         CADDY["Caddy :443<br/>TLS + reverse proxy"]
         OAUTH["oauth2-proxy :4180<br/>Google-gated auth"]
-        DASH["dashboard (lite.mjs + shell) :3005"]
-        TERM["ttyd /term :7681"]
+        DASH["dashboard (lite.mjs + shell) unix:dash.sock"]
+        TERM["ttyd /term unix:ttyd.sock"]
         WATCH["qa-watch: Xvfb + Chrome + noVNC<br/>:6080 / :9222, on-demand"]
     end
 

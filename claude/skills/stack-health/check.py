@@ -62,8 +62,9 @@ SYS_UNITS = ["caddy", "oauth2-proxy", "claude-dash-lite", "claude-web-term",
              "shadcn-sandbox", "docker-user-fence", "fail2ban", "earlyoom",
              "docker", "cron", "claude-remote-work", "claude-remote-control-work"]
 # ports that must be listening; 37777 is session-spawned so it's advisory only
-PORTS_REQUIRED = {80: "caddy", 443: "caddy", 22: "sshd", 3005: "claude-dash-lite",
-                  3111: "shadcn-sandbox", 4180: "oauth2-proxy", 7681: "ttyd"}
+PORTS_REQUIRED = {80: "caddy", 443: "caddy", 22: "sshd",
+                  3111: "shadcn-sandbox", 4180: "oauth2-proxy"}
+# claude-dash-lite and ttyd listen on unix sockets (no loopback port for other local accounts); probed in section 4.
 for _name, _port in EXTRA_SERVICES:
     PORTS_REQUIRED[_port] = _name
 PORTS_ADVISORY = {37777: "claude-mem worker (spawned by a Claude session)"}
@@ -198,23 +199,25 @@ for port, svc in sorted(PORTS_ADVISORY.items()):
 
 # ── 4. local endpoints ─────────────────────────────────────────────────────────
 hdr("4. LOCAL HTTP ENDPOINTS")
-BASE_HTTP_PORTS = [3005, 3111, 4180]  # 7681 (ttyd) is probed separately below -- needs /term/
+BASE_HTTP_PORTS = [3111, 4180]  # the dashboard and ttyd (unix sockets) are probed separately below
 extra_ports = [port for _, port in EXTRA_SERVICES]
 probe_ports = " ".join(str(p) for p in BASE_HTTP_PORTS + extra_ports)
 probe = (f"for p in {probe_ports}; do "
          "echo \"$p=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:$p/ 2>/dev/null)\"; done; "
-         "echo \"7681=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:7681/term/ 2>/dev/null)\"")
+         "echo \"dash=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --unix-socket /run/claude-dash/dash.sock http://x/ 2>/dev/null)\"; "
+         "echo \"ttyd=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --unix-socket /run/claude-web-term/ttyd.sock http://x/term/ 2>/dev/null)\"")
 out, _ = sh(probe)
 codes = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
 # oauth2-proxy 302 on / is correct; ttyd only serves under its --base-path
-EXPECT = {"3005": {"200"}, "3111": {"200"}, "4180": {"200", "302", "401", "403"}, "7681": {"200"}}
+EXPECT = {"dash": {"200"}, "3111": {"200"}, "4180": {"200", "302", "401", "403"}, "ttyd": {"200"}}
 for port in extra_ports:
     EXPECT.setdefault(str(port), None)  # unconfigured expectation for a third-party service -- just confirm it answers at all
 for p, want in EXPECT.items():
     got = codes.get(p, "000")
     good = got != "000" if want is None else got in want
     expected = "some HTTP response" if want is None else "/".join(sorted(want))
-    ok(f"127.0.0.1:{p:<6} HTTP {got}") if good else bad(f"127.0.0.1:{p:<6} HTTP {got} (expected {expected})")
+    where = {"dash": "unix:dash.sock", "ttyd": "unix:ttyd.sock"}.get(p, f"127.0.0.1:{p}")
+    ok(f"{where:<16} HTTP {got}") if good else bad(f"{where:<16} HTTP {got} (expected {expected})")
 
 # ── 5. external HTTPS + TLS ────────────────────────────────────────────────────
 hdr("5. EXTERNAL HTTPS + TLS  (checked from this machine)")

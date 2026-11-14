@@ -204,6 +204,7 @@ export function shotName(ct, xname, ms) {
 
 // POST /shot: image and file uploads from the terminal's camera key, stored so claude can look at them; answers { ok, path }.
 export async function shotUpload(req, res) {
+  if (!sameOrigin(req, req.headers.host || '')) { res.writeHead(403); return res.end('bad origin'); }
   const chunks = []; let n = 0;
   for await (const c of req) { n += c.length; if (n > 15e6) { res.writeHead(413); return res.end('too big'); } chunks.push(c); }
   const dir = '/opt/claude-dashboard/shots';
