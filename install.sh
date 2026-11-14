@@ -126,7 +126,12 @@ render(){
   done
   backup "$dst"
   mkdir -p "$(dirname "$dst")"
-  printf '%s\n' "$out" > "$dst"
+  # Owner-only from the first byte: several renders carry secrets (oauth2-proxy.cfg's client and
+  # cookie secrets, mcp-interactive.json's keys) and rendered/ sits in a checkout other local
+  # accounts may traverse. chmod too, because umask does not narrow a file that already exists.
+  # Every later install into /etc names its own mode (-m644/-m0440/-m0640).
+  ( umask 077; printf '%s\n' "$out" > "$dst" )
+  chmod 600 "$dst"
 }
 
 # resolve_cookie_secret: SPECIAL CASE. oauth2-proxy's cookie_secret is never prompted for —
@@ -349,6 +354,7 @@ layer_infra(){
   render infra/caddy/Caddyfile.template rendered/Caddyfile
   echo "  review rendered/Caddyfile, then: caddy validate --config rendered/Caddyfile --adapter caddyfile"
   echo "  sudo install -m644 rendered/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
+  echo "  sudo usermod -aG \"$ADMIN_USER\" caddy && sudo systemctl restart caddy   # the dashboard and ttyd listen on unix sockets owned by that group, not loopback ports"
   echo "  (never caddy fmt --overwrite on a template/rendered copy — it mangles the {{ }} placeholders)"
   render infra/oauth2-proxy/oauth2-proxy.cfg.template rendered/oauth2-proxy.cfg
   render infra/oauth2-proxy/emails.txt.template       rendered/emails.txt

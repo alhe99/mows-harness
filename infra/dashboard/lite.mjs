@@ -55,8 +55,10 @@
 // or the unit will not start (missing sibling) or /ui will answer 200 with a blank page (missing app/). HTML and CSS live in
 // legacy.mjs and routes/documents.mjs only. See "Deploying this change" in docs/architecture.md.
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import { assetView, swView } from './static.mjs';
-import { BIG, HOST, PORT, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, plainText, watchedSessions, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
+import { BIG, HOST, PORT, SOCK, TMUX_HOME, SESSION_PATH_RE, THEME_MAP, args, classifyFleet, plainText, watchedSessions, counts, crc32, flag, freshen, index, lastScan, loadSession, readSettings, scan, send, titleOf, usage, startServiceReaper } from './core.mjs';
 import { chatBroadcast, chatEnd, eventsView, sseClients, startPushWatch, streamView } from './sse.mjs';
 import { apiView } from './routes/api.mjs';
 import { FLEET_JS, agentDetailView, agentRunView, agentsView, detailView, deviceView, errorPage, homeView, listView, loadUiAssets, mdHtml, notFoundPage, systemView, uiAssetView, uiTwinPath, uiView } from './legacy.mjs';
@@ -355,4 +357,14 @@ setInterval(freshen, 30000).unref();
 startPushWatch();
 startServiceReaper();
 
-server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));
+if (SOCK) {
+  // Owner/group are set on the dir AND the socket, from the tmux user's home group (no name to configure).
+  // Until chmod runs the socket is 0755 (root umask): no write bit for anyone else, and connect() needs write.
+  const { gid } = fs.statSync(TMUX_HOME), dir = path.dirname(SOCK);
+  fs.mkdirSync(dir, { recursive: true }); fs.chownSync(dir, 0, gid); fs.chmodSync(dir, 0o750);
+  try { if (fs.lstatSync(SOCK).isSocket()) fs.unlinkSync(SOCK); } catch {}
+  server.listen(SOCK, () => {
+    fs.chownSync(SOCK, 0, gid); fs.chmodSync(SOCK, 0o660);
+    console.log(`lite dashboard on unix:${SOCK} — ${index.length} sessions`);
+  });
+} else server.listen(PORT, HOST, () => console.log(`lite dashboard on http://${HOST}:${PORT} — ${index.length} sessions`));

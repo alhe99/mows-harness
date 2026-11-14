@@ -83,8 +83,10 @@ fetch_account(){ # -> normalized json on stdout, never fails
     tok=$(refresh_oauth "$dir") || tok=""
     [ -n "$tok" ] || { echo "$UNKNOWN"; return 0; }
   fi
-  raw=$(curl -sf --max-time 10 "$USAGE_URL" \
-        -H "Authorization: Bearer $tok" \
+  # The bearer token goes in on stdin (-K -), never argv: /proc/<pid>/cmdline is readable by
+  # every local account, and this box has lower-trust ones (same reason refresh uses -d @-).
+  raw=$(printf 'header = "Authorization: Bearer %s"\n' "$tok" \
+        | curl -sf --max-time 10 -K - "$USAGE_URL" \
         -H "anthropic-beta: oauth-2025-04-20" 2>/dev/null) || { echo "$UNKNOWN"; return 0; }
   printf '%s' "$raw" | parse_usage
 }

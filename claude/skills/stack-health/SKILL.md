@@ -41,7 +41,7 @@ Configure it for your deployment via environment variables:
    root *user* service state, linger (must survive reboot), version,
    **node engine compliance**, configured Discord bots (`HARNESS_DISCORD_BOTS`), error count
 3. **Ports** — 7 required + any configured extra services; `:37777` is advisory (session-spawned, absent is normal)
-4. **Local endpoints** — with per-port expected codes (`:4180` 302 and `:7681` 404-on-`/`
+4. **Local endpoints** — with per-port expected codes (`:4180` 302; the dashboard and ttyd are probed over their unix sockets, ttyd under `/term/`
    are both *correct*, not faults)
 5. **External HTTPS** — your configured vhosts (`HARNESS_DOMAIN` + `HARNESS_SUBDOMAINS`) +
    TLS expiry, warns under 14 days (Caddy renews at 30)
@@ -87,7 +87,7 @@ Each caused a wrong answer when this was built:
   service once required `>=22.22.3` while its tree sat under node v22.22.1, and
   worked only because `/usr/bin` happened to precede the nvm path in the unit's
   PATH. Correct by luck is not correct.
-- **`:7681` serves under `--base-path /term`**, so `/` returning 404 is right.
+- **ttyd (unix:/run/claude-web-term/ttyd.sock) serves under `--base-path /term`**, so `/` returning 404 is right.
   Probe `/term/`.
 
 ## Reporting

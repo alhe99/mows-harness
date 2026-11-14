@@ -321,7 +321,7 @@ $SUBLABEL.$DPART {
         import pwa
         import gauth
         import vncproxy
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
 }
 EOF

@@ -15,8 +15,12 @@
 # Upstream dependencies, all plain HTTP on loopback — Caddy is what puts TLS in front
 # of them, none should ever bind a non-loopback address themselves:
 #   127.0.0.1:4180   oauth2-proxy (this task — infra/oauth2-proxy/oauth2-proxy.cfg.template)
-#   127.0.0.1:3005   the harness's own dashboard process
-#   127.0.0.1:7681   ttyd, the /term web terminal
+#   unix//run/claude-dash/dash.sock       the harness's own dashboard process
+#   unix//run/claude-web-term/ttyd.sock   ttyd, the /term web terminal
+#                    These two are unix sockets, not loopback ports: neither has auth of its own
+#                    and every local account can reach 127.0.0.1. Both sockets belong to
+#                    {{ADMIN_USER}}'s group, so Caddy must be in it:
+#                    sudo usermod -aG {{ADMIN_USER}} caddy && sudo systemctl restart caddy
 #   127.0.0.1:6080   websockify/noVNC — only if the qa-watch stack (infra/qa-watch/, not
 #                    shipped by this task) is installed; harmless if vncproxy's route
 #                    never gets hit otherwise
@@ -58,12 +62,12 @@
     # reachable with the Google cookie alone; everything else also needs the dashboard's mows_2fa
     # cookie for the email above. Anchored on the apex like /oauth2/start; the cookie is on .{{DOMAIN}}.
     handle /2fa/* {
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
     handle /2fa {
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
-    forward_auth 127.0.0.1:3005 {
+    forward_auth unix//run/claude-dash/dash.sock {
         uri /2fa/auth
         @bad status 401
         handle_response @bad {
@@ -96,7 +100,7 @@
 # in every site block that proxies the dashboard, same rule as (sse) below. ---
 (webhook) {
     handle /wh/* {
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
 }
 
@@ -105,7 +109,7 @@
 # dashboard serves it with no chrome, no file path, noindex. Import BEFORE gauth, like (webhook). ---
 (share) {
     handle /p/* {
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
 }
 
@@ -114,7 +118,7 @@
 (pwa) {
     @pwa path /manifest.webmanifest /sw.js /icon-192.png /icon-512.png /apple-touch-icon.png /favicon.png /favicon.ico
     handle @pwa {
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
 }
 
@@ -133,7 +137,7 @@
 (sse) {
     @sse path /events /stream
     handle @sse {
-        reverse_proxy 127.0.0.1:3005 {
+        reverse_proxy unix//run/claude-dash/dash.sock {
             flush_interval -1
         }
     }
@@ -178,10 +182,10 @@
             # /term/ws and /term/token. A lite.mjs endpoint named /term-theme once
             # landed here and 404'd in ttyd — dashboard routes must never start
             # with /term (they live under /settings/* instead).
-            reverse_proxy 127.0.0.1:7681
+            reverse_proxy unix//run/claude-web-term/ttyd.sock
         }
         handle {
-            reverse_proxy 127.0.0.1:3005
+            reverse_proxy unix//run/claude-dash/dash.sock
         }
     }
 }
@@ -202,7 +206,7 @@
         import vncproxy
         import droidproxy
         import sse
-        reverse_proxy 127.0.0.1:3005
+        reverse_proxy unix//run/claude-dash/dash.sock
     }
 }
 
