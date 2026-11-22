@@ -4,10 +4,10 @@
 # back up. An idle Claude TUI does not repaint (verified), so session_activity is a true
 # idleness clock; a session mid-task keeps printing -> stays fresh -> never reaped. Attached
 # sessions are never reaped.
-# 24h default; tighten via IDLE env or cron arg if RAM pressure demands.
+# 72h default; tighten via IDLE env or cron arg if RAM pressure demands.
 set -euo pipefail
 
-IDLE=${IDLE:-86400}
+IDLE=${IDLE:-259200}
 ST="$HOME/.local/state"
 LOG="$ST/reap-idle-claude.log"
 mkdir -p "$ST"

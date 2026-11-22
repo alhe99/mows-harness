@@ -77,7 +77,7 @@ for (const [name, got, want] of tcases) {
   console.log(`${got === want ? 'PASS' : 'FAIL'} tagSessions: ${name} -> ${got}`);
   if (got !== want) bad++;
 }
-// idleDue: which claude sessions auto-close (CLAUDE_IDLE with no transcript message; 6h since 2026-11-03, the test follows the constant)
+// idleDue: which claude sessions auto-close (CLAUDE_IDLE with no transcript message; 72h since 2026-11-22, the test follows the constant)
 {
   const H = 3600_000, now = 100 * H, f = (name, o = {}) => ({ name, kind: 'claude', state: 'idle', row: {}, attached: false, paused: false, mt: now - CLAUDE_IDLE - H, l: {}, ...o });
   const got = idleDue([f('old'), f('fresh', { mt: now - CLAUDE_IDLE + H }), f('attached', { attached: true }), f('keep', { l: { keep: true } }), f('paused', { paused: true }),
